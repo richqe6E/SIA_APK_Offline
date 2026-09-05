@@ -107,7 +107,10 @@ export async function exportTransactionsToCSV(
 
 export async function exportProductsToCSV(db: SQLiteDatabase): Promise<string> {
   const rows = await db.getAllAsync<any>(
-    'SELECT id, name, category, price, cost_price, stock, has_stock FROM products ORDER BY name ASC'
+    `SELECT p.id, p.name, COALESCE(c.name, 'Umum') as category_name, p.price, p.cost_price, p.stock, p.has_stock 
+     FROM products p 
+     LEFT JOIN categories c ON p.category_id = c.id 
+     ORDER BY p.name ASC`
   );
   if (rows.length === 0) return '';
   const headers = ['ID', 'Nama Produk', 'Kategori', 'Harga Jual', 'HPP Modal', 'Stok', 'Kelola Stok'];
@@ -116,7 +119,7 @@ export async function exportProductsToCSV(db: SQLiteDatabase): Promise<string> {
     lines.push([
       r.id,
       escapeCSV(r.name),
-      escapeCSV(r.category || 'Umum'),
+      escapeCSV(r.category_name || 'Umum'),
       r.price,
       r.cost_price,
       r.stock,
@@ -166,7 +169,7 @@ export async function importProductsFromCSV(db: SQLiteDatabase, csvContent: stri
       if (cols.length < 2) continue;
 
       let name = '';
-      let category = 'Umum';
+      let categoryName = 'Umum';
       let price = 0;
       let cost_price = 0;
       let stock = 0;
@@ -174,14 +177,14 @@ export async function importProductsFromCSV(db: SQLiteDatabase, csvContent: stri
 
       if (isNaN(Number(cols[0])) && cols.length >= 2) {
         name = cols[0];
-        category = cols[1] || 'Umum';
+        categoryName = cols[1] || 'Umum';
         price = parseFloat(cols[2]?.replace(/[^0-9.]/g, '') || '0') || 0;
         cost_price = parseFloat(cols[3]?.replace(/[^0-9.]/g, '') || '0') || 0;
         stock = parseInt(cols[4]?.replace(/[^0-9-]/g, '') || '0', 10) || 0;
         has_stock = cols[5]?.toLowerCase() === 'tidak' ? 0 : 1;
       } else if (cols.length >= 4) {
         name = cols[1];
-        category = cols[2] || 'Umum';
+        categoryName = cols[2] || 'Umum';
         price = parseFloat(cols[3]?.replace(/[^0-9.]/g, '') || '0') || 0;
         cost_price = parseFloat(cols[4]?.replace(/[^0-9.]/g, '') || '0') || 0;
         stock = parseInt(cols[5]?.replace(/[^0-9-]/g, '') || '0', 10) || 0;
@@ -190,6 +193,24 @@ export async function importProductsFromCSV(db: SQLiteDatabase, csvContent: stri
 
       if (!name) continue;
 
+      // Cari atau buat kategori di tabel categories
+      let categoryId: number | null = null;
+      if (categoryName && categoryName.trim()) {
+        const catRow = await txn.getFirstAsync<{ id: number }>(
+          'SELECT id FROM categories WHERE LOWER(name) = LOWER(?)',
+          categoryName.trim()
+        );
+        if (catRow) {
+          categoryId = catRow.id;
+        } else {
+          const res = await txn.runAsync(
+            'INSERT INTO categories (name) VALUES (?)',
+            categoryName.trim()
+          );
+          categoryId = res.lastInsertRowId as number;
+        }
+      }
+
       const existing = await txn.getFirstAsync<{ id: number }>(
         'SELECT id FROM products WHERE LOWER(name) = LOWER(?)',
         name
@@ -197,13 +218,13 @@ export async function importProductsFromCSV(db: SQLiteDatabase, csvContent: stri
 
       if (existing) {
         await txn.runAsync(
-          'UPDATE products SET category = ?, price = ?, cost_price = ?, stock = ?, has_stock = ? WHERE id = ?',
-          category, price, cost_price, stock, has_stock, existing.id
+          'UPDATE products SET category_id = ?, price = ?, cost_price = ?, stock = ?, has_stock = ?, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?',
+          categoryId, price, cost_price, stock, has_stock, existing.id
         );
       } else {
         await txn.runAsync(
-          'INSERT INTO products (name, category, price, cost_price, stock, has_stock) VALUES (?, ?, ?, ?, ?, ?)',
-          name, category, price, cost_price, stock, has_stock
+          'INSERT INTO products (name, category_id, price, cost_price, stock, has_stock) VALUES (?, ?, ?, ?, ?, ?)',
+          name, categoryId, price, cost_price, stock, has_stock
         );
       }
       count++;
@@ -219,7 +240,10 @@ export async function exportProductsToPDF(
   businessType: string
 ): Promise<string> {
   const rows = await db.getAllAsync<any>(
-    'SELECT name, category, price, cost_price, stock, has_stock FROM products ORDER BY category ASC, name ASC'
+    `SELECT p.name, COALESCE(c.name, 'Umum') as category_name, p.price, p.cost_price, p.stock, p.has_stock 
+     FROM products p 
+     LEFT JOIN categories c ON p.category_id = c.id 
+     ORDER BY category_name ASC, p.name ASC`
   );
   const nowStr = new Date().toLocaleDateString('id-ID', {
     day: 'numeric',
@@ -231,7 +255,7 @@ export async function exportProductsToPDF(
     <tr>
       <td style="text-align: center;">${idx + 1}</td>
       <td><strong>${p.name}</strong></td>
-      <td>${p.category || 'Umum'}</td>
+      <td>${p.category_name || 'Umum'}</td>
       <td style="text-align: right;">Rp ${Math.round(p.price).toLocaleString('id-ID')}</td>
       <td style="text-align: right;">Rp ${Math.round(p.cost_price).toLocaleString('id-ID')}</td>
       <td style="text-align: center;">${p.has_stock ? p.stock : '∞'}</td>
