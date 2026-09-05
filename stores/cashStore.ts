@@ -32,6 +32,27 @@ export const CASH_OUT_CATEGORIES = [
   { id: 'lain-lain', label: 'Beban Lain-lain' },
 ] as const;
 
+export const CASH_CATEGORY_MAP: Record<string, string> = {
+  modal_awal: 'Modal Awal Kasir',
+  setoran_modal: 'Setoran Tambahan Pemilik',
+  pendapatan_lain: 'Pendapatan Lain-lain',
+  retur_supplier: 'Pengembalian Dana Supplier',
+  belanja_bahan: 'Belanja Bahan Baku (Kuliner)',
+  kulakan_stok: 'Pembelian Stok Barang (Retail)',
+  listrik_air: 'Listrik, Air & Internet',
+  sewa_tempat: 'Sewa Tempat / Kios',
+  gaji_karyawan: 'Gaji Karyawan',
+  kemasan_plastik: 'Kemasan & Plastik',
+  perawatan: 'Perawatan & Servis Alat',
+  transportasi: 'Transportasi & Logistik',
+  'lain-lain': 'Beban Lain-lain',
+  // Legacy aliases
+  gaji: 'Gaji Karyawan',
+  sewa: 'Sewa Tempat / Kios',
+  listrik: 'Listrik, Air & Internet',
+  bahan_baku: 'Belanja Bahan Baku (Kuliner)',
+};
+
 interface CashState {
   entries: CashEntry[];
   totalCashIn: number;
@@ -43,6 +64,15 @@ interface CashState {
   loadLedger: (db: SQLiteDatabase) => Promise<void>;
   addEntry: (
     db: SQLiteDatabase,
+    type: CashTransactionType,
+    category: string,
+    description: string,
+    amount: number,
+    date?: string
+  ) => Promise<void>;
+  updateEntry: (
+    db: SQLiteDatabase,
+    id: number,
     type: CashTransactionType,
     category: string,
     description: string,
@@ -111,24 +141,20 @@ export const useCashStore = create<CashState>((set, get) => ({
       amount,
       today
     );
+    await get().loadLedger(db);
+  },
 
-    if (type === 'out') {
-      let expCat = 'lain-lain';
-      if (category.includes('gaji')) expCat = 'gaji';
-      else if (category.includes('sewa')) expCat = 'sewa';
-      else if (category.includes('listrik')) expCat = 'listrik';
-      else if (category.includes('transport')) expCat = 'transportasi';
-      else if (category.includes('bahan')) expCat = 'bahan_baku';
-
-      await db.runAsync(
-        'INSERT INTO expenses (category, description, amount, expense_date) VALUES (?, ?, ?, ?)',
-        expCat,
-        description,
-        amount,
-        today
-      );
-    }
-
+  updateEntry: async (db, id, type, category, description, amount, date) => {
+    const today = date || new Date().toISOString().split('T')[0];
+    await db.runAsync(
+      'UPDATE cash_ledger SET type = ?, category = ?, description = ?, amount = ?, date = ? WHERE id = ?',
+      type,
+      category,
+      description,
+      amount,
+      today,
+      id
+    );
     await get().loadLedger(db);
   },
 

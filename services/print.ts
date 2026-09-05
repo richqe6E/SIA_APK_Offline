@@ -119,12 +119,20 @@ export async function printReceipt(params: PrintParams): Promise<void> {
 // Cetak Laporan Laba/Rugi
 // ─────────────────────────────────────────
 const EXPENSE_CATEGORY_LABELS: Record<string, string> = {
+  gaji_karyawan: 'Gaji Karyawan',
+  sewa_tempat: 'Sewa Tempat / Kios',
+  listrik_air: 'Listrik & Air',
+  transportasi: 'Transportasi',
+  kemasan_plastik: 'Kemasan & Plastik',
+  perawatan: 'Perawatan Alat',
+  belanja_bahan: 'Bahan Baku',
+  kulakan_stok: 'Stok Barang',
+  'lain-lain': 'Lain-lain',
+  // Legacy aliases
   gaji: 'Gaji & Upah',
   sewa: 'Sewa Tempat',
   listrik: 'Listrik & Air',
-  transportasi: 'Transportasi',
   bahan_baku: 'Bahan Baku',
-  'lain-lain': 'Lain-lain',
 };
 
 export async function printLaporanLabaRugi(params: {
@@ -137,6 +145,8 @@ export async function printLaporanLabaRugi(params: {
     labaKotor: number;
     totalBeban: number;
     labaOperasional: number;
+    pendapatanLain?: number;
+    labaBersih?: number;
     bebanByCategory: { category: string; total: number }[];
     jumlahTransaksi: number;
   };
@@ -169,15 +179,22 @@ export async function printLaporanLabaRugi(params: {
 
   await BluetoothEscposPrinter.printText('C. BEBAN OPERASIONAL\n', {});
   for (const b of data.bebanByCategory) {
-    const label = EXPENSE_CATEGORY_LABELS[b.category] ?? b.category;
+    const label = EXPENSE_CATEGORY_LABELS[b.category] ?? b.category.replace(/_/g, ' ');
     await BluetoothEscposPrinter.printText(formatLRRow(label, b.total, true) + '\n', {});
   }
   await BluetoothEscposPrinter.printText(THIN + '\n', {});
   await BluetoothEscposPrinter.printText(formatLRRow('Total Beban', data.totalBeban) + '\n', {});
   await BluetoothEscposPrinter.printText('\n', {});
 
+  if (data.pendapatanLain && data.pendapatanLain > 0) {
+    await BluetoothEscposPrinter.printText('D. PENDAPATAN LAIN-LAIN\n', {});
+    await BluetoothEscposPrinter.printText(formatLRRow('Pendapatan Lain', data.pendapatanLain) + '\n', {});
+    await BluetoothEscposPrinter.printText('\n', {});
+  }
+
+  const finalLaba = data.labaBersih !== undefined ? data.labaBersih : data.labaOperasional;
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('LABA BERSIH', data.labaOperasional) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatLRRow('LABA BERSIH', finalLaba) + '\n', {});
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
 
   await BluetoothEscposPrinter.printAndFeed(4);

@@ -2,7 +2,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import {
   Alert,
@@ -30,7 +30,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { usePurchaseStore } from '@/stores/purchaseStore';
 import { useStockOpnameStore } from '@/stores/stockOpnameStore';
 import { useCashStore } from '@/stores/cashStore';
-import { Colors, Shadows } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 
 export default function ProductsScreen() {
   useLockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);

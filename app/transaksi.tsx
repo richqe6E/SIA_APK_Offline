@@ -2,7 +2,6 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Shadows } from '@/constants/theme';
 import { useLockOrientation } from '@/hooks/use-orientation';
 import { useProductStore, type Product } from '@/stores/productStore';
@@ -645,7 +644,7 @@ function SuccessView({
 
         {!printerName && (
           <ThemedText style={{ fontSize: 10.5, color: Colors.placeholder, marginTop: 2 }}>
-            Printer belum terhubung. Anda dapat menggunakan tombol "Tampilkan Struk" untuk melihat nota di layar.
+            Printer belum terhubung. Anda dapat menggunakan tombol &quot;Tampilkan Struk&quot; untuk melihat nota di layar.
           </ThemedText>
         )}
       </Card>

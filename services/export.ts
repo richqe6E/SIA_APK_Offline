@@ -402,12 +402,20 @@ export async function exportTransactionsToPDF(
 }
 
 const EXPENSE_CATEGORY_LABELS: Record<string, string> = {
+  gaji_karyawan: 'Gaji Karyawan',
+  sewa_tempat: 'Sewa Tempat / Kios',
+  listrik_air: 'Listrik, Air & Internet',
+  transportasi: 'Transportasi & Logistik',
+  kemasan_plastik: 'Kemasan & Plastik',
+  perawatan: 'Perawatan & Servis Alat',
+  belanja_bahan: 'Bahan Baku (Kuliner)',
+  kulakan_stok: 'Pembelian Stok Barang',
+  'lain-lain': 'Beban Lain-lain',
+  // Legacy aliases
   gaji: 'Gaji & Upah',
   sewa: 'Sewa Tempat',
   listrik: 'Listrik & Air',
-  transportasi: 'Transportasi',
   bahan_baku: 'Bahan Baku',
-  'lain-lain': 'Lain-lain',
 };
 
 export async function exportLabaRugiToPDF(params: {
@@ -431,7 +439,7 @@ export async function exportLabaRugiToPDF(params: {
 
   const bebanRows = data.bebanByCategory?.map((b: any) => `
     <tr>
-      <td style="padding-left: 20px;">${EXPENSE_CATEGORY_LABELS[b.category] || b.category}</td>
+      <td style="padding-left: 20px;">${EXPENSE_CATEGORY_LABELS[b.category] || b.category.replace(/_/g, ' ')}</td>
       <td style="text-align: right;">${fmt(b.total)}</td>
     </tr>
   `).join('') || '';
@@ -512,9 +520,23 @@ export async function exportLabaRugiToPDF(params: {
             <td style="text-align: right;">${fmt(data.totalBeban)}</td>
           </tr>
 
+          ${(data.pendapatanLain && data.pendapatanLain > 0) ? `
+          <tr class="section-header">
+            <td colspan="2">PENDAPATAN LAIN-LAIN (NON-OPERASIONAL)</td>
+          </tr>
+          <tr>
+            <td style="padding-left: 20px;">Pendapatan Lain-lain</td>
+            <td style="text-align: right;">${fmt(data.pendapatanLain)}</td>
+          </tr>
+          <tr class="total-row">
+            <td>Total Pendapatan Lain-lain</td>
+            <td style="text-align: right;">${fmt(data.pendapatanLain)}</td>
+          </tr>
+          ` : ''}
+
           <tr class="laba-bersih">
-            <td>${data.labaOperasional >= 0 ? 'LABA BERSIH' : 'RUGI BERSIH'}</td>
-            <td style="text-align: right;">${fmt(data.labaOperasional)}</td>
+            <td>${(data.labaBersih !== undefined ? data.labaBersih : data.labaOperasional) >= 0 ? 'LABA BERSIH' : 'RUGI BERSIH'}</td>
+            <td style="text-align: right;">${fmt(data.labaBersih !== undefined ? data.labaBersih : data.labaOperasional)}</td>
           </tr>
         </tbody>
       </table>

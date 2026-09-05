@@ -23,16 +23,14 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useLockOrientation } from '@/hooks/use-orientation';
 import { Colors } from '@/constants/theme';
-import {
-  EXPENSE_CATEGORIES,
-  type ExpenseCategory,
-} from '@/stores/expenseStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
   useCashStore,
   CASH_IN_CATEGORIES,
   CASH_OUT_CATEGORIES,
+  CASH_CATEGORY_MAP,
   type CashTransactionType,
+  type CashEntry,
 } from '@/stores/cashStore';
 import { exportLabaRugiToPDF, shareFile } from '@/services/export';
 import { printLaporanLabaRugi } from '@/services/print';
@@ -40,7 +38,7 @@ import { usePrinterStore } from '@/stores/printerStore';
 import { useRouter } from 'expo-router';
 
 // ─────────────────────────────────────────
-// Types
+// Types & Constants
 // ─────────────────────────────────────────
 type ActiveTab = 'labarugi' | 'bukukas';
 type FilterMode = 'month' | 'year';
@@ -52,6 +50,8 @@ interface LabaRugiData {
   labaKotor: number;
   totalBeban: number;
   labaOperasional: number;
+  pendapatanLain: number;
+  labaBersih: number;
   bebanByCategory: { category: string; total: number }[];
   jumlahTransaksi: number;
 }
@@ -60,6 +60,26 @@ const MONTH_NAMES = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
 ];
+
+const CATEGORY_ICONS: Record<string, string> = {
+  gaji_karyawan: '👤',
+  sewa_tempat: '🏠',
+  listrik_air: '⚡',
+  transportasi: '🚗',
+  kemasan_plastik: '🛍️',
+  perawatan: '🔧',
+  belanja_bahan: '📦',
+  kulakan_stok: '🛒',
+  'lain-lain': '📝',
+  gaji: '👤',
+  sewa: '🏠',
+  listrik: '⚡',
+  bahan_baku: '📦',
+  pendapatan_lain: '💵',
+  modal_awal: '💰',
+  setoran_modal: '🏦',
+  retur_supplier: '🔄',
+};
 
 function fmtRp(n: number) {
   const sign = n < 0 ? '- ' : '';
@@ -78,11 +98,19 @@ export default function FinancialReportsScreen() {
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('labarugi');
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const tabs: { key: ActiveTab; label: string; icon: string }[] = [
     { key: 'labarugi', label: 'Laba / Rugi', icon: '📊' },
     { key: 'bukukas', label: 'Buku Kas', icon: '📒' },
   ];
+
+  const handleTabChange = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    if (tab === 'labarugi') {
+      setRefreshTrigger((prev) => prev + 1);
+    }
+  };
 
   return (
     <ThemedView style={[styles.container, { paddingLeft: insets.left + 16, paddingRight: insets.right + 16 }]}>
@@ -97,7 +125,7 @@ export default function FinancialReportsScreen() {
           <Pressable
             key={t.key}
             style={[styles.tabBtn, activeTab === t.key && styles.tabBtnActive]}
-            onPress={() => setActiveTab(t.key)}
+            onPress={() => handleTabChange(t.key)}
           >
             <ThemedText style={{ fontSize: 13, lineHeight: 17 }}>{t.icon}</ThemedText>
             <ThemedText style={[styles.tabBtnText, activeTab === t.key && styles.tabBtnTextActive]}>
@@ -116,9 +144,15 @@ export default function FinancialReportsScreen() {
           storePhone={storePhone}
           printerTarget={printerTarget}
           router={router}
+          refreshKey={refreshTrigger}
         />
       )}
-      {activeTab === 'bukukas' && <BukuKasTab db={db} />}
+      {activeTab === 'bukukas' && (
+        <BukuKasTab
+          db={db}
+          onMutate={() => setRefreshTrigger((prev) => prev + 1)}
+        />
+      )}
     </ThemedView>
   );
 }
@@ -127,7 +161,7 @@ export default function FinancialReportsScreen() {
 // Laba/Rugi Tab
 // ─────────────────────────────────────────
 function LabaRugiTab({
-  db, storeName, businessType, storeAddress, storePhone, printerTarget, router,
+  db, storeName, businessType, storeAddress, storePhone, printerTarget, router, refreshKey,
 }: {
   db: SQLiteDatabase;
   storeName: string;
@@ -136,6 +170,7 @@ function LabaRugiTab({
   storePhone?: string;
   printerTarget: string | null;
   router: any;
+  refreshKey?: number;
 }) {
   const now = new Date();
   const [filterMode, setFilterMode] = useState<FilterMode>('month');
@@ -144,31 +179,72 @@ function LabaRugiTab({
   const [data, setData] = useState<LabaRugiData | null>(null);
   const [loading, setLoading] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showYearModal, setShowYearModal] = useState(false);
+  const [customYearInput, setCustomYearInput] = useState('');
+  const [availableYears, setAvailableYears] = useState<number[]>(() => {
+    const cur = now.getFullYear();
+    return [cur + 1, cur, cur - 1, cur - 2, cur - 3, cur - 4];
+  });
+
+  const loadAvailableYears = useCallback(async () => {
+    try {
+      const curYear = new Date().getFullYear();
+      const yearSet = new Set<number>();
+      for (let y = curYear - 4; y <= curYear + 1; y++) {
+        yearSet.add(y);
+      }
+      const txRows = await db.getAllAsync<{ y: string }>(
+        "SELECT DISTINCT strftime('%Y', created_at) as y FROM transactions WHERE created_at IS NOT NULL"
+      );
+      const clRows = await db.getAllAsync<{ y: string }>(
+        "SELECT DISTINCT strftime('%Y', date) as y FROM cash_ledger WHERE date IS NOT NULL"
+      );
+      for (const r of [...txRows, ...clRows]) {
+        const val = parseInt(r.y, 10);
+        if (!isNaN(val) && val > 2000 && val < 2100) {
+          yearSet.add(val);
+        }
+      }
+      yearSet.add(selectedYear);
+      setAvailableYears(Array.from(yearSet).sort((a, b) => b - a));
+    } catch (e) {
+      console.error('loadAvailableYears error:', e);
+    }
+  }, [db, selectedYear]);
+
+  useEffect(() => {
+    loadAvailableYears();
+  }, [loadAvailableYears]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       let salesQuery = '';
       let hppQuery = '';
-      const params: any[] = [];
+      let cashLedgerWhere = '';
+      let otherIncomeWhere = '';
 
       if (filterMode === 'month') {
         const mm = String(selectedMonth).padStart(2, '0');
         const yy = String(selectedYear);
         salesQuery = `WHERE strftime('%m', t.created_at) = '${mm}' AND strftime('%Y', t.created_at) = '${yy}'`;
         hppQuery = `WHERE strftime('%m', t.created_at) = '${mm}' AND strftime('%Y', t.created_at) = '${yy}'`;
+        cashLedgerWhere = `WHERE type = 'out' AND category NOT IN ('kulakan_stok') AND strftime('%m', date) = '${mm}' AND strftime('%Y', date) = '${yy}'`;
+        otherIncomeWhere = `WHERE type = 'in' AND category = 'pendapatan_lain' AND strftime('%m', date) = '${mm}' AND strftime('%Y', date) = '${yy}'`;
       } else {
         salesQuery = `WHERE strftime('%Y', t.created_at) = '${selectedYear}'`;
         hppQuery = `WHERE strftime('%Y', t.created_at) = '${selectedYear}'`;
+        cashLedgerWhere = `WHERE type = 'out' AND category NOT IN ('kulakan_stok') AND strftime('%Y', date) = '${selectedYear}'`;
+        otherIncomeWhere = `WHERE type = 'in' AND category = 'pendapatan_lain' AND strftime('%Y', date) = '${selectedYear}'`;
       }
 
-      // Penjualan bruto
+      // 1. Penjualan bruto
       const salesResult = await db.getFirstAsync<{ total: number; count: number }>(
         `SELECT COALESCE(SUM(t.total), 0) as total, COUNT(*) as count
          FROM transactions t ${salesQuery}`
       );
 
-      // HPP = SUM(qty * cost_price) dari transaction_items
+      // 2. HPP = SUM(qty * cost_price) dari transaction_items
       const hppResult = await db.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(ti.quantity * ti.cost_price), 0) as total
          FROM transaction_items ti
@@ -176,48 +252,28 @@ function LabaRugiTab({
          ${hppQuery}`
       );
 
-      // Total beban
-      // Total beban dari expenses atau cash_ledger
-      let expenseWhere = '';
-      let cashLedgerWhere = '';
-      if (filterMode === 'month') {
-        const mm = String(selectedMonth).padStart(2, '0');
-        const yy = String(selectedYear);
-        expenseWhere = `WHERE strftime('%m', expense_date) = '${mm}' AND strftime('%Y', expense_date) = '${yy}'`;
-        cashLedgerWhere = `WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'belanja_bahan') AND strftime('%m', date) = '${mm}' AND strftime('%Y', date) = '${yy}'`;
-      } else {
-        expenseWhere = `WHERE strftime('%Y', expense_date) = '${selectedYear}'`;
-        cashLedgerWhere = `WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'belanja_bahan') AND strftime('%Y', date) = '${selectedYear}'`;
-      }
-
-      let expenseResult = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM expenses ${expenseWhere}`
+      // 3. Beban Operasional: Single Source of Truth dari cash_ledger
+      const expenseResult = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger ${cashLedgerWhere}`
       );
 
-      let bebanByCategory = await db.getAllAsync<{ category: string; total: number }>(
-        `SELECT category, COALESCE(SUM(amount), 0) as total FROM expenses
-         ${expenseWhere} GROUP BY category ORDER BY total DESC`
+      const bebanByCategory = await db.getAllAsync<{ category: string; total: number }>(
+        `SELECT category, COALESCE(SUM(amount), 0) as total FROM cash_ledger
+         ${cashLedgerWhere} GROUP BY category ORDER BY total DESC`
       );
 
-      // Fallback jika belum masuk ke tabel expenses, ambil dari arus keluar cash_ledger
-      if ((expenseResult?.total ?? 0) === 0) {
-        const clResult = await db.getFirstAsync<{ total: number }>(
-          `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger ${cashLedgerWhere}`
-        );
-        if ((clResult?.total ?? 0) > 0) {
-          expenseResult = clResult;
-          bebanByCategory = await db.getAllAsync<{ category: string; total: number }>(
-            `SELECT category, COALESCE(SUM(amount), 0) as total FROM cash_ledger
-             ${cashLedgerWhere} GROUP BY category ORDER BY total DESC`
-          );
-        }
-      }
+      // 4. Pendapatan Lain-lain dari cash_ledger
+      const otherIncomeResult = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger ${otherIncomeWhere}`
+      );
 
       const penjualanBruto = salesResult?.total ?? 0;
       const hpp = hppResult?.total ?? 0;
       const labaKotor = penjualanBruto - hpp;
       const totalBeban = expenseResult?.total ?? 0;
       const labaOperasional = labaKotor - totalBeban;
+      const pendapatanLain = otherIncomeResult?.total ?? 0;
+      const labaBersih = labaOperasional + pendapatanLain;
 
       const periodeLabel = filterMode === 'month'
         ? `${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`
@@ -230,14 +286,23 @@ function LabaRugiTab({
         labaKotor,
         totalBeban,
         labaOperasional,
+        pendapatanLain,
+        labaBersih,
         bebanByCategory,
         jumlahTransaksi: salesResult?.count ?? 0,
       });
     } catch (e) {
+      console.error('loadData error:', e);
       Alert.alert('Error', 'Gagal memuat data laporan.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [db, filterMode, selectedMonth, selectedYear]);
+
+  // Otomatis muat data saat filter berubah atau trigger refresh
+  useEffect(() => {
+    loadData();
+  }, [loadData, refreshKey]);
 
   const handleExportPDF = async () => {
     try {
@@ -272,8 +337,6 @@ function LabaRugiTab({
     }
   };
 
-  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
-
   return (
     <View style={{ flex: 1 }}>
       {/* Filter Controls */}
@@ -300,9 +363,9 @@ function LabaRugiTab({
             </Pressable>
           )}
           <View style={styles.filterSelect}>
-            <ThemedText style={styles.filterSelectLabel}>Tahun</ThemedText>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-              {years.map((y) => (
+            <ThemedText style={styles.filterSelectLabel}>Tahun (Pilih atau Tambah Tahun Lain)</ThemedText>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
+              {availableYears.map((y) => (
                 <Pressable
                   key={y}
                   style={[styles.yearChip, selectedYear === y && styles.yearChipActive]}
@@ -313,11 +376,20 @@ function LabaRugiTab({
                   </ThemedText>
                 </Pressable>
               ))}
+              <Pressable
+                style={styles.yearChipOther}
+                onPress={() => {
+                  setCustomYearInput('');
+                  setShowYearModal(true);
+                }}
+              >
+                <ThemedText style={styles.yearChipOtherText}>📅 Tahun Lain...</ThemedText>
+              </Pressable>
             </ScrollView>
           </View>
         </View>
 
-        <Button title="Tampilkan Laporan" size="sm" onPress={loadData} style={{ marginTop: 8 }} />
+        <Button title="🔄 Muat Ulang Laporan" size="sm" onPress={loadData} style={{ marginTop: 8 }} />
       </View>
 
       {/* Month picker for iOS */}
@@ -361,6 +433,77 @@ function LabaRugiTab({
         </Modal>
       )}
 
+      {/* Year Selector Modal (Pilih Tahun Bebas) */}
+      <Modal visible={showYearModal} transparent animationType="fade">
+        <ThemedView style={styles.monthPickerOverlay}>
+          <Card style={styles.monthPickerCard} padding={16}>
+            <ThemedText type="defaultSemiBold" style={{ marginBottom: 6 }}>Pilih Tahun Laporan</ThemedText>
+            <ThemedText style={{ fontSize: 11, color: Colors.muted, marginBottom: 10 }}>
+              Pilih tahun cepat atau ketik tahun yang diinginkan:
+            </ThemedText>
+
+            {/* Quick Year Grid */}
+            <ScrollView style={{ maxHeight: 150 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.monthGrid}>
+                {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() + 2 - i).map((yr) => (
+                  <Pressable
+                    key={yr}
+                    style={[styles.monthChip, selectedYear === yr && styles.monthChipActive]}
+                    onPress={() => {
+                      setSelectedYear(yr);
+                      setShowYearModal(false);
+                    }}
+                  >
+                    <ThemedText style={[styles.monthChipText, selectedYear === yr && styles.monthChipTextActive]}>
+                      {yr}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+
+            <View style={{ marginTop: 12, marginBottom: 12 }}>
+              <ThemedText style={styles.formLabel}>Ketik Tahun Bebas (contoh: 2020 atau 2028)</ThemedText>
+              <TextInput
+                style={styles.formInput}
+                placeholder="YYYY (contoh: 2020)"
+                placeholderTextColor={Colors.disabled}
+                keyboardType="numeric"
+                maxLength={4}
+                value={customYearInput}
+                onChangeText={setCustomYearInput}
+              />
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Button
+                title="Batal"
+                variant="secondary"
+                size="sm"
+                style={{ flex: 1 }}
+                onPress={() => setShowYearModal(false)}
+              />
+              <Button
+                title="Pilih Tahun"
+                size="sm"
+                style={{ flex: 1 }}
+                onPress={() => {
+                  const yr = parseInt(customYearInput, 10);
+                  if (yr && yr >= 2000 && yr <= 2099) {
+                    setSelectedYear(yr);
+                    setShowYearModal(false);
+                  } else if (!customYearInput.trim()) {
+                    setShowYearModal(false);
+                  } else {
+                    Alert.alert('Tahun Tidak Valid', 'Masukkan tahun antara 2000 s/d 2099');
+                  }
+                }}
+              />
+            </View>
+          </Card>
+        </ThemedView>
+      </Modal>
+
       {loading && <ActivityIndicator size="large" color={Colors.tint} style={{ marginTop: 32 }} />}
 
       {data && !loading && (
@@ -371,16 +514,16 @@ function LabaRugiTab({
             <ThemedText style={styles.reportSubtitle}>{storeName}</ThemedText>
             <ThemedText style={styles.reportPeriode}>Periode: {data.periodeLabel}</ThemedText>
             <ThemedText style={{ fontSize: 11, color: Colors.muted, marginTop: 2 }}>
-              SAK EMKM — {data.jumlahTransaksi} transaksi
+              SAK EMKM — {data.jumlahTransaksi} transaksi penjualan
             </ThemedText>
           </Card>
 
           {/* Pendapatan */}
           <Card style={{ marginBottom: 8 }} padding={14}>
-            <ThemedText style={styles.sectionTitle}>PENDAPATAN</ThemedText>
+            <ThemedText style={styles.sectionTitle}>PENDAPATAN USAHA</ThemedText>
             <LRRow label="Penjualan Bersih" value={data.penjualanBruto} bold />
             <View style={styles.divider} />
-            <LRRow label="Total Pendapatan" value={data.penjualanBruto} bold highlight />
+            <LRRow label="Total Pendapatan Usaha" value={data.penjualanBruto} bold highlight />
           </Card>
 
           {/* HPP */}
@@ -404,14 +547,15 @@ function LabaRugiTab({
 
           {/* Beban Operasional */}
           <Card style={{ marginBottom: 8 }} padding={14}>
-            <ThemedText style={styles.sectionTitle}>BEBAN OPERASIONAL</ThemedText>
+            <ThemedText style={styles.sectionTitle}>BEBAN OPERASIONAL (BEBAN USAHA)</ThemedText>
             {data.bebanByCategory.length > 0 ? (
               data.bebanByCategory.map((b, i) => {
-                const cat = EXPENSE_CATEGORIES.find((c) => c.key === b.category);
+                const label = CASH_CATEGORY_MAP[b.category] || b.category.replace(/_/g, ' ');
+                const icon = CATEGORY_ICONS[b.category] || '💸';
                 return (
                   <LRRow
                     key={i}
-                    label={`${cat?.icon ?? '💸'} ${cat?.label ?? b.category}`}
+                    label={`${icon} ${label}`}
                     value={b.total}
                     indent
                   />
@@ -426,17 +570,37 @@ function LabaRugiTab({
             <LRRow label="Total Beban Operasional" value={data.totalBeban} bold />
           </Card>
 
+          {/* Laba Operasional */}
+          <Card style={[styles.labakotorCard, { marginBottom: 8, backgroundColor: '#f8fafc' }]} padding={14}>
+            <LRRow
+              label="LABA OPERASIONAL"
+              value={data.labaOperasional}
+              bold
+              highlight
+            />
+          </Card>
+
+          {/* Pendapatan Non-Operasional (jika ada) */}
+          {data.pendapatanLain > 0 && (
+            <Card style={{ marginBottom: 8 }} padding={14}>
+              <ThemedText style={styles.sectionTitle}>PENDAPATAN NON-OPERASIONAL</ThemedText>
+              <LRRow label="💵 Pendapatan Lain-lain" value={data.pendapatanLain} />
+              <View style={styles.divider} />
+              <LRRow label="Total Pendapatan Lain-lain" value={data.pendapatanLain} bold />
+            </Card>
+          )}
+
           {/* Laba Bersih */}
           <Card
             style={[
               styles.labaCard,
-              { marginBottom: 16, backgroundColor: data.labaOperasional >= 0 ? Colors.successBg : '#fce4ec' },
+              { marginBottom: 16, backgroundColor: data.labaBersih >= 0 ? Colors.successBg : '#fce4ec' },
             ]}
             padding={14}
           >
             <LRRow
-              label={data.labaOperasional >= 0 ? 'LABA BERSIH' : 'RUGI BERSIH'}
-              value={data.labaOperasional}
+              label={data.labaBersih >= 0 ? 'LABA BERSIH' : 'RUGI BERSIH'}
+              value={data.labaBersih}
               bold
               big
               highlight
@@ -467,7 +631,7 @@ function LabaRugiTab({
         <EmptyState
           icon={'\u{1F4CA}'}
           title="Pilih periode"
-          subtitle="Pilih periode dan klik 'Tampilkan Laporan'"
+          subtitle="Pilih periode dan laporan akan otomatis dimuat"
         />
       )}
     </View>
@@ -505,7 +669,7 @@ function LRRow({
 // ─────────────────────────────────────────
 // Buku Kas Tab (Arus Kas Masuk & Keluar)
 // ─────────────────────────────────────────
-function BukuKasTab({ db }: { db: SQLiteDatabase }) {
+function BukuKasTab({ db, onMutate }: { db: SQLiteDatabase; onMutate?: () => void }) {
   const {
     entries,
     totalCashIn,
@@ -515,10 +679,12 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
     loading,
     loadLedger,
     addEntry,
+    updateEntry,
     deleteEntry,
   } = useCashStore();
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<CashEntry | null>(null);
   const [entryType, setEntryType] = useState<CashTransactionType>('in');
   const [category, setCategory] = useState<string>('setoran_modal');
   const [description, setDescription] = useState('');
@@ -530,11 +696,22 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
   }, [db, loadLedger]);
 
   const openModal = (type: CashTransactionType) => {
+    setEditingEntry(null);
     setEntryType(type);
-    setCategory(type === 'in' ? 'setoran_modal' : 'operasional');
+    setCategory(type === 'in' ? 'setoran_modal' : 'listrik_air');
     setDescription('');
     setAmount('');
     setDate(new Date().toISOString().slice(0, 10));
+    setModalVisible(true);
+  };
+
+  const openEditModal = (entry: CashEntry) => {
+    setEditingEntry(entry);
+    setEntryType(entry.type);
+    setCategory(entry.category);
+    setDescription(entry.description);
+    setAmount(entry.amount.toString());
+    setDate(entry.date);
     setModalVisible(true);
   };
 
@@ -548,14 +725,32 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
       Alert.alert('Error', 'Deskripsi mutasi kas harus diisi');
       return;
     }
+    const cleanDate = date.trim() || new Date().toISOString().slice(0, 10);
 
     try {
-      await addEntry(db, entryType, category, description.trim(), numericAmount, date);
-      setModalVisible(false);
-      Alert.alert(
-        'Sukses',
-        `${entryType === 'in' ? 'Penerimaan Kas' : 'Pengeluaran Kas/Beban'} berhasil dicatat`
-      );
+      if (editingEntry) {
+        await updateEntry(
+          db,
+          editingEntry.id,
+          entryType,
+          category,
+          description.trim(),
+          numericAmount,
+          cleanDate
+        );
+        setModalVisible(false);
+        setEditingEntry(null);
+        onMutate?.();
+        Alert.alert('Sukses', 'Catatan mutasi kas berhasil diperbarui');
+      } else {
+        await addEntry(db, entryType, category, description.trim(), numericAmount, cleanDate);
+        setModalVisible(false);
+        onMutate?.();
+        Alert.alert(
+          'Sukses',
+          `${entryType === 'in' ? 'Penerimaan Kas' : 'Pengeluaran Kas/Beban'} berhasil dicatat`
+        );
+      }
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Gagal menyimpan transaksi kas');
     }
@@ -564,7 +759,14 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
   const handleDelete = (id: number) => {
     Alert.alert('Hapus Catatan', 'Apakah Anda yakin ingin menghapus catatan mutasi kas ini?', [
       { text: 'Batal', style: 'cancel' },
-      { text: 'Hapus', style: 'destructive', onPress: () => deleteEntry(db, id) },
+      {
+        text: 'Hapus',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteEntry(db, id);
+          onMutate?.();
+        },
+      },
     ]);
   };
 
@@ -627,7 +829,7 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
               {fmtRp(totalCashOut)}
             </ThemedText>
             <ThemedText style={{ fontSize: 10, color: Colors.muted, marginTop: 2 }}>
-              (Beban & Pembelian Stok)
+              (Beban & Kulakan)
             </ThemedText>
           </View>
         </View>
@@ -672,6 +874,7 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
           contentContainerStyle={{ gap: 6, paddingBottom: 32 }}
           renderItem={({ item }) => {
             const isCashIn = item.type === 'in';
+            const categoryLabel = CASH_CATEGORY_MAP[item.category] || item.category.replace(/_/g, ' ');
             return (
               <Card padding={10} style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -692,7 +895,7 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
                       {item.description}
                     </ThemedText>
                     <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
-                      {item.category.replace(/_/g, ' ')} • {item.date}
+                      {categoryLabel} • {item.date}
                     </ThemedText>
                   </View>
                   <ThemedText
@@ -704,9 +907,14 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
                   >
                     {isCashIn ? '+' : '-'} {fmtRp(item.amount)}
                   </ThemedText>
-                  <Pressable onPress={() => handleDelete(item.id)} style={{ padding: 6 }}>
-                    <ThemedText style={{ color: Colors.muted, fontSize: 14 }}>🗑️</ThemedText>
-                  </Pressable>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Pressable onPress={() => openEditModal(item)} style={styles.actionIconBtn}>
+                      <ThemedText style={{ fontSize: 14 }}>✏️</ThemedText>
+                    </Pressable>
+                    <Pressable onPress={() => handleDelete(item.id)} style={styles.actionIconBtn}>
+                      <ThemedText style={{ fontSize: 14 }}>🗑️</ThemedText>
+                    </Pressable>
+                  </View>
                 </View>
               </Card>
             );
@@ -721,14 +929,14 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
         />
       )}
 
-      {/* Modal Input Kas */}
+      {/* Modal Input & Edit Kas */}
       <Modal visible={modalVisible} transparent animationType="fade">
         <ThemedView style={styles.monthPickerOverlay}>
           <Card style={styles.bsModalCard} padding={20}>
             <ThemedText type="defaultSemiBold" style={{ fontSize: 15, marginBottom: 12 }}>
-              {entryType === 'in'
-                ? 'Catat Penerimaan Kas (Masuk)'
-                : 'Catat Pengeluaran Kas/Beban (Keluar)'}
+              {editingEntry
+                ? (entryType === 'in' ? 'Edit Penerimaan Kas' : 'Edit Pengeluaran Kas / Beban')
+                : (entryType === 'in' ? 'Catat Penerimaan Kas (Masuk)' : 'Catat Pengeluaran Kas/Beban (Keluar)')}
             </ThemedText>
 
             <View style={{ marginBottom: 10 }}>
@@ -763,11 +971,22 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
                 placeholder={
                   entryType === 'in'
                     ? 'Contoh: Setoran Modal Awal Kasir'
-                    : 'Contoh: Bayar Token Listrik / Belanja Sayur'
+                    : 'Contoh: Bayar Token Listrik / Gaji Karyawan'
                 }
                 placeholderTextColor={Colors.disabled}
                 value={description}
                 onChangeText={setDescription}
+              />
+            </View>
+
+            <View style={{ marginBottom: 10 }}>
+              <ThemedText style={styles.formLabel}>Tanggal (YYYY-MM-DD)</ThemedText>
+              <TextInput
+                style={styles.formInput}
+                placeholder="YYYY-MM-DD (Contoh: 2026-09-06)"
+                placeholderTextColor={Colors.disabled}
+                value={date}
+                onChangeText={setDate}
               />
             </View>
 
@@ -789,9 +1008,17 @@ function BukuKasTab({ db }: { db: SQLiteDatabase }) {
                 variant="secondary"
                 size="sm"
                 style={{ flex: 1 }}
-                onPress={() => setModalVisible(false)}
+                onPress={() => {
+                  setModalVisible(false);
+                  setEditingEntry(null);
+                }}
               />
-              <Button title="Simpan Kas" size="sm" style={{ flex: 1 }} onPress={handleSave} />
+              <Button
+                title={editingEntry ? 'Simpan Perubahan' : 'Simpan Kas'}
+                size="sm"
+                style={{ flex: 1 }}
+                onPress={handleSave}
+              />
             </View>
           </Card>
         </ThemedView>
@@ -862,6 +1089,27 @@ const styles = StyleSheet.create({
   yearChipActive: { backgroundColor: Colors.tint, borderColor: Colors.tint },
   yearChipText: { fontSize: 12, fontWeight: '600', color: Colors.text },
   yearChipTextActive: { color: '#fff' },
+  yearChipOther: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.tint,
+    backgroundColor: '#f5f3ff',
+    borderStyle: 'dashed',
+  },
+  yearChipOtherText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.tint,
+  },
+  actionIconBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
   monthPickerOverlay: {
     flex: 1,
     justifyContent: 'center',
