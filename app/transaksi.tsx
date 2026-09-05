@@ -420,6 +420,69 @@ function Step2View({
     return num.toLocaleString('id-ID');
   };
 
+  const quickPresets = React.useMemo(() => {
+    const list: { label: string; amount: number }[] = [
+      { label: 'Uang Pas', amount: total },
+    ];
+
+    if (total <= 0) {
+      return [
+        { label: 'Uang Pas', amount: 0 },
+        { label: 'Rp 20rb', amount: 20000 },
+        { label: 'Rp 50rb', amount: 50000 },
+        { label: 'Rp 100rb', amount: 100000 },
+      ];
+    }
+
+    // Pecahan standar rupiah Indonesia
+    const standardBills = [10000, 20000, 50000, 100000];
+
+    // Pembulatan ke atas terdekat
+    const round10k = Math.ceil(total / 10000) * 10000;
+    const next10k = round10k === total ? total + 10000 : round10k;
+
+    const round50k = Math.ceil(total / 50000) * 50000;
+    const next50k = round50k === total ? total + 50000 : round50k;
+
+    const round100k = Math.ceil(total / 100000) * 100000;
+    const next100k = round100k === total ? total + 100000 : round100k;
+
+    const candidates = [
+      ...standardBills,
+      next10k,
+      next50k,
+      next100k,
+      next100k + 50000,
+      next100k + 100000,
+      next100k * 2,
+    ];
+
+    // Ambil hanya yang lebih besar dari total dan hilangkan duplikat
+    const higherUnique = Array.from(
+      new Set(candidates.filter((amt) => amt > total))
+    ).sort((a, b) => a - b);
+
+    for (const amt of higherUnique) {
+      if (list.length >= 4) break;
+      const label = amt >= 1000000
+        ? `Rp ${(amt / 1000000).toLocaleString('id-ID')}jt`
+        : `Rp ${(amt / 1000).toLocaleString('id-ID')}rb`;
+      list.push({ label, amount: amt });
+    }
+
+    while (list.length < 4) {
+      const lastAmt = list[list.length - 1].amount;
+      const step = lastAmt < 100000 ? 50000 : 100000;
+      const nextAmt = lastAmt + step;
+      const label = nextAmt >= 1000000
+        ? `Rp ${(nextAmt / 1000000).toLocaleString('id-ID')}jt`
+        : `Rp ${(nextAmt / 1000).toLocaleString('id-ID')}rb`;
+      list.push({ label, amount: nextAmt });
+    }
+
+    return list;
+  }, [total]);
+
   return (
     <>
       <View style={styles.colSummary}>
@@ -488,14 +551,14 @@ function Step2View({
               </View>
             )}
             <View style={{ flexDirection: 'row', gap: 6 }}>
-              {[total, Math.ceil(total / 10000) * 10000, 50000, 100000].map((preset, idx) => (
+              {quickPresets.map((preset, idx) => (
                 <Pressable
                   key={idx}
                   style={styles.presetBtn}
-                  onPress={() => onSetAmount(preset.toString())}
+                  onPress={() => onSetAmount(preset.amount.toString())}
                 >
                   <ThemedText style={{ fontSize: 11, fontWeight: '600' }}>
-                    {preset === total ? 'Uang Pas' : `Rp ${(preset / 1000).toFixed(0)}rb`}
+                    {preset.label}
                   </ThemedText>
                 </Pressable>
               ))}
