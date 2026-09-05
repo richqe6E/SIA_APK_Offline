@@ -32,6 +32,9 @@ export default function StoreSettingsScreen() {
     businessMode,
     adminPin,
     defaultViewMode,
+    storeAddress,
+    storePhone,
+    receiptFooter,
     loadSettings,
     saveSettings,
     setBusinessMode,
@@ -44,6 +47,9 @@ export default function StoreSettingsScreen() {
   const [mode, setMode] = useState<BusinessMode>(businessMode);
   const [viewMode, setViewMode] = useState<ViewMode>(defaultViewMode);
   const [pin, setPin] = useState(adminPin);
+  const [address, setAddress] = useState(storeAddress);
+  const [phone, setPhone] = useState(storePhone);
+  const [footer, setFooter] = useState(receiptFooter);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -56,7 +62,10 @@ export default function StoreSettingsScreen() {
     setMode(businessMode);
     setViewMode(defaultViewMode);
     setPin(adminPin);
-  }, [storeName, businessType, businessMode, defaultViewMode, adminPin]);
+    setAddress(storeAddress);
+    setPhone(storePhone);
+    setFooter(receiptFooter);
+  }, [storeName, businessType, businessMode, defaultViewMode, adminPin, storeAddress, storePhone, receiptFooter]);
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -70,12 +79,12 @@ export default function StoreSettingsScreen() {
 
     setSaving(true);
     try {
-      await saveSettings(db, name.trim(), type.trim());
+      await saveSettings(db, name.trim(), type.trim(), address.trim(), phone.trim(), footer.trim());
       await setBusinessMode(db, mode);
       await setDefaultViewMode(db, viewMode);
       await setAdminPin(db, pin.trim());
 
-      Alert.alert('Berhasil', 'Pengaturan toko dan mode UMKM berhasil disimpan!');
+      Alert.alert('Berhasil', 'Pengaturan toko, desain nota, dan mode UMKM berhasil disimpan!');
       router.back();
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Gagal menyimpan pengaturan');
@@ -98,7 +107,7 @@ export default function StoreSettingsScreen() {
         </View>
       </Pressable>
 
-      <ThemedText type="title" style={{ marginBottom: 16 }}>Atur Toko & Mode UMKM</ThemedText>
+      <ThemedText type="title" style={{ marginBottom: 16 }}>Atur Toko & Desain Nota</ThemedText>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         <Card padding={16} style={{ gap: 18 }}>
@@ -109,79 +118,127 @@ export default function StoreSettingsScreen() {
             </ThemedText>
             <TextInput
               style={styles.input}
-              placeholder="Contoh: Toko Berkah / Warung Makan Sedap"
-              placeholderTextColor={Colors.muted}
               value={name}
               onChangeText={setName}
+              placeholder="Contoh: Toko Berkah / Warung Rasa"
+              placeholderTextColor={Colors.placeholder}
             />
           </View>
 
           <View style={{ gap: 6 }}>
             <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
-              Deskripsi / Kategori Usaha
+              Jenis Bidang Usaha
             </ThemedText>
             <TextInput
               style={styles.input}
-              placeholder="Contoh: Toko Kelontong, Cafe, Warung Makan"
-              placeholderTextColor={Colors.muted}
               value={type}
               onChangeText={setType}
+              placeholder="Contoh: Warung Kopi / Toko Kelontong"
+              placeholderTextColor={Colors.placeholder}
             />
           </View>
 
-          {/* Switch Mode UMKM */}
-          <View style={{ gap: 8 }}>
-            <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
-              Tipe Mode UMKM
+          {/* Desain & Informasi Nota / Struk Kasir */}
+          <View style={styles.sectionDivider}>
+            <ThemedText type="defaultSemiBold" style={styles.sectionHeader}>
+              🧾 Desain & Informasi Nota Kasir
             </ThemedText>
             <ThemedText style={styles.helpText}>
-              Pilih alur kerja sistem yang sesuai dengan karakteristik usaha Anda.
+              Informasi ini akan tercetak di struk printer thermal Bluetooth dan ditampilkan pada struk digital.
+            </ThemedText>
+          </View>
+
+          <View style={{ gap: 6 }}>
+            <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
+              Alamat Toko di Struk
+            </ThemedText>
+            <TextInput
+              style={styles.input}
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Contoh: Jl. Cipto Mangunkusumo, Samarinda"
+              placeholderTextColor={Colors.placeholder}
+            />
+          </View>
+
+          <View style={{ gap: 6 }}>
+            <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
+              No. Telepon / WhatsApp Toko
+            </ThemedText>
+            <TextInput
+              style={styles.input}
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              placeholder="Contoh: 0812-3456-7890"
+              placeholderTextColor={Colors.placeholder}
+            />
+          </View>
+
+          <View style={{ gap: 6 }}>
+            <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
+              Catatan Kaki Struk (Footer Nota)
+            </ThemedText>
+            <TextInput
+              style={styles.input}
+              value={footer}
+              onChangeText={setFooter}
+              placeholder="Contoh: Terima kasih atas kunjungan Anda!"
+              placeholderTextColor={Colors.placeholder}
+            />
+          </View>
+
+          {/* Pemilihan Mode UMKM */}
+          <View style={{ gap: 8 }}>
+            <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
+              Mode Operasional UMKM
+            </ThemedText>
+            <ThemedText style={styles.helpText}>
+              Pilih mode yang sesuai dengan alur bisnis kasir Anda.
             </ThemedText>
 
-            <View style={styles.modeGrid}>
+            <View style={{ gap: 10 }}>
+              {/* Option Retail */}
               <TouchableOpacity
                 style={[styles.modeCard, mode === 'retail' && styles.modeCardActive]}
-                onPress={() => {
-                  setMode('retail');
-                  setViewMode('list');
-                }}
+                onPress={() => setMode('retail')}
                 activeOpacity={0.8}
               >
-                <ThemedText style={styles.modeIcon}>🛒</ThemedText>
-                <ThemedText
-                  type="defaultSemiBold"
-                  style={[styles.modeTitle, mode === 'retail' && styles.modeTitleActive]}
-                >
-                  Toko / Retail
-                </ThemedText>
-                <ThemedText style={styles.modeDesc}>
-                  Kontrol stok ketat, modul pembelian kulakan & stock opname aktif.
-                </ThemedText>
+                <View style={styles.modeCardHeader}>
+                  <ThemedText style={{ fontSize: 20 }}>🏪</ThemedText>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText type="defaultSemiBold" style={styles.modeTitle}>
+                      Mode Toko / Retail (Dagang)
+                    </ThemedText>
+                    <ThemedText style={styles.modeDesc}>
+                      Wajib stok & HPP ketat, fitur Pembelian Stok barang masuk, audit stock opname, dan tampilan tombol list kasir cepat.
+                    </ThemedText>
+                  </View>
+                </View>
               </TouchableOpacity>
 
+              {/* Option Kuliner */}
               <TouchableOpacity
                 style={[styles.modeCard, mode === 'kuliner' && styles.modeCardActive]}
-                onPress={() => {
-                  setMode('kuliner');
-                  setViewMode('grid');
-                }}
+                onPress={() => setMode('kuliner')}
                 activeOpacity={0.8}
               >
-                <ThemedText style={styles.modeIcon}>☕</ThemedText>
-                <ThemedText
-                  type="defaultSemiBold"
-                  style={[styles.modeTitle, mode === 'kuliner' && styles.modeTitleActive]}
-                >
-                  Kuliner / Jasa
-                </ThemedText>
-                <ThemedText style={styles.modeDesc}>
-                  Bebas stok siap jual. Pembelian & opname disembunyikan agar simpel.
-                </ThemedText>
+                <View style={styles.modeCardHeader}>
+                  <ThemedText style={{ fontSize: 20 }}>☕</ThemedText>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText type="defaultSemiBold" style={styles.modeTitle}>
+                      Mode Kuliner / Jasa (Makanan & Minuman)
+                    </ThemedText>
+                    <ThemedText style={styles.modeDesc}>
+                      Stok selalu siap (bebas stok), tanpa menu pembelian barang dagang, belanja bahan dicatat lewat pengeluaran beban, kasir kotak menu bergambar.
+                    </ThemedText>
+                  </View>
+                </View>
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Default Tampilan Kasir */}
+          {/* Pilihan Default Tampilan Kasir */}
           <View style={{ gap: 8 }}>
             <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
               Tampilan Awal Kasir
@@ -192,7 +249,7 @@ export default function StoreSettingsScreen() {
                 onPress={() => setViewMode('list')}
               >
                 <ThemedText style={[styles.viewChoiceText, viewMode === 'list' && styles.viewChoiceTextActive]}>
-                  📋 Compact List (Tombol Ramping)
+                  📋 Compact List (Tombol Cepat)
                 </ThemedText>
               </TouchableOpacity>
 
@@ -251,6 +308,16 @@ const styles = StyleSheet.create({
     marginTop: -2,
     marginBottom: 4,
   },
+  sectionDivider: {
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    gap: 4,
+  },
+  sectionHeader: {
+    fontSize: 14,
+    color: Colors.tint,
+  },
   input: {
     borderWidth: 1.5,
     borderColor: '#e2e8f0',
@@ -262,45 +329,37 @@ const styles = StyleSheet.create({
   },
   pinInput: {
     letterSpacing: 8,
+    fontSize: 20,
+    fontWeight: 'bold',
     textAlign: 'center',
-    fontSize: 18,
-    fontWeight: '700',
-    color: Colors.tint,
-  },
-  modeGrid: {
-    flexDirection: 'row',
-    gap: 10,
+    width: 200,
+    alignSelf: 'center',
   },
   modeCard: {
-    flex: 1,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#e2e8f0',
     borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
+    padding: 14,
     backgroundColor: '#ffffff',
   },
   modeCardActive: {
     borderColor: Colors.tint,
     backgroundColor: '#faf5ff',
   },
-  modeIcon: {
-    fontSize: 26,
-    marginBottom: 4,
+  modeCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
   },
   modeTitle: {
-    fontSize: 12,
-    color: '#475569',
-    marginBottom: 2,
-  },
-  modeTitleActive: {
-    color: Colors.tint,
+    fontSize: 14,
+    color: '#1e293b',
   },
   modeDesc: {
-    fontSize: 9.5,
+    fontSize: 11.5,
     color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 13,
+    marginTop: 3,
+    lineHeight: 16,
   },
   viewChoiceBtn: {
     flex: 1,
@@ -310,19 +369,20 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     borderRadius: 10,
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#ffffff',
   },
   viewChoiceActive: {
     borderColor: Colors.tint,
-    backgroundColor: '#f3e8ff',
+    backgroundColor: '#faf5ff',
   },
   viewChoiceText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '600',
     color: '#64748b',
   },
   viewChoiceTextActive: {
-    color: Colors.tintDark,
+    color: Colors.tint,
     fontWeight: '700',
   },
 });

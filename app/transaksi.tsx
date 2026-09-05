@@ -19,9 +19,12 @@ import {
   Alert,
   FlatList,
   Image,
+  Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -564,9 +567,10 @@ function SuccessView({
   } | null;
   onDone: () => void;
 }) {
-  const { storeName, businessType } = useSettingsStore();
+  const { storeName, storeAddress, storePhone, receiptFooter } = useSettingsStore();
   const { printerTarget, printerName } = usePrinterStore();
   const router = useRouter();
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
 
   const handlePrint = async () => {
     if (!printerTarget) {
@@ -589,7 +593,9 @@ function SuccessView({
         paymentAmount: lastTransaction.paymentAmount,
         change: lastTransaction.change,
         storeName,
-        storeAddress: businessType,
+        storeAddress,
+        storePhone,
+        receiptFooter,
       });
       Alert.alert('Sukses', 'Struk berhasil dicetak');
     } catch {
@@ -599,33 +605,154 @@ function SuccessView({
 
   return (
     <View style={styles.successContainer}>
-      <Card padding={32} style={{ alignItems: 'center', gap: 8, maxWidth: 440, width: '90%' }}>
-        <ThemedText style={{ fontSize: 56, lineHeight: 64 }}>✅</ThemedText>
-        <ThemedText type="title" style={{ textAlign: 'center', color: '#1e1b4b' }}>
+      <Card padding={24} style={{ alignItems: 'center', gap: 6, maxWidth: 520, width: '92%' }}>
+        <ThemedText style={{ fontSize: 48, lineHeight: 54 }}>✅</ThemedText>
+        <ThemedText type="title" style={{ textAlign: 'center', color: '#1e1b4b', fontSize: 18 }}>
           Transaksi Berhasil!
         </ThemedText>
-        <ThemedText style={{ fontSize: 26, lineHeight: 32, fontWeight: 'bold', color: Colors.success }}>
+        <ThemedText style={{ fontSize: 24, lineHeight: 28, fontWeight: 'bold', color: Colors.success }}>
           Rp {total.toLocaleString('id-ID')}
         </ThemedText>
-        <ThemedText style={{ fontSize: 12, color: Colors.muted }}>
+        <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
           Metode: {lastTransaction?.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS'} • Nota #{transactionId}
         </ThemedText>
 
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 16, width: '100%' }}>
-          <View style={{ flex: 1 }}>
-            <Button title="🖨️ Cetak Struk" variant="outline" onPress={handlePrint} />
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, width: '100%' }}>
+          <View style={{ flex: 1.1 }}>
+            <Button
+              title="📄 Tampilkan Struk"
+              variant="outline"
+              size="sm"
+              onPress={() => setShowReceiptModal(true)}
+            />
           </View>
-          <View style={{ flex: 1 }}>
-            <Button title="Selesai" onPress={onDone} />
+          <View style={{ flex: 1.1 }}>
+            <Button
+              title="🖨️ Cetak Struk"
+              variant="outline"
+              size="sm"
+              onPress={handlePrint}
+            />
+          </View>
+          <View style={{ flex: 0.9 }}>
+            <Button
+              title="✅ Selesai"
+              size="sm"
+              onPress={onDone}
+            />
           </View>
         </View>
 
         {!printerName && (
-          <ThemedText style={{ fontSize: 11, color: Colors.placeholder, marginTop: 4 }}>
-            Printer belum terhubung.
+          <ThemedText style={{ fontSize: 10.5, color: Colors.placeholder, marginTop: 2 }}>
+            Printer belum terhubung. Anda dapat menggunakan tombol "Tampilkan Struk" untuk melihat nota di layar.
           </ThemedText>
         )}
       </Card>
+
+      {/* MODAL STRUK DIGITAL (ON-SCREEN RECEIPT) */}
+      <Modal visible={showReceiptModal} transparent animationType="fade">
+        <View style={styles.receiptModalOverlay}>
+          <View style={styles.receiptPaper}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 18 }}>
+              {/* Header Toko */}
+              <ThemedText style={styles.receiptStoreName}>{storeName}</ThemedText>
+              {storeAddress ? <ThemedText style={styles.receiptStoreMeta}>{storeAddress}</ThemedText> : null}
+              {storePhone ? <ThemedText style={styles.receiptStoreMeta}>Telp/WA: {storePhone}</ThemedText> : null}
+
+              <View style={styles.receiptDashedLine} />
+
+              {/* Info Nota */}
+              <View style={styles.receiptRowBetween}>
+                <ThemedText style={styles.receiptMetaText}>Nota: #{transactionId}</ThemedText>
+                <ThemedText style={styles.receiptMetaText}>
+                  {new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </ThemedText>
+              </View>
+
+              <View style={styles.receiptDashedLine} />
+
+              {/* Daftar Barang Belanja */}
+              {lastTransaction?.items.map((item, idx) => (
+                <View key={idx} style={{ marginBottom: 6 }}>
+                  <ThemedText style={styles.receiptItemTitle}>{item.product_name}</ThemedText>
+                  <View style={styles.receiptRowBetween}>
+                    <ThemedText style={styles.receiptItemQty}>
+                      {item.quantity} x Rp {item.product_price.toLocaleString('id-ID')}
+                    </ThemedText>
+                    <ThemedText style={styles.receiptItemSubtotal}>
+                      Rp {item.subtotal.toLocaleString('id-ID')}
+                    </ThemedText>
+                  </View>
+                </View>
+              ))}
+
+              <View style={styles.receiptDashedLine} />
+
+              {/* Rincian Total Pembayaran */}
+              <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                <ThemedText style={styles.receiptTotalLabel}>Total Belanja</ThemedText>
+                <ThemedText style={styles.receiptTotalVal}>Rp {total.toLocaleString('id-ID')}</ThemedText>
+              </View>
+              <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                <ThemedText style={styles.receiptMetaText}>
+                  {lastTransaction?.paymentMethod === 'tunai' ? 'Tunai (Diterima)' : 'QRIS'}
+                </ThemedText>
+                <ThemedText style={styles.receiptMetaText}>
+                  Rp {(lastTransaction?.paymentAmount ?? total).toLocaleString('id-ID')}
+                </ThemedText>
+              </View>
+              {lastTransaction?.paymentMethod === 'tunai' && (
+                <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                  <ThemedText style={[styles.receiptMetaText, { fontWeight: '700', color: Colors.success }]}>
+                    Kembalian
+                  </ThemedText>
+                  <ThemedText style={[styles.receiptMetaText, { fontWeight: '700', color: Colors.success }]}>
+                    Rp {(lastTransaction?.change ?? 0).toLocaleString('id-ID')}
+                  </ThemedText>
+                </View>
+              )}
+
+              <View style={styles.receiptDashedLine} />
+
+              {/* Footer Ucapan */}
+              <ThemedText style={styles.receiptFooterText}>
+                {receiptFooter || 'Terima kasih atas kunjungan Anda!'}
+              </ThemedText>
+            </ScrollView>
+
+            {/* Action Bar di Bawah Struk */}
+            <View style={styles.receiptModalActions}>
+              <TouchableOpacity
+                style={styles.receiptBtnPrint}
+                onPress={handlePrint}
+              >
+                <ThemedText style={{ color: Colors.tint, fontWeight: '700', fontSize: 12 }}>
+                  🖨️ Cetak Struk
+                </ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.receiptBtnDone}
+                onPress={() => {
+                  setShowReceiptModal(false);
+                  onDone();
+                }}
+              >
+                <ThemedText style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>
+                  ✅ Selesai & Tutup
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={{ paddingVertical: 8, alignItems: 'center' }}
+              onPress={() => setShowReceiptModal(false)}
+            >
+              <ThemedText style={{ color: Colors.muted, fontSize: 11 }}>Tutup Tampilan</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1065,5 +1192,108 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#f8fafc',
+  },
+
+  // Digital Receipt Modal
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  receiptPaper: {
+    width: 380,
+    maxHeight: '92%',
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  receiptStoreName: {
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+    color: '#0f172a',
+  },
+  receiptStoreMeta: {
+    fontSize: 11,
+    textAlign: 'center',
+    color: '#64748b',
+    marginTop: 2,
+  },
+  receiptDashedLine: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#cbd5e1',
+    borderStyle: 'dashed',
+    marginVertical: 10,
+  },
+  receiptRowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  receiptMetaText: {
+    fontSize: 11,
+    color: '#475569',
+  },
+  receiptItemTitle: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  receiptItemQty: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  receiptItemSubtotal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  receiptTotalLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  receiptTotalVal: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: Colors.tint,
+  },
+  receiptFooterText: {
+    fontSize: 11,
+    textAlign: 'center',
+    color: '#64748b',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  receiptModalActions: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  receiptBtnPrint: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.tint,
+    alignItems: 'center',
+    backgroundColor: '#faf5ff',
+  },
+  receiptBtnDone: {
+    flex: 1.2,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: Colors.tint,
   },
 });

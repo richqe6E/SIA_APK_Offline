@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "pos-offline",
+    "name": "POS OFFLINE",
     "slug": "pos-offline",
     "version": "1.0.0",
     "orientation": "default",
@@ -27,23 +27,12 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION"
       ],
-      "enableProguardInReleaseBuilds": true,
-      "enableShrinkResourcesInReleaseBuilds": true,
-      "enableBundleCompression": true,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#ffffff",
+        "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
-      "splits": {
-        "abi": {
-          "enable": true,
-          "universalApk": true
-        }
-      }
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
@@ -68,7 +57,11 @@
       "reactCompiler": true
     },
     "extra": {
-      "router": {}
-    }
+      "router": {},
+      "eas": {
+        "projectId": "97d847aa-a65d-4eb8-9d21-33f936cce00e"
+      }
+    },
+    "owner": "rikire"
   }
 }

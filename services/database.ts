@@ -20,6 +20,9 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     INSERT OR IGNORE INTO settings (key, value) VALUES ('admin_pin', '123456');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('default_view_mode', 'list');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('is_onboarded', '1');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('store_address', 'Jl. Cipto Mangunkusumo, Samarinda');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('store_phone', '0812-3456-7890');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('receipt_footer', 'Terima kasih atas kunjungan Anda!');
   `);
 
   if (currentDbVersion >= DATABASE_VERSION) return;

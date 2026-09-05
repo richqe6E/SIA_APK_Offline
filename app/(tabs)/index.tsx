@@ -10,7 +10,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const DAY_LABELS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
@@ -135,35 +135,50 @@ export default function DashboardScreen() {
       {/* Onboarding Wizard jika pertama kali buka */}
       <OnboardingModal visible={!isOnboarded} onComplete={loadSummary} />
 
-      {/* Brand & Store Mode Header */}
-      <View style={styles.brand}>
-        <View style={styles.brandIconCircle}>
-          <ThemedText style={styles.brandIcon}>
-            {businessMode === 'retail' ? '🛒' : '☕'}
+      {/* Brand & Campus Collaboration Header */}
+      <View style={styles.topHeaderCard}>
+        <View style={styles.headerLeft}>
+          <ThemedText style={styles.karyaPolnesText}>
+            POS Offline Karya Jurusan Akuntansi Polnes
           </ThemedText>
-        </View>
-        <View style={{ flex: 1 }}>
-          <ThemedText type="title" style={{ fontSize: 20, color: '#1e1b4b' }}>
-            {storeName}
-          </ThemedText>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-            <View
-              style={[
-                styles.modeTag,
-                businessMode === 'kuliner' ? styles.modeTagKuliner : styles.modeTagRetail,
-              ]}
-            >
-              <ThemedText
-                style={[
-                  styles.modeTagText,
-                  businessMode === 'kuliner' ? styles.modeTagTextKuliner : styles.modeTagTextRetail,
-                ]}
-              >
-                {businessMode === 'retail' ? 'Mode Retail (Stok & FIFO)' : 'Mode Kuliner (Bebas Stok)'}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <View style={styles.brandIconCircle}>
+              <ThemedText style={styles.brandIcon}>
+                {businessMode === 'retail' ? '🛒' : '☕'}
               </ThemedText>
             </View>
-            <ThemedText style={styles.brandSub}>• {businessType}</ThemedText>
+            <View style={{ flex: 1 }}>
+              <ThemedText type="title" style={{ fontSize: 18, color: '#1e1b4b', fontWeight: '800' }} numberOfLines={1}>
+                {storeName}
+              </ThemedText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                <View
+                  style={[
+                    styles.modeTag,
+                    businessMode === 'kuliner' ? styles.modeTagKuliner : styles.modeTagRetail,
+                  ]}
+                >
+                  <ThemedText
+                    style={[
+                      styles.modeTagText,
+                      businessMode === 'kuliner' ? styles.modeTagTextKuliner : styles.modeTagTextRetail,
+                    ]}
+                  >
+                    {businessMode === 'retail' ? 'Mode Retail' : 'Mode Kuliner'}
+                  </ThemedText>
+                </View>
+                <ThemedText style={styles.brandSub}>• {businessType}</ThemedText>
+              </View>
+            </View>
           </View>
+        </View>
+
+        <View style={styles.logoWrapper}>
+          <Image
+            source={require('@/assets/images/polnes-logo.png')}
+            style={styles.polnesLogo}
+            resizeMode="contain"
+          />
         </View>
       </View>
 
@@ -317,6 +332,43 @@ export default function DashboardScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingTop: 16 },
+  topHeaderCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 12,
+  },
+  headerLeft: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  karyaPolnesText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.tintDark,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  logoWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    padding: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  polnesLogo: {
+    width: '100%',
+    height: '100%',
+  },
   brand: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -74,16 +74,21 @@ interface PrintParams {
   change: number;
   storeName?: string;
   storeAddress?: string;
+  storePhone?: string;
+  receiptFooter?: string;
 }
 
 export async function printReceipt(params: PrintParams): Promise<void> {
   const storeName = params.storeName ?? 'POS Offline';
-  const storeAddress = params.storeAddress ?? 'Toko';
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText(storeName + '\n', {});
-  await BluetoothEscposPrinter.printText(storeAddress + '\n', {});
-  await BluetoothEscposPrinter.printText('\n', {});
+  if (params.storeAddress) {
+    await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
+  }
+  if (params.storePhone) {
+    await BluetoothEscposPrinter.printText('Telp/WA: ' + params.storePhone + '\n', {});
+  }
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
   await BluetoothEscposPrinter.printText(formatInvoice(params.transactionId) + '\n', {});
   await BluetoothEscposPrinter.printText(formatDate(params.createdAt) + '\n', {});
@@ -104,8 +109,7 @@ export async function printReceipt(params: PrintParams): Promise<void> {
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printText('Terima Kasih!\n', {});
-  await BluetoothEscposPrinter.printText('Silahkan Datang Kembali\n', {});
+  await BluetoothEscposPrinter.printText((params.receiptFooter || 'Terima Kasih Atas Kunjungan Anda!') + '\n', {});
 
   await BluetoothEscposPrinter.printAndFeed(4);
   BluetoothEscposPrinter.cutOnePoint();
@@ -180,69 +184,4 @@ export async function printLaporanLabaRugi(params: {
   BluetoothEscposPrinter.cutOnePoint();
 }
 
-// ─────────────────────────────────────────
-// Cetak Laporan Neraca
-// ─────────────────────────────────────────
-export async function printLaporanNeraca(params: {
-  storeName: string;
-  businessType: string;
-  items: { section: string; name: string; amount: number }[];
-  neracaData: {
-    asetLancar: { kas: number; persediaan: number };
-    totalAsetTetap: number;
-    totalKewajiban: number;
-    totalModal: number;
-    labaYangDitahan: number;
-    totalAset: number;
-    totalKewajibanEkuitas: number;
-  };
-}): Promise<void> {
-  const { storeName, items, neracaData } = params;
-  const today = new Date().toLocaleDateString('id-ID');
-
-  const asetTetapItems = items.filter((i) => i.section === 'aset_tetap');
-  const kewajibanItems = items.filter((i) => i.section === 'kewajiban');
-  const modalItems = items.filter((i) => i.section === 'modal');
-
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText('LAPORAN POSISI KEUANGAN\n', {});
-  await BluetoothEscposPrinter.printText(storeName + '\n', {});
-  await BluetoothEscposPrinter.printText('Per ' + today + '\n', {});
-  await BluetoothEscposPrinter.printText('SAK EMKM\n', {});
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
-  await BluetoothEscposPrinter.printText('ASET\n', {});
-  await BluetoothEscposPrinter.printText('Aset Lancar:\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Kas (Est.)', neracaData.asetLancar.kas, true) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Persediaan', neracaData.asetLancar.persediaan, true) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Total Aset Lancar', neracaData.asetLancar.kas + neracaData.asetLancar.persediaan) + '\n', {});
-  await BluetoothEscposPrinter.printText('Aset Tetap:\n', {});
-  for (const i of asetTetapItems) {
-    await BluetoothEscposPrinter.printText(formatLRRow(i.name, i.amount, true) + '\n', {});
-  }
-  await BluetoothEscposPrinter.printText(formatLRRow('Total Aset Tetap', neracaData.totalAsetTetap) + '\n', {});
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('TOTAL ASET', neracaData.totalAset) + '\n', {});
-  await BluetoothEscposPrinter.printText('\n', {});
-
-  await BluetoothEscposPrinter.printText('KEWAJIBAN & EKUITAS\n', {});
-  await BluetoothEscposPrinter.printText('Kewajiban:\n', {});
-  for (const i of kewajibanItems) {
-    await BluetoothEscposPrinter.printText(formatLRRow(i.name, i.amount, true) + '\n', {});
-  }
-  await BluetoothEscposPrinter.printText(formatLRRow('Total Kewajiban', neracaData.totalKewajiban) + '\n', {});
-  await BluetoothEscposPrinter.printText('Modal:\n', {});
-  for (const i of modalItems) {
-    await BluetoothEscposPrinter.printText(formatLRRow(i.name, i.amount, true) + '\n', {});
-  }
-  await BluetoothEscposPrinter.printText(formatLRRow('Laba Ditahan', neracaData.labaYangDitahan, true) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Total Ekuitas', neracaData.totalModal + neracaData.labaYangDitahan) + '\n', {});
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('TOTAL KWJ+EKUITAS', neracaData.totalKewajibanEkuitas) + '\n', {});
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-
-  await BluetoothEscposPrinter.printAndFeed(4);
-  BluetoothEscposPrinter.cutOnePoint();
-}
 

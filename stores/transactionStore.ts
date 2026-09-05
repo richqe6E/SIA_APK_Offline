@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
+import { useProductStore } from './productStore';
 
 export interface CartItem {
   product_id: number;
@@ -152,6 +153,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
 
     set({ cart: [] });
     await get().loadTransactions(db);
+    useProductStore.getState().loadProducts(db);
 
     const countResult = await db.getFirstAsync<{ count: number }>(
       "SELECT COUNT(*) as count FROM transactions WHERE date(created_at) = date('now','localtime')"

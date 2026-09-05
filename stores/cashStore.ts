@@ -111,6 +111,24 @@ export const useCashStore = create<CashState>((set, get) => ({
       amount,
       today
     );
+
+    if (type === 'out') {
+      let expCat = 'lain-lain';
+      if (category.includes('gaji')) expCat = 'gaji';
+      else if (category.includes('sewa')) expCat = 'sewa';
+      else if (category.includes('listrik')) expCat = 'listrik';
+      else if (category.includes('transport')) expCat = 'transportasi';
+      else if (category.includes('bahan')) expCat = 'bahan_baku';
+
+      await db.runAsync(
+        'INSERT INTO expenses (category, description, amount, expense_date) VALUES (?, ?, ?, ?)',
+        expCat,
+        description,
+        amount,
+        today
+      );
+    }
+
     await get().loadLedger(db);
   },
 

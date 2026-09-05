@@ -2,7 +2,8 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
   Alert,
   FlatList,
@@ -76,12 +77,14 @@ export default function ProductsScreen() {
   const [opnameNotes, setOpnameNotes] = useState('');
   const [savingOpname, setSavingOpname] = useState(false);
 
-  useEffect(() => {
-    loadProducts(db);
-    loadCategories(db);
-    loadSettings(db);
-    loadLedger(db);
-  }, [db, loadProducts, loadCategories, loadSettings, loadLedger]);
+  useFocusEffect(
+    useCallback(() => {
+      loadProducts(db);
+      loadCategories(db);
+      loadSettings(db);
+      loadLedger(db);
+    }, [db, loadProducts, loadCategories, loadSettings, loadLedger])
+  );
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -296,7 +299,7 @@ export default function ProductsScreen() {
           </ThemedText>
           <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
             {isRetail
-              ? 'Kelola stok fisik, kulakan & harga beli (HPP)'
+              ? 'Kelola stok fisik, pembelian barang & harga modal (HPP)'
               : 'Menu siap saji & harga jual bebas stok'}
           </ThemedText>
         </View>
@@ -306,7 +309,7 @@ export default function ProductsScreen() {
           {isRetail && (
             <>
               <TouchableOpacity style={styles.retailActionBtn} onPress={openKulakanModal}>
-                <ThemedText style={styles.retailActionBtnText}>📦 Kulakan</ThemedText>
+                <ThemedText style={styles.retailActionBtnText}>📦 Beli Stok</ThemedText>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.retailActionBtn, { backgroundColor: '#fef3c7', borderColor: '#fde68a' }]}
@@ -580,7 +583,7 @@ export default function ProductsScreen() {
         <ThemedView style={styles.modalOverlay}>
           <Card style={styles.modalContent} padding={22}>
             <View style={styles.modalHeader}>
-              <ThemedText type="subtitle">📦 Kulakan Pembelian Stok</ThemedText>
+              <ThemedText type="subtitle">📦 Pembelian Stok / Barang</ThemedText>
               <Pressable onPress={() => setPurchaseModalVisible(false)} style={styles.closeBtn}>
                 <ThemedText style={{ fontSize: 18, color: Colors.muted }}>✕</ThemedText>
               </Pressable>

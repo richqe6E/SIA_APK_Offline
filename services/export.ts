@@ -1,19 +1,7 @@
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
 import type { SQLiteDatabase } from '@/services/database';
-
-interface ExportRow {
-  tanggal: string;
-  invoice: string;
-  produk: string;
-  qty: number;
-  harga_satuan: number;
-  subtotal: number;
-  total: number;
-  metode_bayar: string;
-  dibayar: number;
-  kembalian: number;
-}
 
 function escapeCSV(val: string | number): string {
   const str = String(val);
@@ -36,6 +24,14 @@ function formatInvoice(id: number): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yy = String(d.getFullYear()).slice(-2);
   return `INV-${dd}${mm}${yy}-${String(id).padStart(3, '0')}`;
+}
+
+export async function shareFile(fileUri: string, mimeType: string = 'text/csv'): Promise<void> {
+  const canShare = await Sharing.isAvailableAsync();
+  if (!canShare) {
+    throw new Error('Fitur berbagi tidak tersedia di perangkat ini');
+  }
+  await Sharing.shareAsync(fileUri, { mimeType });
 }
 
 export async function exportTransactionsToCSV(
@@ -109,22 +105,277 @@ export async function exportTransactionsToCSV(
   return file.uri;
 }
 
-export async function shareFile(fileUri: string, mimeType: string = 'text/csv'): Promise<void> {
-  const canShare = await Sharing.isAvailableAsync();
-  if (!canShare) {
-    throw new Error('Sharing tidak tersedia di perangkat ini');
+export async function exportProductsToCSV(db: SQLiteDatabase): Promise<string> {
+  const rows = await db.getAllAsync<any>(
+    'SELECT id, name, category, price, cost_price, stock, has_stock FROM products ORDER BY name ASC'
+  );
+  if (rows.length === 0) return '';
+  const headers = ['ID', 'Nama Produk', 'Kategori', 'Harga Jual', 'HPP Modal', 'Stok', 'Kelola Stok'];
+  const lines = [headers.join(',')];
+  for (const r of rows) {
+    lines.push([
+      r.id,
+      escapeCSV(r.name),
+      escapeCSV(r.category || 'Umum'),
+      r.price,
+      r.cost_price,
+      r.stock,
+      r.has_stock ? 'Ya' : 'Tidak',
+    ].join(','));
   }
-  await Sharing.shareAsync(fileUri, { mimeType });
+  const filename = `produk_${new Date().toISOString().slice(0, 10)}.csv`;
+  const file = new File(Paths.cache, filename);
+  file.write(lines.join('\n'));
+  return file.uri;
 }
 
-// ─────────────────────────────────────────
-// Laporan Keuangan Export
-// ─────────────────────────────────────────
+export async function importProductsFromCSV(db: SQLiteDatabase, csvContent: string): Promise<number> {
+  const lines = csvContent.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  if (lines.length === 0) throw new Error('File CSV kosong');
 
-const MONTH_NAMES = [
-  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
-];
+  const parseLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  let count = 0;
+  const startIndex = lines[0].toLowerCase().includes('nama') || lines[0].toLowerCase().includes('name') ? 1 : 0;
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (let i = startIndex; i < lines.length; i++) {
+      const cols = parseLine(lines[i]);
+      if (cols.length < 2) continue;
+
+      let name = '';
+      let category = 'Umum';
+      let price = 0;
+      let cost_price = 0;
+      let stock = 0;
+      let has_stock = 1;
+
+      if (isNaN(Number(cols[0])) && cols.length >= 2) {
+        name = cols[0];
+        category = cols[1] || 'Umum';
+        price = parseFloat(cols[2]?.replace(/[^0-9.]/g, '') || '0') || 0;
+        cost_price = parseFloat(cols[3]?.replace(/[^0-9.]/g, '') || '0') || 0;
+        stock = parseInt(cols[4]?.replace(/[^0-9-]/g, '') || '0', 10) || 0;
+        has_stock = cols[5]?.toLowerCase() === 'tidak' ? 0 : 1;
+      } else if (cols.length >= 4) {
+        name = cols[1];
+        category = cols[2] || 'Umum';
+        price = parseFloat(cols[3]?.replace(/[^0-9.]/g, '') || '0') || 0;
+        cost_price = parseFloat(cols[4]?.replace(/[^0-9.]/g, '') || '0') || 0;
+        stock = parseInt(cols[5]?.replace(/[^0-9-]/g, '') || '0', 10) || 0;
+        has_stock = cols[6]?.toLowerCase() === 'tidak' ? 0 : 1;
+      }
+
+      if (!name) continue;
+
+      const existing = await txn.getFirstAsync<{ id: number }>(
+        'SELECT id FROM products WHERE LOWER(name) = LOWER(?)',
+        name
+      );
+
+      if (existing) {
+        await txn.runAsync(
+          'UPDATE products SET category = ?, price = ?, cost_price = ?, stock = ?, has_stock = ? WHERE id = ?',
+          category, price, cost_price, stock, has_stock, existing.id
+        );
+      } else {
+        await txn.runAsync(
+          'INSERT INTO products (name, category, price, cost_price, stock, has_stock) VALUES (?, ?, ?, ?, ?, ?)',
+          name, category, price, cost_price, stock, has_stock
+        );
+      }
+      count++;
+    }
+  });
+
+  return count;
+}
+
+export async function exportProductsToPDF(
+  db: SQLiteDatabase,
+  storeName: string,
+  businessType: string
+): Promise<string> {
+  const rows = await db.getAllAsync<any>(
+    'SELECT name, category, price, cost_price, stock, has_stock FROM products ORDER BY category ASC, name ASC'
+  );
+  const nowStr = new Date().toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  const tableRows = rows.map((p, idx) => `
+    <tr>
+      <td style="text-align: center;">${idx + 1}</td>
+      <td><strong>${p.name}</strong></td>
+      <td>${p.category || 'Umum'}</td>
+      <td style="text-align: right;">Rp ${Math.round(p.price).toLocaleString('id-ID')}</td>
+      <td style="text-align: right;">Rp ${Math.round(p.cost_price).toLocaleString('id-ID')}</td>
+      <td style="text-align: center;">${p.has_stock ? p.stock : '∞'}</td>
+    </tr>
+  `).join('');
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; padding: 24px; margin: 0; }
+        .header { text-align: center; border-bottom: 2px solid #7c3aed; padding-bottom: 12px; margin-bottom: 16px; }
+        .header h1 { margin: 0; font-size: 20px; color: #1e1b4b; }
+        .header p { margin: 3px 0 0 0; font-size: 12px; color: #64748b; }
+        .badge { display: inline-block; background: #f3e8ff; color: #7c3aed; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-top: 4px; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px; }
+        th { background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 6px; font-weight: bold; text-align: left; }
+        td { border: 1px solid #e2e8f0; padding: 6px; }
+        tr:nth-child(even) { background-color: #fdfdfd; }
+        .footer { margin-top: 24px; font-size: 10px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>${storeName}</h1>
+        <p>${businessType} • DAFTAR PRODUK & STOK</p>
+        <span class="badge">Tanggal: ${nowStr} • Total: ${rows.length} Produk</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 30px; text-align: center;">No</th>
+            <th>Nama Produk</th>
+            <th style="width: 80px;">Kategori</th>
+            <th style="width: 90px; text-align: right;">Harga Jual</th>
+            <th style="width: 90px; text-align: right;">Harga Pokok</th>
+            <th style="width: 50px; text-align: center;">Stok</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows}
+        </tbody>
+      </table>
+      <div class="footer">
+        Dicetak dari POS Offline Karya Jurusan Akuntansi Polnes
+      </div>
+    </body>
+    </html>
+  `;
+
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  return uri;
+}
+
+export async function exportTransactionsToPDF(
+  db: SQLiteDatabase,
+  storeName: string,
+  startDate?: string,
+  endDate?: string
+): Promise<string> {
+  let whereClause = '';
+  const params: any[] = [];
+  if (startDate && endDate) {
+    whereClause = 'WHERE date(t.created_at) BETWEEN ? AND ?';
+    params.push(startDate, endDate);
+  }
+
+  const rows = await db.getAllAsync<any>(
+    `SELECT t.id, t.total, t.payment_method, t.created_at,
+            COUNT(ti.id) as item_count
+     FROM transactions t
+     LEFT JOIN transaction_items ti ON ti.transaction_id = t.id
+     ${whereClause}
+     GROUP BY t.id
+     ORDER BY t.created_at DESC`,
+    ...params
+  );
+
+  const totalOmset = rows.reduce((sum, r) => sum + r.total, 0);
+
+  const tableRows = rows.map((t, idx) => `
+    <tr>
+      <td style="text-align: center;">${idx + 1}</td>
+      <td>INV-${String(t.id).padStart(4, '0')}</td>
+      <td>${new Date(t.created_at).toLocaleDateString('id-ID')}</td>
+      <td style="text-transform: capitalize;">${t.payment_method}</td>
+      <td style="text-align: center;">${t.item_count} item</td>
+      <td style="text-align: right;">Rp ${Math.round(t.total).toLocaleString('id-ID')}</td>
+    </tr>
+  `).join('');
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; padding: 24px; margin: 0; }
+        .header { text-align: center; border-bottom: 2px solid #7c3aed; padding-bottom: 12px; margin-bottom: 16px; }
+        .header h1 { margin: 0; font-size: 20px; color: #1e1b4b; }
+        .header p { margin: 3px 0 0 0; font-size: 12px; color: #64748b; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px; }
+        th { background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 6px; font-weight: bold; text-align: left; }
+        td { border: 1px solid #e2e8f0; padding: 6px; }
+        .total-card { background: #f3e8ff; padding: 10px; border-radius: 8px; margin-top: 12px; text-align: right; font-weight: bold; font-size: 13px; color: #6b21a8; }
+        .footer { margin-top: 24px; font-size: 10px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>${storeName}</h1>
+        <p>REKAP TRANSAKSI PENJUALAN</p>
+        <p>${startDate && endDate ? `Periode: ${startDate} s/d ${endDate}` : 'Semua Transaksi'}</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 30px; text-align: center;">No</th>
+            <th>Invoice</th>
+            <th>Tanggal</th>
+            <th>Metode</th>
+            <th style="text-align: center;">Qty</th>
+            <th style="text-align: right;">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows}
+        </tbody>
+      </table>
+      <div class="total-card">
+        Total Omset (${rows.length} Transaksi): Rp ${Math.round(totalOmset).toLocaleString('id-ID')}
+      </div>
+      <div class="footer">
+        POS Offline Karya Jurusan Akuntansi Polnes
+      </div>
+    </body>
+    </html>
+  `;
+
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  return uri;
+}
 
 const EXPENSE_CATEGORY_LABELS: Record<string, string> = {
   gaji: 'Gaji & Upah',
@@ -135,96 +386,126 @@ const EXPENSE_CATEGORY_LABELS: Record<string, string> = {
   'lain-lain': 'Lain-lain',
 };
 
-export async function exportFinancialReport(db: SQLiteDatabase, params: any): Promise<string> {
-  const { type, storeName, businessType } = params;
-  let csvLines: string[] = [];
-  let filename = '';
+export async function exportLabaRugiToPDF(params: {
+  storeName: string;
+  businessType: string;
+  storeAddress?: string;
+  storePhone?: string;
+  data: any;
+}): Promise<string> {
+  const { storeName, storeAddress, storePhone, data } = params;
+  const nowStr = new Date().toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
 
-  if (type === 'labarugi') {
-    const { data, filterMode, month, year } = params;
-    const periode = filterMode === 'month'
-      ? `${MONTH_NAMES[month - 1]} ${year}`
-      : `Tahun ${year}`;
+  const fmt = (n: number) => {
+    const s = n < 0 ? '- ' : '';
+    return s + 'Rp ' + Math.abs(Math.round(n)).toLocaleString('id-ID');
+  };
 
-    filename = `laporan_labarugi_${filterMode === 'month' ? `${String(month).padStart(2,'0')}_${year}` : year}.csv`;
+  const bebanRows = data.bebanByCategory?.map((b: any) => `
+    <tr>
+      <td style="padding-left: 20px;">${EXPENSE_CATEGORY_LABELS[b.category] || b.category}</td>
+      <td style="text-align: right;">${fmt(b.total)}</td>
+    </tr>
+  `).join('') || '';
 
-    csvLines = [
-      `LAPORAN LABA / RUGI`,
-      `Nama Usaha,${escapeCSV(storeName)}`,
-      `Jenis Usaha,${escapeCSV(businessType)}`,
-      `Periode,${escapeCSV(periode)}`,
-      `Standar,SAK EMKM`,
-      `Jumlah Transaksi,${data.jumlahTransaksi}`,
-      '',
-      'KETERANGAN,NILAI (Rp)',
-      'A. PENDAPATAN,',
-      `Penjualan Bersih,${Math.round(data.penjualanBruto)}`,
-      `Total Pendapatan,${Math.round(data.penjualanBruto)}`,
-      '',
-      'B. HARGA POKOK PENJUALAN,',
-      `Harga Pokok Barang Terjual,${Math.round(data.hpp)}`,
-      `Total HPP,${Math.round(data.hpp)}`,
-      '',
-      `LABA KOTOR (A - B),${Math.round(data.labaKotor)}`,
-      '',
-      'C. BEBAN OPERASIONAL,',
-      ...data.bebanByCategory.map((b: any) => {
-        const label = EXPENSE_CATEGORY_LABELS[b.category] ?? b.category;
-        return `${escapeCSV(label)},${Math.round(b.total)}`;
-      }),
-      `Total Beban Operasional,${Math.round(data.totalBeban)}`,
-      '',
-      `LABA BERSIH,${Math.round(data.labaOperasional)}`,
-    ];
-  } else if (type === 'neraca') {
-    const { neracaData, items } = params;
-    const today = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; padding: 28px; margin: 0; }
+        .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 18px; }
+        .header h1 { margin: 0; font-size: 18px; text-transform: uppercase; color: #0f172a; }
+        .header h2 { margin: 4px 0; font-size: 15px; color: #334155; }
+        .header p { margin: 2px 0; font-size: 11px; color: #64748b; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+        th { background-color: #f1f5f9; padding: 8px 10px; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; text-align: left; }
+        td { padding: 6px 10px; }
+        .section-header td { font-weight: bold; background: #f8fafc; padding-top: 10px; }
+        .total-row td { font-weight: bold; border-top: 1px dashed #cbd5e1; border-bottom: 1px solid #0f172a; }
+        .laba-bersih { background-color: ${data.labaOperasional >= 0 ? '#f0fdf4' : '#fef2f2'}; }
+        .laba-bersih td { font-size: 13px; font-weight: bold; color: ${data.labaOperasional >= 0 ? '#15803d' : '#b91c1c'}; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; padding: 10px; }
+        .footer { margin-top: 32px; font-size: 10px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>${storeName}</h1>
+        ${storeAddress ? `<p>${storeAddress}</p>` : ''}
+        ${storePhone ? `<p>Telp / WA: ${storePhone}</p>` : ''}
+        <h2>LAPORAN LABA / RUGI</h2>
+        <p>Periode: <strong>${data.periodeLabel}</strong> • Standar SAK EMKM</p>
+      </div>
 
-    filename = `laporan_neraca_${new Date().toISOString().slice(0, 10)}.csv`;
+      <table>
+        <thead>
+          <tr>
+            <th>KETERANGAN</th>
+            <th style="width: 140px; text-align: right;">NILAI</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="section-header">
+            <td colspan="2">PENDAPATAN USAHA</td>
+          </tr>
+          <tr>
+            <td style="padding-left: 20px;">Penjualan Bersih (${data.jumlahTransaksi} transaksi)</td>
+            <td style="text-align: right;">${fmt(data.penjualanBruto)}</td>
+          </tr>
+          <tr class="total-row">
+            <td>Total Pendapatan</td>
+            <td style="text-align: right;">${fmt(data.penjualanBruto)}</td>
+          </tr>
 
-    const asetTetapItems = items.filter((i: any) => i.section === 'aset_tetap');
-    const kewajibanItems = items.filter((i: any) => i.section === 'kewajiban');
-    const modalItems = items.filter((i: any) => i.section === 'modal');
+          <tr class="section-header">
+            <td colspan="2">HARGA POKOK PENJUALAN (HPP)</td>
+          </tr>
+          <tr>
+            <td style="padding-left: 20px;">Harga Pokok Barang Terjual</td>
+            <td style="text-align: right;">${fmt(data.hpp)}</td>
+          </tr>
+          <tr class="total-row">
+            <td>Total HPP</td>
+            <td style="text-align: right;">${fmt(data.hpp)}</td>
+          </tr>
 
-    csvLines = [
-      `LAPORAN POSISI KEUANGAN (NERACA)`,
-      `Nama Usaha,${escapeCSV(storeName)}`,
-      `Jenis Usaha,${escapeCSV(businessType)}`,
-      `Per Tanggal,${escapeCSV(today)}`,
-      `Standar,SAK EMKM`,
-      '',
-      'ASET,NILAI (Rp)',
-      'Aset Lancar,',
-      `   Kas & Setara Kas (Est.),${Math.round(neracaData.asetLancar.kas)}`,
-      `   Persediaan Barang,${Math.round(neracaData.asetLancar.persediaan)}`,
-      `Total Aset Lancar,${Math.round(neracaData.asetLancar.kas + neracaData.asetLancar.persediaan)}`,
-      '',
-      'Aset Tetap,',
-      ...asetTetapItems.map((i: any) => `   ${escapeCSV(i.name)},${Math.round(i.amount)}`),
-      `Total Aset Tetap,${Math.round(neracaData.totalAsetTetap)}`,
-      '',
-      `TOTAL ASET,${Math.round(neracaData.totalAset)}`,
-      '',
-      'KEWAJIBAN & EKUITAS,NILAI (Rp)',
-      'Kewajiban,',
-      ...kewajibanItems.map((i: any) => `   ${escapeCSV(i.name)},${Math.round(i.amount)}`),
-      `Total Kewajiban,${Math.round(neracaData.totalKewajiban)}`,
-      '',
-      'Ekuitas / Modal,',
-      ...modalItems.map((i: any) => `   ${escapeCSV(i.name)},${Math.round(i.amount)}`),
-      `   Laba Ditahan (Est.),${Math.round(neracaData.labaYangDitahan)}`,
-      `Total Ekuitas,${Math.round(neracaData.totalModal + neracaData.labaYangDitahan)}`,
-      '',
-      `TOTAL KEWAJIBAN + EKUITAS,${Math.round(neracaData.totalKewajibanEkuitas)}`,
-    ];
-  }
+          <tr style="background: #f8fafc;">
+            <td style="font-weight: bold; padding: 8px 10px;">LABA KOTOR</td>
+            <td style="text-align: right; font-weight: bold; padding: 8px 10px;">${fmt(data.labaKotor)}</td>
+          </tr>
 
-  const csv = csvLines.join('\n');
-  const file = new File(Paths.cache, filename.replace(/[<>:"/\\|?*]/g, '_'));
-  file.write(csv);
-  return file.uri;
+          <tr class="section-header">
+            <td colspan="2">BEBAN OPERASIONAL</td>
+          </tr>
+          ${bebanRows || '<tr><td style="padding-left: 20px; color: #94a3b8;">Tidak ada beban</td><td style="text-align: right;">Rp 0</td></tr>'}
+          <tr class="total-row">
+            <td>Total Beban Operasional</td>
+            <td style="text-align: right;">${fmt(data.totalBeban)}</td>
+          </tr>
+
+          <tr class="laba-bersih">
+            <td>${data.labaOperasional >= 0 ? 'LABA BERSIH' : 'RUGI BERSIH'}</td>
+            <td style="text-align: right;">${fmt(data.labaOperasional)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="footer">
+        Laporan Keuangan POS Offline • Karya Jurusan Akuntansi Politeknik Negeri Samarinda (POLNES)<br/>
+        Dicetak pada: ${nowStr}
+      </div>
+    </body>
+    </html>
+  `;
+
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  return uri;
 }
-
 
 export async function deleteTransactions(
   db: SQLiteDatabase,
