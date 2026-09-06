@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  const DATABASE_VERSION = 6;
+  const DATABASE_VERSION = 8;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -23,6 +23,8 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     INSERT OR IGNORE INTO settings (key, value) VALUES ('store_address', 'Jl. Cipto Mangunkusumo, Samarinda');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('store_phone', '0812-3456-7890');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('receipt_footer', 'Terima kasih atas kunjungan Anda!');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('qris_image_path', '');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('app_orientation', 'portrait');
   `);
 
   if (currentDbVersion >= DATABASE_VERSION) return;
@@ -186,5 +188,119 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     currentDbVersion = 6;
   }
 
+  if (currentDbVersion === 6) {
+    // Migrasi v7: Customers, Suppliers, Piutang, Hutang, Payment type pembelian/transaksi, Setting QRIS & Orientasi
+    await db.execAsync(`
+      -- Tabel Customer
+      CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      );
+
+      -- Tabel Piutang Customer (Customer Receivables)
+      CREATE TABLE IF NOT EXISTS customer_receivables (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL,
+        transaction_id INTEGER,
+        total_amount REAL NOT NULL,
+        paid_amount REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'unpaid', -- 'unpaid' | 'partial' | 'paid'
+        due_date TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+        FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE SET NULL
+      );
+
+      -- Tabel Pembayaran / Pelunasan Piutang Customer
+      CREATE TABLE IF NOT EXISTS receivable_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        receivable_id INTEGER NOT NULL,
+        payment_date TEXT NOT NULL DEFAULT (date('now','localtime')),
+        amount REAL NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (receivable_id) REFERENCES customer_receivables(id) ON DELETE CASCADE
+      );
+
+      -- Tabel Supplier
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        address TEXT NOT NULL DEFAULT '',
+        phone TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      );
+
+      -- Tabel Hutang Supplier (Supplier Debts)
+      CREATE TABLE IF NOT EXISTS supplier_debts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        supplier_id INTEGER NOT NULL,
+        purchase_id INTEGER,
+        total_amount REAL NOT NULL,
+        paid_amount REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'unpaid', -- 'unpaid' | 'partial' | 'paid'
+        due_date TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+        FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE SET NULL
+      );
+
+      -- Tabel Pembayaran / Pelunasan Hutang Supplier
+      CREATE TABLE IF NOT EXISTS debt_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        debt_id INTEGER NOT NULL,
+        payment_date TEXT NOT NULL DEFAULT (date('now','localtime')),
+        amount REAL NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (debt_id) REFERENCES supplier_debts(id) ON DELETE CASCADE
+      );
+
+      -- Kolom Tambahan pada purchases: payment_type ('tunai' | 'kredit'), supplier_id
+      ALTER TABLE purchases ADD COLUMN payment_type TEXT NOT NULL DEFAULT 'tunai';
+      ALTER TABLE purchases ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL;
+
+      -- Kolom Tambahan pada transactions: customer_id, is_credit
+      ALTER TABLE transactions ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL;
+      ALTER TABLE transactions ADD COLUMN is_credit INTEGER NOT NULL DEFAULT 0;
+    `);
+    currentDbVersion = 7;
+  }
+
+  if (currentDbVersion === 7) {
+    // Migrasi v8: Tambah kolom barcode pada products
+    await db.execAsync(`
+      ALTER TABLE products ADD COLUMN barcode TEXT NOT NULL DEFAULT '';
+    `);
+    currentDbVersion = 8;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }
+
+export async function resetEntireDatabase(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      DELETE FROM transaction_items;
+      DELETE FROM transactions;
+      DELETE FROM cash_ledger;
+      DELETE FROM expenses;
+      DELETE FROM balance_sheet_items;
+      DELETE FROM purchase_items;
+      DELETE FROM purchases;
+      DELETE FROM stock_adjustments;
+      DELETE FROM receivable_payments;
+      DELETE FROM customer_receivables;
+      DELETE FROM debt_payments;
+      DELETE FROM supplier_debts;
+      DELETE FROM products;
+      DELETE FROM categories;
+      DELETE FROM customers;
+      DELETE FROM suppliers;
+      DELETE FROM sqlite_sequence;
+    `);
+  });
+}
+

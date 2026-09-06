@@ -24,9 +24,13 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BarcodeScannerModal } from '@/components/barcode-scanner-modal';
+import { BulkQtyModal } from '@/components/bulk-qty-modal';
+import { QrisDisplayModal } from '@/components/qris-display-modal';
 
 export default function TransactionScreen() {
   const router = useRouter();
@@ -38,8 +42,18 @@ export default function TransactionScreen() {
   const { categories, loadCategories } = useCategoryStore();
   const { cart, addToCart, updateQuantity, removeFromCart, checkout } =
     useTransactionStore();
-  const { loadSettings, businessMode, defaultViewMode, setDefaultViewMode } =
-    useSettingsStore();
+  const {
+    loadSettings,
+    businessMode,
+    defaultViewMode,
+    setDefaultViewMode,
+    qrisImagePath,
+    storeName,
+  } = useSettingsStore();
+
+  const { width } = useWindowDimensions();
+  // Responsif tablet landscape: lebar >= 1050 (4 kolom), >= 720 (3 kolom), lainnya 2 kolom
+  const gridColumns = width >= 1050 ? 4 : width >= 720 ? 3 : 2;
 
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
@@ -56,6 +70,12 @@ export default function TransactionScreen() {
     paymentAmount: number;
     change: number;
   } | null>(null);
+
+  // Fase 4 Modals: Barcode Scanner, Bulk Qty, QRIS Fullscreen
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [bulkQtyTarget, setBulkQtyTarget] = useState<CartItem | null>(null);
+  const [showBulkQtyModal, setShowBulkQtyModal] = useState(false);
+  const [showQrisCustomerModal, setShowQrisCustomerModal] = useState(false);
 
   useEffect(() => {
     loadProducts(db);
@@ -141,6 +161,40 @@ export default function TransactionScreen() {
     addToCart(product);
   };
 
+  const handleBarcodeScanned = (code: string) => {
+    const trimmed = code.trim().toLowerCase();
+    const matched = products.find(
+      (p) =>
+        (p.barcode && p.barcode.trim().toLowerCase() === trimmed) ||
+        p.name.toLowerCase() === trimmed
+    );
+    if (matched) {
+      handleAddToCartWithValidation(matched);
+    } else {
+      Alert.alert(
+        'Produk Tidak Ditemukan',
+        `Barcode "${code}" tidak ditemukan pada katalog produk.`
+      );
+    }
+  };
+
+  const handleOpenBulkQty = (item: CartItem) => {
+    setBulkQtyTarget(item);
+    setShowBulkQtyModal(true);
+  };
+
+  const handleSaveBulkQty = (newQty: number) => {
+    if (bulkQtyTarget) {
+      updateQuantity(bulkQtyTarget.product_id, newQty);
+      setShowBulkQtyModal(false);
+      setBulkQtyTarget(null);
+    }
+  };
+
+  const targetProductForBulk = bulkQtyTarget
+    ? products.find((p) => p.id === bulkQtyTarget.product_id)
+    : null;
+
   return (
     <ThemedView style={[styles.container, { paddingLeft: insets.left, paddingRight: insets.right }]}>
       {step === 1 ? (
@@ -156,9 +210,12 @@ export default function TransactionScreen() {
           filteredProducts={filteredProducts}
           cart={cart}
           total={total}
+          gridColumns={gridColumns}
           onAddToCart={handleAddToCartWithValidation}
           onUpdateQty={(id, qty) => updateQuantity(id, qty)}
           onRemove={(id) => removeFromCart(id)}
+          onOpenBarcodeScanner={() => setShowBarcodeScanner(true)}
+          onOpenBulkQty={handleOpenBulkQty}
           onNext={() => setStep(2)}
           onDone={handleSelesaiMenjual}
         />
@@ -177,13 +234,54 @@ export default function TransactionScreen() {
           paymentAmount={paymentAmount}
           parsedAmount={parsedAmount}
           change={change}
+          qrisImagePath={qrisImagePath}
+          storeName={storeName}
           onChangeMethod={setPaymentMethod}
           onNumpadPress={handleNumpadPress}
           onSetAmount={(v) => setPaymentAmount(v)}
+          onOpenQrisCustomerModal={() => setShowQrisCustomerModal(true)}
           onBack={() => setStep(1)}
           onConfirm={handleCheckout}
         />
       )}
+
+      {/* Barcode Scanner Modal (Poin 9) */}
+      <BarcodeScannerModal
+        visible={showBarcodeScanner}
+        onClose={() => setShowBarcodeScanner(false)}
+        onScanned={handleBarcodeScanned}
+        title="Pindai Barcode Produk Kasir"
+      />
+
+      {/* Bulk Quantity Modal (Poin 14) */}
+      {bulkQtyTarget && (
+        <BulkQtyModal
+          visible={showBulkQtyModal}
+          onClose={() => {
+            setShowBulkQtyModal(false);
+            setBulkQtyTarget(null);
+          }}
+          productName={bulkQtyTarget.product_name}
+          productPrice={bulkQtyTarget.product_price}
+          currentQty={bulkQtyTarget.quantity}
+          maxStock={targetProductForBulk?.has_stock === 1 ? targetProductForBulk.stock : undefined}
+          hasStock={targetProductForBulk?.has_stock === 1}
+          onSaveQty={handleSaveBulkQty}
+        />
+      )}
+
+      {/* Fullscreen Customer QRIS Modal (Poin 15) */}
+      <QrisDisplayModal
+        visible={showQrisCustomerModal}
+        onClose={() => setShowQrisCustomerModal(false)}
+        qrisImagePath={qrisImagePath}
+        storeName={storeName}
+        totalAmount={total}
+        onConfirmPayment={() => {
+          setShowQrisCustomerModal(false);
+          handleCheckout();
+        }}
+      />
     </ThemedView>
   );
 }
@@ -200,9 +298,12 @@ function Step1View({
   filteredProducts,
   cart,
   total,
+  gridColumns,
   onAddToCart,
   onUpdateQty,
   onRemove,
+  onOpenBarcodeScanner,
+  onOpenBulkQty,
   onNext,
   onDone,
 }: {
@@ -217,9 +318,12 @@ function Step1View({
   filteredProducts: Product[];
   cart: CartItem[];
   total: number;
+  gridColumns: number;
   onAddToCart: (p: Product) => void;
   onUpdateQty: (id: number, qty: number) => void;
   onRemove: (id: number) => void;
+  onOpenBarcodeScanner: () => void;
+  onOpenBulkQty: (item: CartItem) => void;
   onNext: () => void;
   onDone: () => void;
 }) {
@@ -247,6 +351,14 @@ function Step1View({
               </Pressable>
             )}
           </View>
+
+          {/* Tombol Scan Barcode Kasir */}
+          <TouchableOpacity
+            style={styles.scanBarcodeBtn}
+            onPress={onOpenBarcodeScanner}
+          >
+            <ThemedText style={styles.scanBarcodeBtnText}>📷 Scan</ThemedText>
+          </TouchableOpacity>
 
           {/* Toggle View Mode Button */}
           <Pressable
@@ -284,10 +396,10 @@ function Step1View({
 
         {/* Product Catalog (Dynamic List vs Grid) */}
         <FlatList
-          key={viewMode} // Re-render properly when switching numColumns
+          key={`${viewMode}-${gridColumns}`} // Re-render properly when switching numColumns
           data={filteredProducts}
           keyExtractor={(item) => item.id.toString()}
-          numColumns={viewMode === 'grid' ? 2 : 1}
+          numColumns={viewMode === 'grid' ? gridColumns : 1}
           contentContainerStyle={viewMode === 'grid' ? styles.productGrid : styles.productList}
           columnWrapperStyle={viewMode === 'grid' ? { gap: 8 } : undefined}
           renderItem={({ item }) =>
@@ -343,9 +455,15 @@ function Step1View({
                   >
                     <ThemedText style={{ fontWeight: '700' }}>-</ThemedText>
                   </Pressable>
-                  <ThemedText style={{ fontWeight: '600', minWidth: 16, textAlign: 'center' }}>
-                    {item.quantity}
-                  </ThemedText>
+                  <Pressable
+                    style={styles.qtyTouchBadge}
+                    onPress={() => onOpenBulkQty(item)}
+                    hitSlop={4}
+                  >
+                    <ThemedText style={styles.qtyTouchText}>
+                      {item.quantity}
+                    </ThemedText>
+                  </Pressable>
                   <Pressable
                     style={styles.qtyBtn}
                     onPress={() => onUpdateQty(item.product_id, item.quantity + 1)}
@@ -392,9 +510,12 @@ function Step2View({
   paymentAmount,
   parsedAmount,
   change,
+  qrisImagePath,
+  storeName,
   onChangeMethod,
   onNumpadPress,
   onSetAmount,
+  onOpenQrisCustomerModal,
   onBack,
   onConfirm,
 }: {
@@ -404,9 +525,12 @@ function Step2View({
   paymentAmount: string;
   parsedAmount: number;
   change: number;
+  qrisImagePath: string;
+  storeName: string;
   onChangeMethod: (m: 'tunai' | 'qris') => void;
   onNumpadPress: (v: string) => void;
   onSetAmount: (v: string) => void;
+  onOpenQrisCustomerModal: () => void;
   onBack: () => void;
   onConfirm: () => void;
 }) {
@@ -566,13 +690,30 @@ function Step2View({
           </View>
         ) : (
           <View style={styles.qrisInfo}>
-            <ThemedText style={{ textAlign: 'center', fontSize: 48, marginBottom: 8 }}>📱</ThemedText>
-            <ThemedText style={{ textAlign: 'center', fontWeight: 'bold', fontSize: 16 }}>
+            {qrisImagePath ? (
+              <Image
+                source={{ uri: qrisImagePath }}
+                style={styles.qrisThumbnail}
+                resizeMode="contain"
+              />
+            ) : (
+              <ThemedText style={{ textAlign: 'center', fontSize: 44, marginBottom: 4 }}>📱</ThemedText>
+            )}
+            <ThemedText style={{ textAlign: 'center', fontWeight: 'bold', fontSize: 15 }}>
               Scan QRIS Toko
             </ThemedText>
-            <ThemedText style={{ textAlign: 'center', fontSize: 12, color: Colors.muted, marginTop: 4 }}>
-              Minta pelanggan memindai kode QRIS statis di meja kasir sebesar Rp {total.toLocaleString('id-ID')}
+            <ThemedText style={{ textAlign: 'center', fontSize: 13, color: Colors.tint, fontWeight: '700', marginTop: 2 }}>
+              Rp {total.toLocaleString('id-ID')}
             </ThemedText>
+
+            <TouchableOpacity
+              style={styles.openQrisBtn}
+              onPress={onOpenQrisCustomerModal}
+            >
+              <ThemedText style={styles.openQrisBtnText}>
+                🔍 Layar Penuh QRIS Pelanggan
+              </ThemedText>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -1009,6 +1150,36 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.tintDark,
   },
+  scanBarcodeBtn: {
+    paddingHorizontal: 12,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: Colors.tint,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanBarcodeBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  qtyTouchBadge: {
+    minWidth: 32,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#ede9fe',
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyTouchText: {
+    fontWeight: '700',
+    fontSize: 12,
+    color: Colors.tintDark,
+    textAlign: 'center',
+  },
 
   categoryRow: {
     flexDirection: 'row',
@@ -1231,6 +1402,31 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 10,
+  },
+  qrisThumbnail: {
+    width: 110,
+    height: 110,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 6,
+    backgroundColor: '#ffffff',
+  },
+  openQrisBtn: {
+    marginTop: 10,
+    backgroundColor: '#ede9fe',
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  openQrisBtnText: {
+    color: Colors.tintDark,
+    fontWeight: '700',
+    fontSize: 12,
   },
 
   // Numpad

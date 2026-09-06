@@ -302,7 +302,7 @@ export async function exportProductsToPDF(
         </tbody>
       </table>
       <div class="footer">
-        Dicetak dari POS Offline Karya Jurusan Akuntansi Polnes
+        Dicetak dari POS Karya Riki Rivaldi
       </div>
     </body>
     </html>
@@ -391,7 +391,7 @@ export async function exportTransactionsToPDF(
         Total Omset (${rows.length} Transaksi): Rp ${Math.round(totalOmset).toLocaleString('id-ID')}
       </div>
       <div class="footer">
-        POS Offline Karya Jurusan Akuntansi Polnes
+        POS Karya Riki Rivaldi
       </div>
     </body>
     </html>
@@ -542,7 +542,122 @@ export async function exportLabaRugiToPDF(params: {
       </table>
 
       <div class="footer">
-        Laporan Keuangan POS Offline • Karya Jurusan Akuntansi Politeknik Negeri Samarinda (POLNES)<br/>
+        Laporan Keuangan • POS Karya Riki Rivaldi<br/>
+        Dicetak pada: ${nowStr}
+      </div>
+    </body>
+    </html>
+  `;
+
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  return uri;
+}
+
+export async function exportCashLedgerToPDF(params: {
+  db: SQLiteDatabase;
+  type: 'in' | 'out';
+  storeName: string;
+  storeAddress?: string;
+  storePhone?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<string> {
+  const { db, type, storeName, storeAddress, storePhone, startDate, endDate } = params;
+  let whereClause = 'WHERE type = ?';
+  const queryParams: any[] = [type];
+
+  if (startDate && endDate) {
+    whereClause += ' AND date(date) BETWEEN ? AND ?';
+    queryParams.push(startDate, endDate);
+  }
+
+  const rows = await db.getAllAsync<{
+    id: number;
+    type: string;
+    category: string;
+    description: string;
+    amount: number;
+    date: string;
+    created_at: string;
+  }>(
+    `SELECT id, type, category, description, amount, date, created_at
+     FROM cash_ledger
+     ${whereClause}
+     ORDER BY date DESC, id DESC`,
+    ...queryParams
+  );
+
+  const total = rows.reduce((acc, r) => acc + (r.amount || 0), 0);
+  const isCashIn = type === 'in';
+  const reportTitle = isCashIn ? 'LAPORAN PENERIMAAN KAS' : 'LAPORAN PENGELUARAN KAS & BEBAN';
+
+  const fmt = (n: number) => 'Rp ' + Math.abs(Math.round(n)).toLocaleString('id-ID');
+  const nowStr = new Date().toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  const tableRows = rows.map((r, i) => `
+    <tr>
+      <td style="text-align: center;">${i + 1}</td>
+      <td>${r.date}</td>
+      <td><strong>${r.category.replace(/_/g, ' ').toUpperCase()}</strong></td>
+      <td>${r.description}</td>
+      <td style="text-align: right; color: ${isCashIn ? '#15803d' : '#b91c1c'}; font-weight: 600;">
+        ${fmt(r.amount)}
+      </td>
+    </tr>
+  `).join('') || `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 16px;">Belum ada catatan mutasi kas pada periode ini.</td></tr>`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; padding: 28px; margin: 0; }
+        .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 18px; }
+        .header h1 { margin: 0; font-size: 18px; text-transform: uppercase; color: #0f172a; }
+        .header h2 { margin: 4px 0; font-size: 15px; color: ${isCashIn ? '#15803d' : '#b91c1c'}; }
+        .header p { margin: 2px 0; font-size: 11px; color: #64748b; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 12px; }
+        th { background-color: #f1f5f9; padding: 8px 10px; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; text-align: left; }
+        td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; }
+        .total-row td { font-size: 13px; font-weight: bold; background-color: ${isCashIn ? '#f0fdf4' : '#fef2f2'}; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; padding: 10px; }
+        .footer { margin-top: 32px; font-size: 10px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>${storeName}</h1>
+        ${storeAddress ? `<p>${storeAddress}</p>` : ''}
+        ${storePhone ? `<p>Telp / WA: ${storePhone}</p>` : ''}
+        <h2>${reportTitle}</h2>
+        <p>Periode: <strong>${startDate && endDate ? `${startDate} s/d ${endDate}` : 'Semua Riwayat'}</strong> • Standar SAK EMKM</p>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 35px; text-align: center;">NO</th>
+            <th style="width: 85px;">TANGGAL</th>
+            <th style="width: 140px;">KATEGORI</th>
+            <th>KETERANGAN</th>
+            <th style="width: 120px; text-align: right;">NOMINAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows}
+          <tr class="total-row">
+            <td colspan="4" style="text-align: right;">TOTAL ${isCashIn ? 'PENERIMAAN KAS' : 'PENGELUARAN KAS'}:</td>
+            <td style="text-align: right; color: ${isCashIn ? '#15803d' : '#b91c1c'};">${fmt(total)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="footer">
+        Laporan Keuangan • POS Karya Riki Rivaldi<br/>
         Dicetak pada: ${nowStr}
       </div>
     </body>

@@ -1,10 +1,11 @@
+import { AdminPinModal } from '@/components/admin-pin-modal';
+import { ReceiptPreviewModal } from '@/components/receipt-preview-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Card } from '@/components/ui/card';
 import { Colors } from '@/constants/theme';
 import { useLockOrientation } from '@/hooks/use-orientation';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { AdminPinModal } from '@/components/admin-pin-modal';
 import { useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -17,9 +18,10 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const db = useSQLiteContext();
-  const { storeName, businessType, businessMode, loadSettings } = useSettingsStore();
+  const { storeName, businessType, storeAddress, storePhone, receiptFooter, loadSettings } = useSettingsStore();
 
   const [pinModalVisible, setPinModalVisible] = useState(false);
+  const [receiptPreviewVisible, setReceiptPreviewVisible] = useState(false);
   const [pendingRoute, setPendingRoute] = useState<string | null>(null);
 
   useEffect(() => {
@@ -28,11 +30,18 @@ export default function SettingsScreen() {
 
   const menuItems = [
     {
-      label: 'Atur Toko & Mode UMKM',
+      label: 'Atur Toko',
       icon: '🏪',
-      desc: 'Ubah nama toko, beralih mode Retail/Kuliner & PIN',
+      desc: 'Nama toko, alamat, telepon, nota, orientasi & PIN Admin',
       route: '/(tabs)/store-settings' as const,
       requiresPin: true,
+    },
+    {
+      label: 'Hutang & Piutang',
+      icon: '💳',
+      desc: 'Kelola kasbon pelanggan, hutang supplier & pelunasan kas',
+      route: '/debt-receivable' as const,
+      requiresPin: false,
     },
     {
       label: 'Printer Bluetooth',
@@ -62,7 +71,7 @@ export default function SettingsScreen() {
       setPendingRoute(item.route);
       setPinModalVisible(true);
     } else {
-      router.push(item.route);
+      router.push(item.route as any);
     }
   };
 
@@ -86,52 +95,28 @@ export default function SettingsScreen() {
         Konfigurasi sistem POS Mikro terpadu & hardware
       </ThemedText>
 
-      {/* Mode UMKM Status Card */}
+      {/* Status Toko Card */}
       <Card padding={16} style={styles.statusCard}>
         <View style={styles.statusRow}>
           <View style={styles.statusIconCircle}>
-            <ThemedText style={{ fontSize: 24 }}>
-              {businessMode === 'retail' ? '🛒' : '☕'}
-            </ThemedText>
+            <ThemedText style={{ fontSize: 24 }}>🏪</ThemedText>
           </View>
           <View style={{ flex: 1 }}>
-            <ThemedText type="defaultSemiBold" style={{ fontSize: 15, color: '#1e1b4b' }}>
+            <ThemedText type="defaultSemiBold" style={{ fontSize: 16, color: '#1e1b4b' }}>
               {storeName}
             </ThemedText>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-              <View
-                style={[
-                  styles.modeBadge,
-                  businessMode === 'kuliner' ? styles.modeBadgeKuliner : styles.modeBadgeRetail,
-                ]}
-              >
-                <ThemedText
-                  style={[
-                    styles.modeBadgeText,
-                    businessMode === 'kuliner'
-                      ? styles.modeBadgeTextKuliner
-                      : styles.modeBadgeTextRetail,
-                  ]}
-                >
-                  {businessMode === 'retail' ? 'Mode: Toko / Retail' : 'Mode: Kuliner / Jasa'}
-                </ThemedText>
-              </View>
-              <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
-                ({businessType})
-              </ThemedText>
-            </View>
+            <ThemedText style={{ fontSize: 12, color: Colors.muted, marginTop: 2 }}>
+              {businessType || 'Toko Retail'}
+            </ThemedText>
           </View>
-
-          <TouchableOpacity
-            style={styles.switchModeBtn}
-            onPress={() => {
-              setPendingRoute('/(tabs)/store-settings');
-              setPinModalVisible(true);
-            }}
-          >
-            <ThemedText style={styles.switchModeText}>Ganti Mode</ThemedText>
-          </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          style={styles.previewBtn}
+          onPress={() => setReceiptPreviewVisible(true)}
+        >
+          <ThemedText style={styles.previewBtnText}>Preview Desain Struk (58mm)</ThemedText>
+        </TouchableOpacity>
       </Card>
 
       {/* Menu List */}
@@ -170,6 +155,16 @@ export default function SettingsScreen() {
         }}
         onSuccess={handlePinSuccess}
       />
+
+      {/* Thermal Receipt Preview Modal */}
+      <ReceiptPreviewModal
+        visible={receiptPreviewVisible}
+        onClose={() => setReceiptPreviewVisible(false)}
+        storeName={storeName}
+        storeAddress={storeAddress}
+        storePhone={storePhone}
+        receiptFooter={receiptFooter}
+      />
     </ThemedView>
   );
 }
@@ -181,6 +176,22 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: Colors.tint + '33',
     borderRadius: 16,
+  },
+  previewBtn: {
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.tint,
   },
   statusRow: {
     flexDirection: 'row',

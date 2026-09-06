@@ -16,6 +16,7 @@ export interface CashEntry {
 export const CASH_IN_CATEGORIES = [
   { id: 'modal_awal', label: 'Modal Awal Kasir' },
   { id: 'setoran_modal', label: 'Setoran Tambahan Pemilik' },
+  { id: 'pelunasan_piutang', label: 'Pelunasan Piutang Pelanggan' },
   { id: 'pendapatan_lain', label: 'Pendapatan Lain-lain' },
   { id: 'retur_supplier', label: 'Pengembalian Dana Supplier' },
 ] as const;
@@ -23,6 +24,7 @@ export const CASH_IN_CATEGORIES = [
 export const CASH_OUT_CATEGORIES = [
   { id: 'belanja_bahan', label: 'Belanja Bahan Baku (Kuliner)' },
   { id: 'kulakan_stok', label: 'Pembelian Stok Barang (Retail)' },
+  { id: 'bayar_hutang_supplier', label: 'Pembayaran Hutang Supplier' },
   { id: 'listrik_air', label: 'Listrik, Air & Internet' },
   { id: 'sewa_tempat', label: 'Sewa Tempat / Kios' },
   { id: 'gaji_karyawan', label: 'Gaji Karyawan' },
@@ -35,10 +37,12 @@ export const CASH_OUT_CATEGORIES = [
 export const CASH_CATEGORY_MAP: Record<string, string> = {
   modal_awal: 'Modal Awal Kasir',
   setoran_modal: 'Setoran Tambahan Pemilik',
+  pelunasan_piutang: 'Pelunasan Piutang Pelanggan',
   pendapatan_lain: 'Pendapatan Lain-lain',
   retur_supplier: 'Pengembalian Dana Supplier',
   belanja_bahan: 'Belanja Bahan Baku (Kuliner)',
   kulakan_stok: 'Pembelian Stok Barang (Retail)',
+  bayar_hutang_supplier: 'Pembayaran Hutang Supplier',
   listrik_air: 'Listrik, Air & Internet',
   sewa_tempat: 'Sewa Tempat / Kios',
   gaji_karyawan: 'Gaji Karyawan',

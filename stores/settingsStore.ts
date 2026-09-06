@@ -3,6 +3,7 @@ import type { SQLiteDatabase } from '@/services/database';
 
 export type BusinessMode = 'retail' | 'kuliner';
 export type ViewMode = 'list' | 'grid';
+export type AppOrientation = 'portrait' | 'landscape';
 
 interface SettingsState {
   storeName: string;
@@ -14,6 +15,8 @@ interface SettingsState {
   storeAddress: string;
   storePhone: string;
   receiptFooter: string;
+  qrisImagePath: string;
+  appOrientation: AppOrientation;
   loading: boolean;
 
   loadSettings: (db: SQLiteDatabase) => Promise<void>;
@@ -23,23 +26,26 @@ interface SettingsState {
     businessType: string,
     storeAddress?: string,
     storePhone?: string,
-    receiptFooter?: string
+    receiptFooter?: string,
+    qrisImagePath?: string
   ) => Promise<void>;
   setBusinessMode: (db: SQLiteDatabase, mode: BusinessMode) => Promise<void>;
   setAdminPin: (db: SQLiteDatabase, pin: string) => Promise<void>;
   setDefaultViewMode: (db: SQLiteDatabase, mode: ViewMode) => Promise<void>;
+  setQrisImagePath: (db: SQLiteDatabase, path: string) => Promise<void>;
+  setAppOrientation: (db: SQLiteDatabase, orientation: AppOrientation) => Promise<void>;
   completeOnboarding: (
     db: SQLiteDatabase,
     storeName: string,
-    mode: BusinessMode,
-    pin: string
+    pin: string,
+    mode?: BusinessMode
   ) => Promise<void>;
   verifyPin: (pin: string) => boolean;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   storeName: 'POS Offline',
-  businessType: 'Toko',
+  businessType: 'Toko Retail',
   businessMode: 'retail',
   adminPin: '123456',
   defaultViewMode: 'list',
@@ -47,6 +53,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   storeAddress: 'Jl. Cipto Mangunkusumo, Samarinda',
   storePhone: '0812-3456-7890',
   receiptFooter: 'Terima kasih atas kunjungan Anda!',
+  qrisImagePath: '',
+  appOrientation: 'portrait',
   loading: false,
 
   loadSettings: async (db) => {
@@ -59,17 +67,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       for (const row of rows) {
         map[row.key] = row.value;
       }
-      const mode = (map.business_mode as BusinessMode) || 'retail';
       set({
         storeName: map.store_name ?? 'POS Offline',
-        businessType: map.business_type ?? (mode === 'kuliner' ? 'Kuliner / Cafe' : 'Toko Retail'),
-        businessMode: mode,
+        businessType: map.business_type ?? 'Toko Retail',
+        businessMode: 'retail',
         adminPin: map.admin_pin ?? '123456',
-        defaultViewMode: (map.default_view_mode as ViewMode) || (mode === 'kuliner' ? 'grid' : 'list'),
+        defaultViewMode: (map.default_view_mode as ViewMode) || 'list',
         isOnboarded: map.is_onboarded === '1',
         storeAddress: map.store_address ?? 'Jl. Cipto Mangunkusumo, Samarinda',
         storePhone: map.store_phone ?? '0812-3456-7890',
         receiptFooter: map.receipt_footer ?? 'Terima kasih atas kunjungan Anda!',
+        qrisImagePath: map.qris_image_path ?? '',
+        appOrientation: (map.app_orientation as AppOrientation) || 'portrait',
         loading: false,
       });
     } catch (e) {
@@ -78,10 +87,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  saveSettings: async (db, storeName, businessType, storeAddress, storePhone, receiptFooter) => {
+  saveSettings: async (db, storeName, businessType, storeAddress, storePhone, receiptFooter, qrisImagePath) => {
     const address = storeAddress ?? get().storeAddress;
     const phone = storePhone ?? get().storePhone;
     const footer = receiptFooter ?? get().receiptFooter;
+    const qris = qrisImagePath !== undefined ? qrisImagePath : get().qrisImagePath;
 
     await db.withExclusiveTransactionAsync(async (txn) => {
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_name', storeName);
@@ -89,6 +99,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_address', address);
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_phone', phone);
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'receipt_footer', footer);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'qris_image_path', qris);
     });
     set({
       storeName,
@@ -96,30 +107,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       storeAddress: address,
       storePhone: phone,
       receiptFooter: footer,
+      qrisImagePath: qris,
     });
   },
 
   setBusinessMode: async (db, mode) => {
-    const defaultView: ViewMode = mode === 'kuliner' ? 'grid' : 'list';
-    const businessType = mode === 'kuliner' ? 'Kuliner / Cafe' : 'Toko Retail';
-    await db.withExclusiveTransactionAsync(async (txn) => {
-      await txn.runAsync(
-        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-        'business_mode',
-        mode
-      );
-      await txn.runAsync(
-        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-        'default_view_mode',
-        defaultView
-      );
-      await txn.runAsync(
-        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-        'business_type',
-        businessType
-      );
-    });
-    set({ businessMode: mode, defaultViewMode: defaultView, businessType });
+    await db.runAsync(
+      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      'business_mode',
+      'retail'
+    );
+    set({ businessMode: 'retail' });
   },
 
   setAdminPin: async (db, pin) => {
@@ -140,23 +138,39 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ defaultViewMode: mode });
   },
 
-  completeOnboarding: async (db, storeName, mode, pin) => {
-    const defaultView: ViewMode = mode === 'kuliner' ? 'grid' : 'list';
-    const businessType = mode === 'kuliner' ? 'Kuliner / Cafe' : 'Toko Retail';
+  setQrisImagePath: async (db, path) => {
+    await db.runAsync(
+      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      'qris_image_path',
+      path
+    );
+    set({ qrisImagePath: path });
+  },
+
+  setAppOrientation: async (db, orientation) => {
+    await db.runAsync(
+      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      'app_orientation',
+      orientation
+    );
+    set({ appOrientation: orientation });
+  },
+
+  completeOnboarding: async (db, storeName, pin, mode = 'retail') => {
     await db.withExclusiveTransactionAsync(async (txn) => {
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_name', storeName);
-      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'business_mode', mode);
-      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'business_type', businessType);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'business_mode', 'retail');
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'business_type', 'Toko Retail');
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'admin_pin', pin);
-      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'default_view_mode', defaultView);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'default_view_mode', 'list');
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'is_onboarded', '1');
     });
     set({
       storeName,
-      businessMode: mode,
-      businessType,
+      businessMode: 'retail',
+      businessType: 'Toko Retail',
       adminPin: pin,
-      defaultViewMode: defaultView,
+      defaultViewMode: 'list',
       isOnboarded: true,
     });
   },

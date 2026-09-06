@@ -37,7 +37,7 @@ export function OnboardingModal({ visible, onComplete }: OnboardingModalProps) {
     }
 
     try {
-      await completeOnboarding(db, storeName.trim(), selectedMode, pin.trim());
+      await completeOnboarding(db, storeName.trim(), pin.trim(), 'retail');
       onComplete();
     } catch (e: any) {
       setErrorMsg(e.message || 'Gagal menyimpan pengaturan awal');
@@ -53,9 +53,9 @@ export function OnboardingModal({ visible, onComplete }: OnboardingModalProps) {
             <View style={styles.logoBadge}>
               <Text style={styles.logoIcon}>🏪</Text>
             </View>
-            <Text style={styles.title}>Selamat Datang di POS Mikro</Text>
+            <Text style={styles.title}>Selamat Datang di POS Kasir</Text>
             <Text style={styles.subtitle}>
-              Sistem Kasir & Akuntansi Usaha Mikro Terpadu (Edisi Polnes)
+              Sistem Kasir & Pembukuan Usaha Mikro (POS Karya Riki Rivaldi)
             </Text>
           </View>
 
@@ -70,69 +70,17 @@ export function OnboardingModal({ visible, onComplete }: OnboardingModalProps) {
                   setStoreName(t);
                   if (errorMsg) setErrorMsg('');
                 }}
-                placeholder="Contoh: Toko Berkah / Cafe Kopi Senja"
+                placeholder="Contoh: Toko Berkah / Usaha Riki"
                 placeholderTextColor={Colors.placeholder}
                 style={styles.input}
               />
             </View>
 
-            {/* Pilih Mode UMKM */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>2. Pilih Jenis Usaha UMKM</Text>
-              <View style={styles.modeGrid}>
-                {/* Retail Card */}
-                <TouchableOpacity
-                  style={[
-                    styles.modeCard,
-                    selectedMode === 'retail' && styles.modeCardActive,
-                  ]}
-                  onPress={() => setSelectedMode('retail')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.modeIcon}>🛒</Text>
-                  <Text
-                    style={[
-                      styles.modeTitle,
-                      selectedMode === 'retail' && styles.modeTitleActive,
-                    ]}
-                  >
-                    Toko / Retail
-                  </Text>
-                  <Text style={styles.modeDesc}>
-                    Kelontong, ATK, Fashion. Kontrol stok ketat, pembelian kulakan & stock opname.
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Kuliner Card */}
-                <TouchableOpacity
-                  style={[
-                    styles.modeCard,
-                    selectedMode === 'kuliner' && styles.modeCardActive,
-                  ]}
-                  onPress={() => setSelectedMode('kuliner')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.modeIcon}>☕</Text>
-                  <Text
-                    style={[
-                      styles.modeTitle,
-                      selectedMode === 'kuliner' && styles.modeTitleActive,
-                    ]}
-                  >
-                    Kuliner / Jasa
-                  </Text>
-                  <Text style={styles.modeDesc}>
-                    Rumah Makan, Cafe, Warung. Bebas stok siap jual, belanja bahan di kas keluar.
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
             {/* PIN Admin */}
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>3. Atur 6 Digit PIN Admin</Text>
+              <Text style={styles.label}>2. Atur 6 Digit PIN Admin</Text>
               <Text style={styles.sublabel}>
-                Digunakan untuk mengakses pergantian mode usaha dan laporan rahasia.
+                Digunakan untuk mengamankan menu Pengaturan & Manajemen Data.
               </Text>
               <TextInput
                 value={pin}

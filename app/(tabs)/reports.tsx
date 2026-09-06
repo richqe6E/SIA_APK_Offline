@@ -1,7 +1,8 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
@@ -27,6 +28,7 @@ const DAY_LABELS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
 export default function ReportsScreen() {
   useLockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const db = useSQLiteContext();
   const [period, setPeriod] = useState<Period>('daily');
   const [customStart, setCustomStart] = useState(new Date());
@@ -121,6 +123,10 @@ export default function ReportsScreen() {
     setLoading(false);
   }, [db, customStart, customEnd]);
 
+  useEffect(() => {
+    loadReport('daily');
+  }, [loadReport]);
+
   const periods: { key: Period; label: string }[] = [
     { key: 'daily', label: 'Hari Ini' },
     { key: 'weekly', label: '7 Hari' },
@@ -133,8 +139,25 @@ export default function ReportsScreen() {
   const maxDayTotal = data ? Math.max(...data.days.map((d) => d.total), 1) : 1;
 
   return (
-    <ThemedView style={[styles.container, { paddingLeft: insets.left + 16, paddingRight: insets.right + 16 }]}>
-      <ThemedText type="title" style={{ marginBottom: 16 }}>Laporan</ThemedText>
+    <ThemedView
+      style={[
+        styles.container,
+        {
+          paddingLeft: insets.left + 16,
+          paddingRight: insets.right + 16,
+          paddingTop: insets.top + 12,
+        },
+      ]}
+    >
+      <View style={styles.topHeader}>
+        <Pressable
+          style={styles.exitBtn}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
+        >
+          <ThemedText style={styles.exitBtnText}>← Keluar</ThemedText>
+        </Pressable>
+        <ThemedText type="title" style={styles.headerTitle}>Laporan</ThemedText>
+      </View>
 
       <View style={styles.periodRow}>
         {periods.map((p) => (
@@ -216,13 +239,15 @@ export default function ReportsScreen() {
                   {data.count}x
                 </ThemedText>
               </View>
-              <View style={styles.summaryItem}>
-                <ThemedText style={styles.summaryIcon}>{'\u{1F4C8}'}</ThemedText>
-                <ThemedText style={styles.summaryLabel}>Rata-rata/Hari</ThemedText>
-                <ThemedText type="defaultSemiBold" style={styles.summaryValue}>
-                  Rp {Math.round(data.average).toLocaleString()}
-                </ThemedText>
-              </View>
+              {period !== 'daily' && (
+                <View style={styles.summaryItem}>
+                  <ThemedText style={styles.summaryIcon}>{'\u{1F4C8}'}</ThemedText>
+                  <ThemedText style={styles.summaryLabel}>Rata-rata/Hari</ThemedText>
+                  <ThemedText type="defaultSemiBold" style={styles.summaryValue}>
+                    Rp {Math.round(data.average).toLocaleString()}
+                  </ThemedText>
+                </View>
+              )}
             </View>
           </Card>
 
@@ -343,6 +368,29 @@ export default function ReportsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
+  topHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  exitBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+  },
+  exitBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.tint,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
   periodRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   periodBtn: {
     flex: 1,

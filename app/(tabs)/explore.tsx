@@ -31,6 +31,7 @@ import { usePurchaseStore } from '@/stores/purchaseStore';
 import { useStockOpnameStore } from '@/stores/stockOpnameStore';
 import { useCashStore } from '@/stores/cashStore';
 import { Colors } from '@/constants/theme';
+import { BarcodeScannerModal } from '@/components/barcode-scanner-modal';
 
 export default function ProductsScreen() {
   useLockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);
@@ -55,8 +56,14 @@ export default function ProductsScreen() {
   const [costPrice, setCostPrice] = useState('');
   const [hasStock, setHasStock] = useState(isRetail);
   const [stock, setStock] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [imagePath, setImagePath] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+
+  // Search & Barcode Scanner
+  const [searchQuery, setSearchQuery] = useState('');
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [scannerTarget, setScannerTarget] = useState<'filter' | 'form'>('form');
 
   // Modal Kategori
   const [catModalVisible, setCatModalVisible] = useState(false);
@@ -112,6 +119,7 @@ export default function ProductsScreen() {
     setCostPrice('');
     setHasStock(isRetail);
     setStock(isRetail ? '10' : '');
+    setBarcode('');
     setImagePath('');
     setSelectedCategoryId(null);
     setModalVisible(true);
@@ -124,6 +132,7 @@ export default function ProductsScreen() {
     setCostPrice(product.cost_price > 0 ? product.cost_price.toString() : '');
     setHasStock(product.has_stock === 1);
     setStock(product.has_stock === 1 ? product.stock.toString() : '');
+    setBarcode(product.barcode || '');
     setImagePath(product.image_path);
     setSelectedCategoryId(product.category_id);
     setModalVisible(true);
@@ -154,6 +163,7 @@ export default function ProductsScreen() {
           stock: isRetail && hasStock ? stockNum : 0,
           image_path: imagePath,
           category_id: selectedCategoryId,
+          barcode: barcode.trim(),
         });
         Alert.alert('Sukses', `${isRetail ? 'Produk' : 'Menu'} berhasil diperbarui`);
       } else {
@@ -165,6 +175,7 @@ export default function ProductsScreen() {
           stock: isRetail && hasStock ? stockNum : 0,
           image_path: imagePath,
           category_id: selectedCategoryId,
+          barcode: barcode.trim(),
         });
         Alert.alert('Sukses', `${isRetail ? 'Produk' : 'Menu'} berhasil ditambahkan`);
       }
@@ -248,7 +259,12 @@ export default function ProductsScreen() {
   // Handle Stock Opname (Penyesuaian Stok)
   // ─────────────────────────────────────────
   const openOpnameModal = () => {
-    setOpnameProductId(products.length > 0 ? products[0].id : null);
+    const stocked = products.filter((p) => p.has_stock === 1);
+    if (stocked.length === 0) {
+      Alert.alert('Perhatian', 'Belum ada produk dengan pelacakan stok.');
+      return;
+    }
+    setOpnameProductId(stocked[0].id);
     setOpnamePhysicalStock('');
     setOpnameNotes('');
     setOpnameModalVisible(true);
@@ -283,6 +299,16 @@ export default function ProductsScreen() {
   };
 
   const selectedOpnameProd = products.find((p) => p.id === opnameProductId);
+
+  const filteredProducts = products.filter((p) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase().trim();
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.barcode && p.barcode.toLowerCase().includes(q)) ||
+      (p.category_name && p.category_name.toLowerCase().includes(q))
+    );
+  });
 
   return (
     <ThemedView
@@ -335,9 +361,37 @@ export default function ProductsScreen() {
         </View>
       </View>
 
+      {/* Search & Scan Bar */}
+      <View style={styles.searchBarContainer}>
+        <View style={styles.searchBox}>
+          <ThemedText style={{ fontSize: 13, color: Colors.muted }}>🔍</ThemedText>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Cari nama barang / barcode..."
+            placeholderTextColor={Colors.placeholder}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery ? (
+            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8}>
+              <ThemedText style={{ color: Colors.muted, fontSize: 13, paddingHorizontal: 4 }}>✕</ThemedText>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        <TouchableOpacity
+          style={styles.scanBarcodeBtn}
+          onPress={() => {
+            setScannerTarget('filter');
+            setScannerVisible(true);
+          }}
+        >
+          <ThemedText style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>📷 Scan</ThemedText>
+        </TouchableOpacity>
+      </View>
+
       {/* List Products */}
       <FlatList
-        data={products}
+        data={filteredProducts}
         keyExtractor={(item) => item.id.toString()}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
@@ -359,6 +413,12 @@ export default function ProductsScreen() {
                 <ThemedText style={{ color: Colors.tint, fontWeight: '700', fontSize: 13 }}>
                   Rp {item.price.toLocaleString('id-ID')}
                 </ThemedText>
+
+                {item.barcode ? (
+                  <ThemedText style={{ color: '#64748b', fontSize: 11 }}>
+                    Barcode: {item.barcode}
+                  </ThemedText>
+                ) : null}
 
                 {isRetail && item.cost_price > 0 && (
                   <ThemedText style={{ color: Colors.muted, fontSize: 11 }}>
@@ -395,9 +455,9 @@ export default function ProductsScreen() {
         )}
         ListEmptyComponent={
           <EmptyState
-            icon={isRetail ? '📦' : '🍽️'}
-            title={`Belum ada ${isRetail ? 'barang retail' : 'menu kuliner'}`}
-            subtitle={`Tambah ${isRetail ? 'barang' : 'menu'} baru untuk mulai melayani transaksi kasir`}
+            icon="📦"
+            title="Belum ada produk"
+            subtitle="Tambah produk baru untuk mulai melayani transaksi kasir"
           />
         }
       />
@@ -411,9 +471,7 @@ export default function ProductsScreen() {
             <ScrollView showsVerticalScrollIndicator={false}>
               <View style={styles.modalHeader}>
                 <ThemedText type="subtitle">
-                  {editingProduct
-                    ? isRetail ? 'Edit Barang Retail' : 'Edit Menu'
-                    : isRetail ? 'Tambah Barang Retail' : 'Tambah Menu Baru'}
+                  {editingProduct ? 'Edit Produk' : 'Tambah Produk Baru'}
                 </ThemedText>
                 <Pressable onPress={() => setModalVisible(false)} style={styles.closeBtn}>
                   <ThemedText style={{ fontSize: 18, color: Colors.muted }}>✕</ThemedText>
@@ -422,15 +480,40 @@ export default function ProductsScreen() {
 
               <View style={styles.inputGroup}>
                 <ThemedText style={styles.label}>
-                  {isRetail ? 'Nama Barang / Produk' : 'Nama Menu / Makanan'}
+                  Nama Produk
                 </ThemedText>
                 <TextInput
                   style={styles.input}
-                  placeholder={isRetail ? 'cth: Kopi Bubuk 250g' : 'cth: Nasi Goreng Spesial'}
+                  placeholder="cth: Kopi Bubuk 250g"
                   placeholderTextColor={Colors.disabled}
                   value={name}
                   onChangeText={setName}
                 />
+              </View>
+
+              {/* Barcode / SKU */}
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.label}>Barcode / SKU (Opsional)</ThemedText>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="cth: 8991234567890"
+                    placeholderTextColor={Colors.disabled}
+                    value={barcode}
+                    onChangeText={setBarcode}
+                  />
+                  <TouchableOpacity
+                    style={styles.scanBtnInline}
+                    onPress={() => {
+                      setScannerTarget('form');
+                      setScannerVisible(true);
+                    }}
+                  >
+                    <ThemedText style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>
+                      📷 Scan
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <View style={styles.inputGroup}>
@@ -712,25 +795,27 @@ export default function ProductsScreen() {
               <View style={styles.inputGroup}>
                 <ThemedText style={styles.label}>Pilih Produk yang Di-Audit</ThemedText>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-                  {products.map((p) => (
-                    <Pressable
-                      key={p.id}
-                      style={[
-                        styles.categoryOption,
-                        opnameProductId === p.id && styles.categoryOptionActive,
-                      ]}
-                      onPress={() => setOpnameProductId(p.id)}
-                    >
-                      <ThemedText
+                  {products
+                    .filter((p) => p.has_stock === 1)
+                    .map((p) => (
+                      <Pressable
+                        key={p.id}
                         style={[
-                          styles.categoryOptionText,
-                          opnameProductId === p.id && styles.categoryOptionTextActive,
+                          styles.categoryOption,
+                          opnameProductId === p.id && styles.categoryOptionActive,
                         ]}
+                        onPress={() => setOpnameProductId(p.id)}
                       >
-                        {p.name}
-                      </ThemedText>
-                    </Pressable>
-                  ))}
+                        <ThemedText
+                          style={[
+                            styles.categoryOptionText,
+                            opnameProductId === p.id && styles.categoryOptionTextActive,
+                          ]}
+                        >
+                          {p.name} (Stok: {p.stock})
+                        </ThemedText>
+                      </Pressable>
+                    ))}
                 </ScrollView>
               </View>
 
@@ -842,6 +927,20 @@ export default function ProductsScreen() {
           </Card>
         </ThemedView>
       </Modal>
+
+      {/* Modal Scanner Barcode */}
+      <BarcodeScannerModal
+        visible={scannerVisible}
+        onClose={() => setScannerVisible(false)}
+        onScanned={(code) => {
+          if (scannerTarget === 'form') {
+            setBarcode(code);
+          } else {
+            setSearchQuery(code);
+          }
+        }}
+        title={scannerTarget === 'form' ? 'Pindai Barcode Produk' : 'Cari Produk via Barcode'}
+      />
     </ThemedView>
   );
 }
@@ -868,6 +967,45 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: Colors.tintDark,
+  },
+  searchBarContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  searchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 40,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0f172a',
+    paddingVertical: 4,
+  },
+  scanBarcodeBtn: {
+    backgroundColor: Colors.tint,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanBtnInline: {
+    backgroundColor: Colors.tint,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   list: { gap: 8, paddingBottom: 32 },
   productItem: {

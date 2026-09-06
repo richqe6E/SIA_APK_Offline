@@ -8,6 +8,7 @@ export interface Product {
   cost_price: number;
   has_stock: number;   // 0 = tidak ber-stok, 1 = ber-stok
   stock: number;
+  barcode: string;
   image_path: string;
   category_id: number | null;
   category_name: string | null;
@@ -25,6 +26,7 @@ interface ProductState {
     cost_price?: number;
     has_stock?: boolean;
     stock?: number;
+    barcode?: string;
     image_path?: string;
     category_id?: number | null;
   }) => Promise<void>;
@@ -34,6 +36,7 @@ interface ProductState {
     cost_price?: number;
     has_stock?: boolean;
     stock?: number;
+    barcode?: string;
     image_path?: string;
     category_id?: number | null;
   }) => Promise<void>;
@@ -63,12 +66,13 @@ export const useProductStore = create<ProductState>((set, get) => ({
 
   addProduct: async (db, product) => {
     await db.runAsync(
-      'INSERT INTO products (name, price, cost_price, has_stock, stock, image_path, category_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO products (name, price, cost_price, has_stock, stock, barcode, image_path, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       product.name,
       product.price,
       product.cost_price ?? 0,
       product.has_stock ? 1 : 0,
       product.stock ?? 0,
+      product.barcode ?? '',
       product.image_path ?? '',
       product.category_id ?? null
     );
@@ -84,6 +88,7 @@ export const useProductStore = create<ProductState>((set, get) => ({
     if (product.cost_price !== undefined) { fields.push('cost_price = ?'); values.push(product.cost_price); }
     if (product.has_stock !== undefined) { fields.push('has_stock = ?'); values.push(product.has_stock ? 1 : 0); }
     if (product.stock !== undefined) { fields.push('stock = ?'); values.push(product.stock); }
+    if (product.barcode !== undefined) { fields.push('barcode = ?'); values.push(product.barcode); }
     if (product.image_path !== undefined) { fields.push('image_path = ?'); values.push(product.image_path); }
     if (product.category_id !== undefined) { fields.push('category_id = ?'); values.push(product.category_id); }
 

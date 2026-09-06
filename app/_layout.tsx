@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 
 import { migrateDbIfNeeded } from '@/services/database';
+import { AnimatedSplashScreen } from '@/components/animated-splash-screen';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -19,9 +20,11 @@ export default function RootLayout() {
           <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="transaksi" options={{ headerShown: false }} />
+            <Stack.Screen name="debt-receivable" options={{ headerShown: false }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
           </Stack>
         </SafeAreaView>
+        <AnimatedSplashScreen />
         <StatusBar style="dark" />
       </SQLite.SQLiteProvider>
     </ThemeProvider>

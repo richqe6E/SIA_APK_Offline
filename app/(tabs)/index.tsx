@@ -139,35 +139,18 @@ export default function DashboardScreen() {
       <View style={styles.topHeaderCard}>
         <View style={styles.headerLeft}>
           <ThemedText style={styles.karyaPolnesText}>
-            POS Offline Karya Jurusan Akuntansi Polnes
+            POS Karya Riki Rivaldi
           </ThemedText>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
             <View style={styles.brandIconCircle}>
-              <ThemedText style={styles.brandIcon}>
-                {businessMode === 'retail' ? '🛒' : '☕'}
-              </ThemedText>
+              <ThemedText style={styles.brandIcon}>🛒</ThemedText>
             </View>
             <View style={{ flex: 1 }}>
               <ThemedText type="title" style={{ fontSize: 18, color: '#1e1b4b', fontWeight: '800' }} numberOfLines={1}>
                 {storeName}
               </ThemedText>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                <View
-                  style={[
-                    styles.modeTag,
-                    businessMode === 'kuliner' ? styles.modeTagKuliner : styles.modeTagRetail,
-                  ]}
-                >
-                  <ThemedText
-                    style={[
-                      styles.modeTagText,
-                      businessMode === 'kuliner' ? styles.modeTagTextKuliner : styles.modeTagTextRetail,
-                    ]}
-                  >
-                    {businessMode === 'retail' ? 'Mode Retail' : 'Mode Kuliner'}
-                  </ThemedText>
-                </View>
-                <ThemedText style={styles.brandSub}>• {businessType}</ThemedText>
+                <ThemedText style={styles.brandSub}>{businessType || 'Toko Retail'}</ThemedText>
               </View>
             </View>
           </View>
@@ -175,7 +158,7 @@ export default function DashboardScreen() {
 
         <View style={styles.logoWrapper}>
           <Image
-            source={require('@/assets/images/polnes-logo.png')}
+            source={require('@/assets/images/app-logo-p.png')}
             style={styles.polnesLogo}
             resizeMode="contain"
           />
@@ -233,11 +216,9 @@ export default function DashboardScreen() {
           {/* Stat cards row */}
           <View style={styles.cardsRow}>
             <Card style={styles.statCard} padding={10}>
-              <ThemedText style={styles.statIcon}>{businessMode === 'retail' ? '📦' : '🍽️'}</ThemedText>
+              <ThemedText style={styles.statIcon}>📦</ThemedText>
               <ThemedText style={styles.statNumber}>{summary.productCount}</ThemedText>
-              <ThemedText style={styles.statLabel}>
-                {businessMode === 'retail' ? 'Produk' : 'Menu'}
-              </ThemedText>
+              <ThemedText style={styles.statLabel}>Produk</ThemedText>
             </Card>
             <Card style={styles.statCard} padding={10}>
               <ThemedText style={styles.statIcon}>🧾</ThemedText>

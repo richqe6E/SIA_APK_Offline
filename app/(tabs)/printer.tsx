@@ -8,10 +8,12 @@ import { Colors } from '@/constants/theme';
 import { useLockOrientation } from '@/hooks/use-orientation';
 import { usePrinterStore } from '@/stores/printerStore';
 import { BluetoothEscposPrinter, BluetoothManager } from '@vardrz/react-native-bluetooth-escpos-printer';
+import { useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, PermissionsAndroid, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ReceiptPreviewModal } from '@/components/receipt-preview-modal';
 
 interface PrinterDevice {
   name: string;
@@ -22,11 +24,13 @@ interface PrinterDevice {
 export default function PrinterScreen() {
   useLockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { printerTarget, printerName, connected, setPrinter, setConnected, disconnect } = usePrinterStore();
 
   const [scanning, setScanning] = useState(false);
   const [foundDevices, setFoundDevices] = useState<PrinterDevice[]>([]);
   const [connecting, setConnecting] = useState(false);
+  const [showReceiptPreview, setShowReceiptPreview] = useState(false);
 
   const requestBluetoothPermissions = useCallback(async (): Promise<boolean> => {
     if (Platform.OS !== 'android') return true;
@@ -138,8 +142,25 @@ export default function PrinterScreen() {
   }, []);
 
   return (
-    <ThemedView style={[styles.container, { paddingLeft: insets.left + 16, paddingRight: insets.right + 16 }]}>
-      <ThemedText type="title" style={{ marginBottom: 16 }}>Printer</ThemedText>
+    <ThemedView
+      style={[
+        styles.container,
+        {
+          paddingLeft: insets.left + 16,
+          paddingRight: insets.right + 16,
+          paddingTop: insets.top + 12,
+        },
+      ]}
+    >
+      <View style={styles.topHeader}>
+        <Pressable
+          style={styles.exitBtn}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
+        >
+          <ThemedText style={styles.exitBtnText}>← Keluar</ThemedText>
+        </Pressable>
+        <ThemedText type="title" style={styles.headerTitle}>Printer</ThemedText>
+      </View>
 
       <Card style={{ marginBottom: 16 }}>
         <ThemedText type="defaultSemiBold" style={{ marginBottom: 8 }}>Status Printer</ThemedText>
@@ -231,12 +252,47 @@ export default function PrinterScreen() {
           style={{ marginTop: 8 }}
         />
       )}
+
+      <Button
+        title="Preview Desain Struk (58mm)"
+        variant="outline"
+        onPress={() => setShowReceiptPreview(true)}
+        style={{ marginTop: 10 }}
+      />
+
+      <ReceiptPreviewModal
+        visible={showReceiptPreview}
+        onClose={() => setShowReceiptPreview(false)}
+      />
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
+  topHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  exitBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+  },
+  exitBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.tint,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
   statusRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
