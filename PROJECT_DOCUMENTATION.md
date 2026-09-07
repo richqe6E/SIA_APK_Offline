@@ -232,6 +232,30 @@ CREATE TABLE debt_payments (
 );
 ```
 
+### F. Tabel Pesanan Pending (Antrean Kasir)
+```sql
+CREATE TABLE pending_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  note TEXT NOT NULL DEFAULT '',         -- Nama pelanggan / catatan antrean
+  total_amount REAL NOT NULL,
+  items_json TEXT NOT NULL,              -- Serialized JSON keranjang pesanan
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+```
+
+### G. Indeks Database Performa Tinggi (v10)
+```sql
+-- Indeks pencarian instan untuk katalog kasir & scan barcode ribuan produk
+CREATE INDEX idx_products_barcode ON products(barcode);
+CREATE INDEX idx_products_name ON products(name);
+CREATE INDEX idx_products_category ON products(category_id);
+
+-- Indeks performa pelaporan dan riwayat transaksi skala besar
+CREATE INDEX idx_transactions_created_at ON transactions(created_at);
+CREATE INDEX idx_transaction_items_txid ON transaction_items(transaction_id);
+CREATE INDEX idx_cash_ledger_date ON cash_ledger(date);
+```
+
 ---
 
 ## 4. Standar Perhitungan Keuangan & Integritas Akuntansi
