@@ -30,6 +30,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { usePurchaseStore } from '@/stores/purchaseStore';
 import { useStockOpnameStore } from '@/stores/stockOpnameStore';
 import { useCashStore } from '@/stores/cashStore';
+import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { Colors } from '@/constants/theme';
 import { BarcodeScannerModal } from '@/components/barcode-scanner-modal';
 
@@ -71,11 +72,14 @@ export default function ProductsScreen() {
 
   // Modal Kulakan (Khusus Retail)
   const [purchaseModalVisible, setPurchaseModalVisible] = useState(false);
+  const [purchasePaymentType, setPurchasePaymentType] = useState<'tunai' | 'kredit'>('tunai');
+  const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [purchaseSupplier, setPurchaseSupplier] = useState('');
   const [purchaseProductId, setPurchaseProductId] = useState<number | null>(null);
   const [purchaseQty, setPurchaseQty] = useState('');
   const [purchaseCost, setPurchaseCost] = useState('');
   const [purchasing, setPurchasing] = useState(false);
+  const { suppliers, loadSuppliers } = useDebtReceivableStore();
 
   // Modal Stock Opname (Khusus Retail)
   const [opnameModalVisible, setOpnameModalVisible] = useState(false);
@@ -90,7 +94,8 @@ export default function ProductsScreen() {
       loadCategories(db);
       loadSettings(db);
       loadLedger(db);
-    }, [db, loadProducts, loadCategories, loadSettings, loadLedger])
+      loadSuppliers(db);
+    }, [db, loadProducts, loadCategories, loadSettings, loadLedger, loadSuppliers])
   );
 
   const pickImage = async () => {
@@ -241,6 +246,9 @@ export default function ProductsScreen() {
   // ─────────────────────────────────────────
   const openKulakanModal = () => {
     loadLedger(db);
+    loadSuppliers(db);
+    setPurchasePaymentType('tunai');
+    setSelectedSupplierId(null);
     setPurchaseSupplier('');
     setPurchaseProductId(products.length > 0 ? products[0].id : null);
     setPurchaseQty('10');
@@ -267,22 +275,32 @@ export default function ProductsScreen() {
     }
 
     setPurchasing(true);
-    const result = await createPurchase(db, purchaseSupplier, [
-      {
-        productId: targetProd.id,
-        productName: targetProd.name,
-        costPrice: cost,
-        quantity: qty,
-        subtotal: qty * cost,
-      },
-    ]);
+    const result = await createPurchase(
+      db,
+      purchaseSupplier,
+      [
+        {
+          productId: targetProd.id,
+          productName: targetProd.name,
+          costPrice: cost,
+          quantity: qty,
+          subtotal: qty * cost,
+        },
+      ],
+      purchasePaymentType,
+      selectedSupplierId
+    );
     setPurchasing(false);
 
     if (result.success) {
       setPurchaseModalVisible(false);
+      const isKredit = purchasePaymentType === 'kredit';
       Alert.alert(
         'Pembelian Berhasil',
-        `Stok '${targetProd.name}' bertambah +${qty} pcs.\nTotal Rp ${(qty * cost).toLocaleString('id-ID')} dicatat ke Buku Kas Keluar.`
+        `Stok '${targetProd.name}' bertambah +${qty} pcs.\n` +
+          (isKredit
+            ? `Total Rp ${(qty * cost).toLocaleString('id-ID')} dicatat sebagai HUTANG SUPPLIER (${purchaseSupplier || 'Supplier Umum'}). Kas fisik toko tidak berkurang.`
+            : `Total Rp ${(qty * cost).toLocaleString('id-ID')} dicatat ke Buku Kas Keluar.`)
       );
     } else {
       Alert.alert('Pembelian Ditolak', result.message || 'Gagal menyimpan transaksi pembelian');
@@ -729,16 +747,66 @@ export default function ProductsScreen() {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Info Saldo Kas Riil Toko */}
-              <View style={styles.cashInfoBox}>
-                <ThemedText style={{ fontSize: 11, color: '#475569' }}>Saldo Kas Toko Tersedia:</ThemedText>
-                <ThemedText style={{ fontSize: 18, fontWeight: '800', color: Colors.tintDark, marginTop: 2 }}>
-                  Rp {currentBalance.toLocaleString('id-ID')}
-                </ThemedText>
-                <ThemedText style={{ fontSize: 10, color: Colors.muted, marginTop: 2 }}>
-                  * Pembelian akan mengecek ketersediaan uang kas fisik toko
-                </ThemedText>
+              {/* Pilihan Metode Pembayaran Stok: Tunai vs Kredit */}
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.label}>Metode Pembayaran Pembelian</ThemedText>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Pressable
+                    style={[
+                      styles.paymentTypeToggleBtn,
+                      purchasePaymentType === 'tunai' && styles.paymentTypeToggleBtnActive,
+                    ]}
+                    onPress={() => setPurchasePaymentType('tunai')}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.paymentTypeToggleText,
+                        purchasePaymentType === 'tunai' && styles.paymentTypeToggleTextActive,
+                      ]}
+                    >
+                      💵 Tunai (Kas Toko)
+                    </ThemedText>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.paymentTypeToggleBtn,
+                      purchasePaymentType === 'kredit' && { backgroundColor: '#fef3c7', borderColor: '#d97706' },
+                    ]}
+                    onPress={() => setPurchasePaymentType('kredit')}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.paymentTypeToggleText,
+                        purchasePaymentType === 'kredit' && { color: '#92400e', fontWeight: '700' },
+                      ]}
+                    >
+                      📋 Kredit (Hutang Supplier)
+                    </ThemedText>
+                  </Pressable>
+                </View>
               </View>
+
+              {/* Info Box Dinamis Sesuai Metode Bayar */}
+              {purchasePaymentType === 'tunai' ? (
+                <View style={styles.cashInfoBox}>
+                  <ThemedText style={{ fontSize: 11, color: '#475569' }}>Saldo Kas Toko Tersedia:</ThemedText>
+                  <ThemedText style={{ fontSize: 18, fontWeight: '800', color: Colors.tintDark, marginTop: 2 }}>
+                    Rp {currentBalance.toLocaleString('id-ID')}
+                  </ThemedText>
+                  <ThemedText style={{ fontSize: 10, color: Colors.muted, marginTop: 2 }}>
+                    * Pembelian tunai akan memotong saldo kas fisik toko
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={[styles.cashInfoBox, { backgroundColor: '#fffbeb', borderColor: '#fde68a' }]}>
+                  <ThemedText style={{ fontSize: 11, color: '#92400e', fontWeight: '700' }}>
+                    📋 Pembelian Tempo / Kredit (Hutang Toko)
+                  </ThemedText>
+                  <ThemedText style={{ fontSize: 10, color: '#78350f', marginTop: 3 }}>
+                    * Saldo kas toko TIDAK akan berkurang. Nilai pembelian akan otomatis dicatat sebagai hutang baru ke Supplier di modul Manajemen Hutang.
+                  </ThemedText>
+                </View>
+              )}
 
               <View style={styles.inputGroup}>
                 <ThemedText style={styles.label}>Pilih Produk yang Dibeli</ThemedText>
@@ -768,14 +836,64 @@ export default function ProductsScreen() {
                 </ScrollView>
               </View>
 
+              {/* Pemilihan Nama Supplier */}
               <View style={styles.inputGroup}>
-                <ThemedText style={styles.label}>Nama Supplier / Tempat Belanja</ThemedText>
+                <ThemedText style={styles.label}>Supplier / Tempat Belanja</ThemedText>
+                {suppliers.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
+                    <Pressable
+                      style={[
+                        styles.categoryOption,
+                        selectedSupplierId === null && styles.categoryOptionActive,
+                      ]}
+                      onPress={() => {
+                        setSelectedSupplierId(null);
+                        setPurchaseSupplier('');
+                      }}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.categoryOptionText,
+                          selectedSupplierId === null && styles.categoryOptionTextActive,
+                        ]}
+                      >
+                        + Supplier Baru / Bebas
+                      </ThemedText>
+                    </Pressable>
+                    {suppliers.map((s) => (
+                      <Pressable
+                        key={s.id}
+                        style={[
+                          styles.categoryOption,
+                          selectedSupplierId === s.id && styles.categoryOptionActive,
+                        ]}
+                        onPress={() => {
+                          setSelectedSupplierId(s.id);
+                          setPurchaseSupplier(s.name);
+                        }}
+                      >
+                        <ThemedText
+                          style={[
+                            styles.categoryOptionText,
+                            selectedSupplierId === s.id && styles.categoryOptionTextActive,
+                          ]}
+                        >
+                          🏢 {s.name}
+                        </ThemedText>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : null}
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { marginTop: 6 }]}
                   placeholder="Contoh: Toko Grosir Jaya / Pasar Pagi"
                   placeholderTextColor={Colors.disabled}
                   value={purchaseSupplier}
-                  onChangeText={setPurchaseSupplier}
+                  onChangeText={(val) => {
+                    setPurchaseSupplier(val);
+                    const match = suppliers.find((s) => s.name.toLowerCase() === val.trim().toLowerCase());
+                    setSelectedSupplierId(match ? match.id : null);
+                  }}
                 />
               </View>
 
@@ -823,8 +941,17 @@ export default function ProductsScreen() {
                   onPress={() => setPurchaseModalVisible(false)}
                 />
                 <Button
-                  title={purchasing ? 'Memvalidasi Kas...' : 'Beli & Tambah Stok'}
-                  style={{ flex: 1 }}
+                  title={
+                    purchasing
+                      ? 'Memproses...'
+                      : purchasePaymentType === 'kredit'
+                      ? 'Beli & Catat Hutang'
+                      : 'Beli & Potong Kas'
+                  }
+                  style={{
+                    flex: 1,
+                    backgroundColor: purchasePaymentType === 'kredit' ? '#d97706' : Colors.tint,
+                  }}
                   onPress={handleSavePurchase}
                   disabled={purchasing}
                 />
@@ -1192,5 +1319,29 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
+  },
+  paymentTypeToggleBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paymentTypeToggleBtnActive: {
+    backgroundColor: '#f5f3ff',
+    borderColor: Colors.tint,
+  },
+  paymentTypeToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  paymentTypeToggleTextActive: {
+    color: Colors.tintDark,
+    fontWeight: '700',
   },
 });

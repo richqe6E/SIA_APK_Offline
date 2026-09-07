@@ -103,9 +103,14 @@ export async function printReceipt(params: PrintParams): Promise<void> {
 
   await BluetoothEscposPrinter.printText(THIN + '\n', {});
   await BluetoothEscposPrinter.printText(formatTotal('Total', formatRupiah(params.total)) + '\n', {});
-  const payLabel = params.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS';
-  await BluetoothEscposPrinter.printText(formatTotal(payLabel, formatRupiah(params.paymentAmount)) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatTotal('Kembalian', formatRupiah(params.change)) + '\n', {});
+  if (params.paymentMethod === 'hutang') {
+    await BluetoothEscposPrinter.printText(formatTotal('Metode', 'HUTANG / BON') + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Status', 'BELUM LUNAS') + '\n', {});
+  } else {
+    const payLabel = params.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS';
+    await BluetoothEscposPrinter.printText(formatTotal(payLabel, formatRupiah(params.paymentAmount)) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Kembalian', formatRupiah(params.change)) + '\n', {});
+  }
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});

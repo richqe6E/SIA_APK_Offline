@@ -9,6 +9,7 @@ import { useTransactionStore, type CartItem } from '@/stores/transactionStore';
 import { useCategoryStore } from '@/stores/categoryStore';
 import { usePrinterStore } from '@/stores/printerStore';
 import { useSettingsStore, BusinessMode, ViewMode } from '@/stores/settingsStore';
+import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { printReceipt } from '@/services/print';
 import { useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -69,16 +70,20 @@ export default function TransactionScreen() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
-  const [paymentMethod, setPaymentMethod] = useState<'tunai' | 'qris'>('tunai');
+  const [paymentMethod, setPaymentMethod] = useState<'tunai' | 'qris' | 'hutang'>('tunai');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+  const [quickCustomerName, setQuickCustomerName] = useState('');
+  const [selectedPendingCustomerId, setSelectedPendingCustomerId] = useState<number | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [successTotal, setSuccessTotal] = useState(0);
   const [successDailySeq, setSuccessDailySeq] = useState(0);
   const [lastTransaction, setLastTransaction] = useState<{
     items: CartItem[];
-    paymentMethod: 'tunai' | 'qris';
+    paymentMethod: 'tunai' | 'qris' | 'hutang';
     paymentAmount: number;
     change: number;
+    customerName?: string;
   } | null>(null);
 
   // Fase 4 Modals: Barcode Scanner, Bulk Qty, QRIS Fullscreen
@@ -92,12 +97,15 @@ export default function TransactionScreen() {
   const [holdNote, setHoldNote] = useState('');
   const [showPendingListModal, setShowPendingListModal] = useState(false);
 
+  const { customers, loadCustomers, addCustomer } = useDebtReceivableStore();
+
   useEffect(() => {
     loadProducts(db);
     loadCategories(db);
     loadSettings(db);
     loadPendingOrders(db);
-  }, [db, loadProducts, loadCategories, loadSettings, loadPendingOrders]);
+    loadCustomers(db);
+  }, [db, loadProducts, loadCategories, loadSettings, loadPendingOrders, loadCustomers]);
 
   // Set initial view mode based on store settings / business mode
   useEffect(() => {
@@ -138,16 +146,41 @@ export default function TransactionScreen() {
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     if (paymentMethod === 'tunai' && parsedAmount < total) return;
+
+    let targetCustomerId = selectedCustomerId;
+    let targetCustomerName = '';
+
+    if (paymentMethod === 'hutang') {
+      if (!targetCustomerId && quickCustomerName.trim()) {
+        targetCustomerId = await addCustomer(db, quickCustomerName.trim());
+        targetCustomerName = quickCustomerName.trim();
+      } else if (targetCustomerId) {
+        const c = customers.find((cust) => cust.id === targetCustomerId);
+        targetCustomerName = c ? c.name : 'Pelanggan';
+      } else {
+        Alert.alert('Pilih Pelanggan', 'Pilih nama pelanggan yang berhutang terlebih dahulu!');
+        return;
+      }
+    }
+
     setSuccessTotal(total);
     setLastTransaction({
       items: [...cart],
       paymentMethod,
-      paymentAmount: parsedAmount || total,
-      change,
+      paymentAmount: paymentMethod === 'hutang' ? 0 : (parsedAmount || total),
+      change: paymentMethod === 'hutang' ? 0 : change,
+      customerName: targetCustomerName,
     });
-    const dailySeq = await checkout(db, paymentMethod, parsedAmount || total);
+    const dailySeq = await checkout(
+      db,
+      paymentMethod,
+      paymentMethod === 'hutang' ? 0 : (parsedAmount || total),
+      targetCustomerId
+    );
     setSuccessDailySeq(dailySeq);
     setPaymentAmount('');
+    setQuickCustomerName('');
+    setSelectedCustomerId(null);
     setShowSuccess(true);
   };
 
@@ -159,16 +192,23 @@ export default function TransactionScreen() {
     setStep(1);
     setShowSuccess(false);
     setPaymentAmount('');
+    setQuickCustomerName('');
+    setSelectedCustomerId(null);
     setLastTransaction(null);
   };
 
   const handleHoldCart = async () => {
     if (cart.length === 0) return;
-    const success = await holdCurrentCart(db, holdNote);
+    const cust = customers.find((c) => c.id === selectedPendingCustomerId);
+    const note = cust
+      ? cust.name + (holdNote.trim() ? ` - ${holdNote.trim()}` : '')
+      : (holdNote.trim() || 'Pelanggan');
+    const success = await holdCurrentCart(db, note);
     if (success) {
       setHoldNote('');
+      setSelectedPendingCustomerId(null);
       setShowHoldModal(false);
-      Alert.alert('Pesanan Ditahan', 'Pesanan berhasil disimpan di daftar pending / antrean.');
+      Alert.alert('Pesanan Di-pending', 'Pesanan berhasil disimpan di daftar pending / antrean.');
     }
   };
 
@@ -305,6 +345,11 @@ export default function TransactionScreen() {
           change={change}
           qrisImagePath={qrisImagePath}
           storeName={storeName}
+          customers={customers}
+          selectedCustomerId={selectedCustomerId}
+          onSelectCustomer={setSelectedCustomerId}
+          quickCustomerName={quickCustomerName}
+          onChangeQuickCustomerName={setQuickCustomerName}
           onChangeMethod={setPaymentMethod}
           onNumpadPress={handleNumpadPress}
           onSetAmount={(v) => setPaymentAmount(v)}
@@ -352,7 +397,7 @@ export default function TransactionScreen() {
         }}
       />
 
-      {/* Modal Tahan Pesanan / Pending Order */}
+      {/* Modal Pending Pesanan / Pending Order */}
       <Modal
         visible={showHoldModal}
         transparent
@@ -362,29 +407,62 @@ export default function TransactionScreen() {
         <View style={styles.modalOverlay}>
           <ThemedView style={styles.holdModalCard}>
             <ThemedText type="subtitle" style={{ fontSize: 16, marginBottom: 4 }}>
-              ⏳ Tahan Pesanan (Pending Order)
+              ⏳ Pending Pesanan (Order Ditunda)
             </ThemedText>
             <ThemedText style={{ fontSize: 12, color: Colors.muted, marginBottom: 14 }}>
-              Pesanan saat ini akan disimpan sementara ke antrean. Kasir dapat melayani pelanggan lain.
+              Pesanan saat ini akan disimpan sementara ke antrean pending. Kasir dapat melayani pelanggan lain.
             </ThemedText>
 
             <View style={styles.holdInputBox}>
-              <ThemedText style={{ fontSize: 12, fontWeight: '600', marginBottom: 6 }}>
-                Nomor Meja / Nama Pelanggan / Catatan:
+              <ThemedText style={{ fontSize: 12, fontWeight: '700', marginBottom: 6, color: '#334155' }}>
+                Pilih Nama Pelanggan:
+              </ThemedText>
+              {customers.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 6, paddingVertical: 2, marginBottom: 8 }}
+                >
+                  {customers.map((c) => {
+                    const isSelected = selectedPendingCustomerId === c.id;
+                    return (
+                      <Pressable
+                        key={c.id}
+                        style={[
+                          styles.categoryChip,
+                          isSelected && styles.categoryChipActive,
+                        ]}
+                        onPress={() => setSelectedPendingCustomerId(isSelected ? null : c.id)}
+                      >
+                        <ThemedText
+                          style={[
+                            styles.categoryChipText,
+                            isSelected && styles.categoryChipTextActive,
+                          ]}
+                        >
+                          👤 {c.name}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              ) : null}
+
+              <ThemedText style={{ fontSize: 11, color: Colors.muted, marginBottom: 4 }}>
+                Catatan Tambahan (Opsional):
               </ThemedText>
               <TextInput
                 value={holdNote}
                 onChangeText={setHoldNote}
-                placeholder="Contoh: Meja 05 / Bu Rina"
+                placeholder="Contoh: Diambil sore / titip dulu..."
                 placeholderTextColor={Colors.placeholder}
                 style={styles.holdTextInput}
-                autoFocus
               />
             </View>
 
             <View style={styles.holdSummaryBox}>
               <ThemedText style={{ fontSize: 12, color: Colors.muted }}>
-                Total Item: {cart.reduce((s, i) => s + i.quantity, 0)} pcs ({cart.length} menu)
+                Total Item: {cart.reduce((s, i) => s + i.quantity, 0)} pcs ({cart.length} item)
               </ThemedText>
               <ThemedText type="defaultSemiBold" style={{ fontSize: 14, color: Colors.tint }}>
                 Rp {total.toLocaleString('id-ID')}
@@ -396,6 +474,7 @@ export default function TransactionScreen() {
                 style={styles.holdCancelBtn}
                 onPress={() => {
                   setHoldNote('');
+                  setSelectedPendingCustomerId(null);
                   setShowHoldModal(false);
                 }}
               >
@@ -405,14 +484,14 @@ export default function TransactionScreen() {
                 style={styles.holdConfirmBtn}
                 onPress={handleHoldCart}
               >
-                <ThemedText style={styles.holdConfirmBtnText}>Simpan & Tahan</ThemedText>
+                <ThemedText style={styles.holdConfirmBtnText}>Simpan Pending</ThemedText>
               </TouchableOpacity>
             </View>
           </ThemedView>
         </View>
       </Modal>
 
-      {/* Modal Daftar Pesanan Tertunda / Pending Orders */}
+      {/* Modal Daftar Pesanan Pending / Pending Orders */}
       <Modal
         visible={showPendingListModal}
         transparent
@@ -424,10 +503,10 @@ export default function TransactionScreen() {
             <View style={styles.pendingListHeader}>
               <View>
                 <ThemedText type="subtitle" style={{ fontSize: 16 }}>
-                  📋 Pesanan Tertunda ({pendingOrders.length})
+                  📋 Daftar Pesanan Pending ({pendingOrders.length})
                 </ThemedText>
                 <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
-                  Pilih pesanan untuk melanjutkan transaksi atau batalkan antrean.
+                  Pilih pesanan pending untuk melanjutkan transaksi atau batalkan antrean.
                 </ThemedText>
               </View>
               <TouchableOpacity
@@ -752,7 +831,7 @@ function Step1View({
               activeOpacity={0.7}
             >
               <ThemedText style={[styles.holdCartBtnText, cart.length === 0 && styles.holdCartBtnTextDisabled]}>
-                ⏳ Tahan
+                ⏳ Pending
               </ThemedText>
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
@@ -778,6 +857,11 @@ function Step2View({
   change,
   qrisImagePath,
   storeName,
+  customers,
+  selectedCustomerId,
+  onSelectCustomer,
+  quickCustomerName,
+  onChangeQuickCustomerName,
   onChangeMethod,
   onNumpadPress,
   onSetAmount,
@@ -787,13 +871,18 @@ function Step2View({
 }: {
   cart: CartItem[];
   total: number;
-  paymentMethod: 'tunai' | 'qris';
+  paymentMethod: 'tunai' | 'qris' | 'hutang';
   paymentAmount: string;
   parsedAmount: number;
   change: number;
   qrisImagePath: string;
   storeName: string;
-  onChangeMethod: (m: 'tunai' | 'qris') => void;
+  customers: { id: number; name: string; phone?: string }[];
+  selectedCustomerId: number | null;
+  onSelectCustomer: (id: number | null) => void;
+  quickCustomerName: string;
+  onChangeQuickCustomerName: (name: string) => void;
+  onChangeMethod: (m: 'tunai' | 'qris' | 'hutang') => void;
   onNumpadPress: (v: string) => void;
   onSetAmount: (v: string) => void;
   onOpenQrisCustomerModal: () => void;
@@ -802,7 +891,8 @@ function Step2View({
 }) {
   const canConfirm =
     paymentMethod === 'qris' ||
-    (paymentMethod === 'tunai' && parsedAmount >= total && paymentAmount.length > 0);
+    (paymentMethod === 'tunai' && parsedAmount >= total && paymentAmount.length > 0) ||
+    (paymentMethod === 'hutang' && (selectedCustomerId !== null || quickCustomerName.trim().length > 0));
 
   const formatRupiah = (val: string) => {
     if (!val) return '0';
@@ -922,9 +1012,113 @@ function Step2View({
               📱 QRIS
             </ThemedText>
           </Pressable>
+          <Pressable
+            style={[
+              styles.paymentBtn,
+              paymentMethod === 'hutang' && [styles.paymentBtnActive, { backgroundColor: '#d97706' }],
+            ]}
+            onPress={() => onChangeMethod('hutang')}
+          >
+            <ThemedText style={{ fontWeight: '600', color: paymentMethod === 'hutang' ? '#fff' : Colors.text }}>
+              📋 Hutang (Bon)
+            </ThemedText>
+          </Pressable>
         </View>
 
-        {paymentMethod === 'tunai' ? (
+        {paymentMethod === 'hutang' ? (
+          <View style={{ gap: 10, flex: 1, justifyContent: 'center' }}>
+            <Card padding={14} style={{ backgroundColor: '#fffbeb', borderColor: '#fde68a', borderWidth: 1 }}>
+              <ThemedText style={{ fontSize: 13, fontWeight: '700', color: '#92400e', marginBottom: 2 }}>
+                📋 Transaksi Hutang / Kasbon Pelanggan
+              </ThemedText>
+              <ThemedText style={{ fontSize: 11, color: '#78350f' }}>
+                Pilih nama pelanggan untuk mencatat piutang toko ke pelanggan tersebut.
+              </ThemedText>
+
+              <View style={{ marginTop: 10 }}>
+                <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 6 }}>
+                  Pilih Pelanggan Terdaftar:
+                </ThemedText>
+                {customers.length > 0 ? (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+                  >
+                    {customers.map((c) => {
+                      const isSelected = selectedCustomerId === c.id;
+                      return (
+                        <Pressable
+                          key={c.id}
+                          style={[
+                            styles.categoryChip,
+                            isSelected && { backgroundColor: '#d97706', borderColor: '#b45309' },
+                          ]}
+                          onPress={() => {
+                            onSelectCustomer(isSelected ? null : c.id);
+                            onChangeQuickCustomerName('');
+                          }}
+                        >
+                          <ThemedText
+                            style={[
+                              styles.categoryChipText,
+                              isSelected && { color: '#ffffff', fontWeight: '700' },
+                            ]}
+                          >
+                            👤 {c.name} {c.phone ? `(${c.phone})` : ''}
+                          </ThemedText>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                ) : (
+                  <ThemedText style={{ fontSize: 11, color: Colors.muted, fontStyle: 'italic' }}>
+                    Belum ada pelanggan terdaftar di CRM.
+                  </ThemedText>
+                )}
+              </View>
+
+              <View style={{ marginTop: 10 }}>
+                <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 4 }}>
+                  Atau Input Nama Pelanggan Baru:
+                </ThemedText>
+                <TextInput
+                  style={[styles.holdTextInput, { backgroundColor: '#ffffff' }]}
+                  placeholder="Ketik nama pelanggan baru..."
+                  placeholderTextColor={Colors.placeholder}
+                  value={quickCustomerName}
+                  onChangeText={(val) => {
+                    onChangeQuickCustomerName(val);
+                    if (val.trim()) {
+                      onSelectCustomer(null);
+                    }
+                  }}
+                />
+              </View>
+
+              <View style={{ marginTop: 10, padding: 8, backgroundColor: '#fef3c7', borderRadius: 8 }}>
+                <ThemedText style={{ fontSize: 11, color: '#92400e', fontWeight: '700' }}>
+                  Total Tagihan Hutang: Rp {total.toLocaleString('id-ID')}
+                </ThemedText>
+                <ThemedText style={{ fontSize: 10, color: '#78350f', marginTop: 2 }}>
+                  * Kas fisik tidak bertambah. Nilai piutang otomatis masuk ke Manajemen Pelanggan tanpa jatuh tempo.
+                </ThemedText>
+              </View>
+            </Card>
+
+            <Button
+              title={
+                canConfirm
+                  ? `Konfirmasi Hutang (Rp ${total.toLocaleString('id-ID')})`
+                  : 'Pilih Pelanggan Terlebih Dahulu'
+              }
+              size="lg"
+              disabled={!canConfirm}
+              style={{ backgroundColor: canConfirm ? '#d97706' : Colors.disabled }}
+              onPress={onConfirm}
+            />
+          </View>
+        ) : paymentMethod === 'tunai' ? (
           <View style={{ gap: 8, flex: 1, justifyContent: 'center' }}>
             <Card padding={12} style={{ backgroundColor: '#faf5ff', borderColor: Colors.tint + '40' }}>
               <ThemedText style={{ fontSize: 11, color: Colors.muted }}>Uang Diterima:</ThemedText>
@@ -1030,9 +1224,10 @@ function SuccessView({
   transactionId: number;
   lastTransaction: {
     items: CartItem[];
-    paymentMethod: 'tunai' | 'qris';
+    paymentMethod: 'tunai' | 'qris' | 'hutang';
     paymentAmount: number;
     change: number;
+    customerName?: string;
   } | null;
   onDone: () => void;
 }) {
@@ -1083,7 +1278,7 @@ function SuccessView({
           Rp {total.toLocaleString('id-ID')}
         </ThemedText>
         <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
-          Metode: {lastTransaction?.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS'} • Nota #{transactionId}
+          Metode: {lastTransaction?.paymentMethod === 'tunai' ? 'Tunai' : lastTransaction?.paymentMethod === 'hutang' ? `Hutang (Bon) • ${lastTransaction.customerName || 'Pelanggan'}` : 'QRIS'} • Nota #{transactionId}
         </ThemedText>
 
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, width: '100%' }}>
@@ -1165,10 +1360,14 @@ function SuccessView({
               </View>
               <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
                 <ThemedText style={styles.receiptMetaText}>
-                  {lastTransaction?.paymentMethod === 'tunai' ? 'Tunai (Diterima)' : 'QRIS'}
+                  {lastTransaction?.paymentMethod === 'tunai'
+                    ? 'Tunai (Diterima)'
+                    : lastTransaction?.paymentMethod === 'hutang'
+                    ? `Hutang / Bon: ${lastTransaction.customerName || 'Pelanggan'}`
+                    : 'QRIS'}
                 </ThemedText>
                 <ThemedText style={styles.receiptMetaText}>
-                  Rp {(lastTransaction?.paymentAmount ?? total).toLocaleString('id-ID')}
+                  Rp {(lastTransaction?.paymentAmount ?? (lastTransaction?.paymentMethod === 'hutang' ? total : 0)).toLocaleString('id-ID')}
                 </ThemedText>
               </View>
               {lastTransaction?.paymentMethod === 'tunai' && (

@@ -37,6 +37,7 @@ import {
 import { exportCashLedgerToPDF, exportLabaRugiToPDF, shareFile } from '@/services/export';
 import { printLaporanLabaRugi } from '@/services/print';
 import { usePrinterStore } from '@/stores/printerStore';
+import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { useRouter } from 'expo-router';
 
 // ─────────────────────────────────────────
@@ -928,6 +929,8 @@ function BukuKasTab({ db, onMutate }: { db: SQLiteDatabase; onMutate?: () => voi
     deleteEntry,
   } = useCashStore();
 
+  const { totalReceivableUnpaid, totalDebtUnpaid, loadDebts, loadReceivables } = useDebtReceivableStore();
+
   const [modalVisible, setModalVisible] = useState(false);
   const [editingEntry, setEditingEntry] = useState<CashEntry | null>(null);
   const [entryType, setEntryType] = useState<CashTransactionType>('in');
@@ -966,7 +969,9 @@ function BukuKasTab({ db, onMutate }: { db: SQLiteDatabase; onMutate?: () => voi
 
   useEffect(() => {
     loadLedger(db);
-  }, [db, loadLedger]);
+    loadDebts(db);
+    loadReceivables(db);
+  }, [db, loadLedger, loadDebts, loadReceivables]);
 
   const openModal = (type: CashTransactionType) => {
     setEditingEntry(null);
@@ -1048,133 +1053,180 @@ function BukuKasTab({ db, onMutate }: { db: SQLiteDatabase; onMutate?: () => voi
 
   return (
     <View style={{ flex: 1 }}>
-      {/* Kartu Ringkasan Saldo Kas Fisik */}
-      <Card
-        padding={16}
-        style={{
-          marginBottom: 12,
-          backgroundColor: '#ffffff',
-          borderColor: Colors.tint + '40',
-          borderWidth: 1.5,
-        }}
-      >
-        <ThemedText style={{ fontSize: 12, color: '#64748b', fontWeight: '700', letterSpacing: 0.3 }}>
-          SALDO KAS FISIK TERSEDIA
-        </ThemedText>
-        <ThemedText
+      {/* Top Header Section: Split Row Minimalis untuk Landscape */}
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 8 }}>
+        {/* Panel Kiri: Saldo Kas Fisik & Arus Kas */}
+        <Card
+          padding={12}
           style={{
-            fontSize: 26,
-            lineHeight: 34,
-            fontWeight: '800',
-            color: currentBalance >= 0 ? Colors.tintDark : Colors.danger,
-            marginTop: 8,
-            marginBottom: 2,
+            flex: 1.2,
+            backgroundColor: '#ffffff',
+            borderColor: Colors.tint + '35',
+            borderWidth: 1.5,
+            justifyContent: 'space-between',
           }}
         >
-          {fmtRp(currentBalance)}
-        </ThemedText>
-        <View
+          <View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '800', letterSpacing: 0.5 }}>
+                SALDO KAS FISIK TERSEDIA
+              </ThemedText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f0fdf4', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10 }}>
+                <ThemedText style={{ fontSize: 9 }}>🟢</ThemedText>
+                <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>Kas Aktif</ThemedText>
+              </View>
+            </View>
+            <ThemedText
+              style={{
+                fontSize: 22,
+                lineHeight: 28,
+                fontWeight: '900',
+                color: currentBalance >= 0 ? Colors.tintDark : Colors.danger,
+                marginTop: 4,
+              }}
+            >
+              {fmtRp(currentBalance)}
+            </ThemedText>
+          </View>
+
+          {/* Sub-metrik Kas Masuk & Keluar */}
+          <View
+            style={{
+              flexDirection: 'row',
+              gap: 8,
+              marginTop: 8,
+              paddingTop: 8,
+              borderTopWidth: 1,
+              borderColor: '#f1f5f9',
+            }}
+          >
+            <View style={{ flex: 1, backgroundColor: '#f0fdf4', borderRadius: 8, padding: 6, borderWidth: 1, borderColor: '#dcfce7' }}>
+              <ThemedText style={{ fontSize: 10, color: '#16a34a', fontWeight: '700' }}>📥 Kas Masuk (+)</ThemedText>
+              <ThemedText style={{ fontSize: 12, fontWeight: '800', color: '#15803d', marginTop: 1 }}>
+                {fmtRp(salesCashTotal + totalCashIn)}
+              </ThemedText>
+              <ThemedText style={{ fontSize: 9, color: '#64748b' }}>
+                Penjualan: {fmtRp(salesCashTotal)}
+              </ThemedText>
+            </View>
+
+            <View style={{ flex: 1, backgroundColor: '#fef2f2', borderRadius: 8, padding: 6, borderWidth: 1, borderColor: '#fee2e2' }}>
+              <ThemedText style={{ fontSize: 10, color: '#dc2626', fontWeight: '700' }}>📤 Kas Keluar (-)</ThemedText>
+              <ThemedText style={{ fontSize: 12, fontWeight: '800', color: '#b91c1c', marginTop: 1 }}>
+                {fmtRp(totalCashOut)}
+              </ThemedText>
+              <ThemedText style={{ fontSize: 9, color: '#64748b' }}>
+                Beban & Kulakan
+              </ThemedText>
+            </View>
+          </View>
+        </Card>
+
+        {/* Panel Kanan: Tombol Aksi Mutasi & Cetak PDF */}
+        <Card
+          padding={12}
           style={{
-            flexDirection: 'row',
-            gap: 12,
-            marginTop: 12,
-            paddingTop: 10,
-            borderTopWidth: 1,
-            borderColor: '#f1f5f9',
+            flex: 1,
+            backgroundColor: '#ffffff',
+            borderColor: '#e2e8f0',
+            borderWidth: 1.5,
+            justifyContent: 'space-between',
           }}
         >
-          <View style={{ flex: 1 }}>
-            <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '600' }}>Total Kas Masuk (+):</ThemedText>
-            <ThemedText
-              style={{ fontSize: 14, fontWeight: '700', color: Colors.success, marginTop: 2 }}
-            >
-              {fmtRp(salesCashTotal + totalCashIn)}
-            </ThemedText>
-            <ThemedText style={{ fontSize: 10, color: Colors.muted, marginTop: 2 }}>
-              (Penjualan: {fmtRp(salesCashTotal)})
-            </ThemedText>
-          </View>
-          <View style={{ flex: 1 }}>
-            <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '600' }}>Total Kas Keluar (-):</ThemedText>
-            <ThemedText
-              style={{ fontSize: 14, fontWeight: '700', color: Colors.danger, marginTop: 2 }}
-            >
-              {fmtRp(totalCashOut)}
-            </ThemedText>
-            <ThemedText style={{ fontSize: 10, color: Colors.muted, marginTop: 2 }}>
-              (Beban & Kulakan)
-            </ThemedText>
-          </View>
-        </View>
-      </Card>
-
-      {/* Tombol Aksi Mutasi Kas */}
-      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-        <Pressable
-          style={[styles.cashActionBtn, { backgroundColor: '#dcfce7', borderColor: '#86efac' }]}
-          onPress={() => openModal('in')}
-        >
-          <ThemedText style={{ fontSize: 16 }}>💰</ThemedText>
-          <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#15803d' }}>
-            + Penerimaan Kas
+          <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '800', letterSpacing: 0.5, marginBottom: 6 }}>
+            AKSI BUKU KAS & EKSPOR
           </ThemedText>
-        </Pressable>
 
-        <Pressable
-          style={[styles.cashActionBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }]}
-          onPress={() => openModal('out')}
-        >
-          <ThemedText style={{ fontSize: 16 }}>💸</ThemedText>
-          <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#b91c1c' }}>
-            - Pengeluaran Beban
-          </ThemedText>
-        </Pressable>
+          {/* Tombol Input Mutasi Kas */}
+          <View style={{ flexDirection: 'row', gap: 6, marginBottom: 6 }}>
+            <Pressable
+              style={[styles.cashCompactActionBtn, { backgroundColor: '#dcfce7', borderColor: '#86efac' }]}
+              onPress={() => openModal('in')}
+            >
+              <ThemedText style={{ fontSize: 14 }}>💰</ThemedText>
+              <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#15803d' }}>
+                + Kas Masuk
+              </ThemedText>
+            </Pressable>
+
+            <Pressable
+              style={[styles.cashCompactActionBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }]}
+              onPress={() => openModal('out')}
+            >
+              <ThemedText style={{ fontSize: 14 }}>💸</ThemedText>
+              <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#b91c1c' }}>
+                - Kas Keluar
+              </ThemedText>
+            </Pressable>
+          </View>
+
+          {/* Tombol PDF */}
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            <Pressable
+              style={[styles.cashCompactExportBtn, { borderColor: '#86efac' }]}
+              disabled={exportingCashPdf}
+              onPress={() => handleExportCashPDF('in')}
+            >
+              <ThemedText style={{ fontSize: 11 }}>📄</ThemedText>
+              <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>
+                {exportingCashPdf ? 'Ekspor...' : 'PDF Masuk'}
+              </ThemedText>
+            </Pressable>
+
+            <Pressable
+              style={[styles.cashCompactExportBtn, { borderColor: '#fca5a5' }]}
+              disabled={exportingCashPdf}
+              onPress={() => handleExportCashPDF('out')}
+            >
+              <ThemedText style={{ fontSize: 11 }}>📄</ThemedText>
+              <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#dc2626' }}>
+                {exportingCashPdf ? 'Ekspor...' : 'PDF Keluar'}
+              </ThemedText>
+            </Pressable>
+          </View>
+        </Card>
       </View>
 
-      {/* Tombol Export PDF Penerimaan & Pengeluaran Kas */}
-      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-        <Pressable
-          style={[styles.cashExportBtn, { borderColor: '#16a34a' }]}
-          disabled={exportingCashPdf}
-          onPress={() => handleExportCashPDF('in')}
-        >
-          <ThemedText style={{ fontSize: 13 }}>📄</ThemedText>
-          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#16a34a' }}>
-            {exportingCashPdf ? 'Mengekspor...' : 'PDF Penerimaan Kas'}
-          </ThemedText>
-        </Pressable>
-
-        <Pressable
-          style={[styles.cashExportBtn, { borderColor: '#dc2626' }]}
-          disabled={exportingCashPdf}
-          onPress={() => handleExportCashPDF('out')}
-        >
-          <ThemedText style={{ fontSize: 13 }}>📄</ThemedText>
-          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>
-            {exportingCashPdf ? 'Mengekspor...' : 'PDF Pengeluaran Kas'}
-          </ThemedText>
-        </Pressable>
-      </View>
-
-      {/* Pintasan ke Manajemen Hutang & Piutang */}
+      {/* Banner Minimalis Buku Hutang & Piutang */}
       <Pressable
-        style={styles.debtBannerBtn}
+        style={styles.debtBannerCompact}
         onPress={() => router.push('/debt-receivable' as any)}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <ThemedText style={{ fontSize: 20 }}>💳</ThemedText>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+          <View style={{ width: 28, height: 28, borderRadius: 6, backgroundColor: '#ede9fe', alignItems: 'center', justifyContent: 'center' }}>
+            <ThemedText style={{ fontSize: 14 }}>💳</ThemedText>
+          </View>
           <View>
-            <ThemedText style={{ fontSize: 13, fontWeight: '700', color: '#1e1b4b' }}>
+            <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#1e1b4b' }}>
               Buku Hutang & Piutang Usaha
             </ThemedText>
-            <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
-              Catat kasbon pelanggan, hutang supplier & pelunasan kas
+            <ThemedText style={{ fontSize: 10, color: '#64748b' }}>
+              Kasbon pelanggan, hutang supplier & pelunasan kas
             </ThemedText>
           </View>
         </View>
-        <ThemedText style={{ fontSize: 14, fontWeight: '700', color: Colors.tintDark }}>
-          Buka ›
-        </ThemedText>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {totalReceivableUnpaid > 0 && (
+            <View style={{ backgroundColor: '#fef3c7', borderColor: '#fde68a', borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+              <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#92400e' }}>
+                Piutang: {fmtRp(totalReceivableUnpaid)}
+              </ThemedText>
+            </View>
+          )}
+          {totalDebtUnpaid > 0 && (
+            <View style={{ backgroundColor: '#fee2e2', borderColor: '#fecaca', borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+              <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#991b1b' }}>
+                Hutang: {fmtRp(totalDebtUnpaid)}
+              </ThemedText>
+            </View>
+          )}
+          <View style={{ backgroundColor: Colors.tint, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 }}>
+            <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }}>
+              Buka ›
+            </ThemedText>
+          </View>
+        </View>
       </Pressable>
 
       <ThemedText
@@ -2055,5 +2107,38 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#ddd6fe',
     marginBottom: 14,
+  },
+  cashCompactActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1.5,
+  },
+  cashCompactExportBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    backgroundColor: '#ffffff',
+  },
+  debtBannerCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1.5,
+    borderColor: '#ddd6fe',
+    marginBottom: 8,
   },
 });

@@ -51,7 +51,12 @@ interface TransactionState {
   removeFromCart: (productId: number) => void;
   clearCart: () => void;
   setCart: (cart: CartItem[]) => void;
-  checkout: (db: SQLiteDatabase, paymentMethod: string, paymentAmount: number) => Promise<number>;
+  checkout: (
+    db: SQLiteDatabase,
+    paymentMethod: string,
+    paymentAmount: number,
+    customerId?: number | null
+  ) => Promise<number>;
   loadTransactions: (db: SQLiteDatabase, period?: PeriodFilter, page?: number, pageSize?: number) => Promise<void>;
   loadPendingOrders: (db: SQLiteDatabase) => Promise<void>;
   holdCurrentCart: (db: SQLiteDatabase, note: string) => Promise<boolean>;
@@ -118,21 +123,25 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
 
   clearCart: () => set({ cart: [] }),
 
-  checkout: async (db, paymentMethod, paymentAmount) => {
+  checkout: async (db, paymentMethod, paymentAmount, customerId = null) => {
     const { cart } = get();
     if (cart.length === 0) return 0;
 
     const total = cart.reduce((sum, item) => sum + item.subtotal, 0);
-    const change = paymentAmount - total;
+    const isCredit = paymentMethod === 'hutang' ? 1 : 0;
+    const finalPaymentAmount = isCredit ? 0 : paymentAmount;
+    const change = isCredit ? 0 : paymentAmount - total;
 
     let transactionId = 0;
     await db.withExclusiveTransactionAsync(async (txn) => {
       const result = await txn.runAsync(
-        'INSERT INTO transactions (total, payment_method, payment_amount, change) VALUES (?, ?, ?, ?)',
+        'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit) VALUES (?, ?, ?, ?, ?, ?)',
         total,
         paymentMethod,
-        paymentAmount,
-        change >= 0 ? change : 0
+        finalPaymentAmount,
+        change >= 0 ? change : 0,
+        customerId,
+        isCredit
       );
       transactionId = result.lastInsertRowId as number;
 
@@ -165,11 +174,26 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
           );
         }
       }
+
+      // Catat piutang pelanggan jika transaksi hutang
+      if (isCredit && customerId) {
+        await txn.runAsync(
+          'INSERT INTO customer_receivables (customer_id, transaction_id, total_amount, paid_amount, status, due_date, created_at) VALUES (?, ?, ?, 0, "unpaid", NULL, datetime("now","localtime"))',
+          customerId,
+          transactionId,
+          total
+        );
+      }
     });
 
     set({ cart: [] });
     await get().loadTransactions(db);
     useProductStore.getState().loadProducts(db);
+    if (isCredit) {
+      const { useDebtReceivableStore } = await import('@/stores/debtReceivableStore');
+      await useDebtReceivableStore.getState().loadReceivables(db);
+      await useDebtReceivableStore.getState().loadCustomers(db);
+    }
 
     const countResult = await db.getFirstAsync<{ count: number }>(
       "SELECT COUNT(*) as count FROM transactions WHERE date(created_at) = date('now','localtime')"
