@@ -80,9 +80,9 @@ POS-Offline-main/
 
 ---
 
-## 3. Skema Database SQLite (Versi 7 Terkini)
+## 3. Skema Database SQLite (Versi 10 Terkini)
 
-File: `services/database.ts` (`DATABASE_VERSION = 7`). Database dijalankan secara lokal offline (`pos.db`).
+File: `services/database.ts` (`DATABASE_VERSION = 10`). Database dijalankan secara lokal offline (`pos.db`) dengan indeks performa tinggi untuk ribuan produk dan transaksi.
 
 ### A. Tabel Master Produk & Inventaris
 ```sql
@@ -292,6 +292,18 @@ CREATE TABLE debt_payments (
     * **Panel Kanan:** Grid tombol aksi ringkas: `+ Kas Masuk` & `- Kas Keluar` serta tombol ekspor `📄 PDF Masuk` & `📄 PDF Keluar`.
     * **Banner Buku Hutang & Piutang:** Banner horizontal minimalis dengan badge jumlah piutang dan hutang yang belum lunas secara live, dan tombol navigasi cepat `Buka ›`.
   * Memberikan ruang vertikal yang lega untuk menggulir riwayat mutasi buku kas dengan nyaman.
+
+### 5. Smart CSV Import & Export Produk (Format Standar & Optimasi Ribuan Produk)
+* **File:** `services/export.ts`, `app/(tabs)/data-management.tsx`, `services/database.ts`
+* **Fitur:**
+  * **Format Kolom Standar Baru:**
+    `Barcode, Nama Produk, Kategori, Harga Jual, Harga Modal, Stok, Kelola Stok`
+  * **Smart Auto-Detect Delimiter:** Mendukung secara otomatis file CSV dengan pemisah koma (`,`), titik koma (`;` default Microsoft Excel Indonesia/Windows), maupun tab (`\t`).
+  * **Smart Header Mapping:** Otomatis mendeteksi nama kolom (nama, harga, modal, stok, barcode, kategori) secara cerdas terlepas dari urutan posisi kolom file CSV sumber.
+  * **Pembersihan Angka Rupiah:** Mampu membaca format angka Indonesia dengan titik ribuan (`15.000` menjadi `15000`), desimal koma, dan prefix `Rp`.
+  * **Pembersihan BOM Excel:** Menghilangkan karakter Byte Order Mark (`\uFEFF`) agar tidak merusak karakter baris pertama.
+  * **Tombol Unduh Template CSV:** Disediakan tombol langsung "Contoh Template CSV" di menu Manajemen Data untuk membagikan/mengunduh file format resmi.
+  * **Optimasi Performa Tinggi (Database v10):** Caching kategori dan produk ke memori O(1) selama import massal, serta penambahan indeks SQLite (`idx_products_barcode`, `idx_products_name`, `idx_products_category`, `idx_transactions_created_at`, `idx_transaction_items_txid`, `idx_cash_ledger_date`) sehingga aplikasi tetap responsif 60fps meski memiliki ribuan produk dan transaksi.
 
 ---
 

@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  const DATABASE_VERSION = 9;
+  const DATABASE_VERSION = 10;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -289,6 +289,19 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
       );
     `);
     currentDbVersion = 9;
+  }
+
+  if (currentDbVersion === 9) {
+    // Migrasi v10: Indeks performa tinggi untuk ribuan produk & transaksi
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
+      CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
+      CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
+      CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
+      CREATE INDEX IF NOT EXISTS idx_transaction_items_txid ON transaction_items(transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_cash_ledger_date ON cash_ledger(date);
+    `);
+    currentDbVersion = 10;
   }
 
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);

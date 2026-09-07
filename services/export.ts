@@ -107,17 +107,17 @@ export async function exportTransactionsToCSV(
 
 export async function exportProductsToCSV(db: SQLiteDatabase): Promise<string> {
   const rows = await db.getAllAsync<any>(
-    `SELECT p.id, p.name, COALESCE(c.name, 'Umum') as category_name, p.price, p.cost_price, p.stock, p.has_stock 
+    `SELECT p.id, p.barcode, p.name, COALESCE(c.name, 'Umum') as category_name, p.price, p.cost_price, p.stock, p.has_stock 
      FROM products p 
      LEFT JOIN categories c ON p.category_id = c.id 
      ORDER BY p.name ASC`
   );
   if (rows.length === 0) return '';
-  const headers = ['ID', 'Nama Produk', 'Kategori', 'Harga Jual', 'HPP Modal', 'Stok', 'Kelola Stok'];
+  const headers = ['Barcode', 'Nama Produk', 'Kategori', 'Harga Jual', 'Harga Modal', 'Stok', 'Kelola Stok'];
   const lines = [headers.join(',')];
   for (const r of rows) {
     lines.push([
-      r.id,
+      escapeCSV(r.barcode || ''),
       escapeCSV(r.name),
       escapeCSV(r.category_name || 'Umum'),
       r.price,
@@ -132,100 +132,282 @@ export async function exportProductsToCSV(db: SQLiteDatabase): Promise<string> {
   return file.uri;
 }
 
+export async function exportProductCSVTemplate(): Promise<string> {
+  const headers = ['Barcode', 'Nama Produk', 'Kategori', 'Harga Jual', 'Harga Modal', 'Stok', 'Kelola Stok'];
+  const sampleRows = [
+    ['8991234567890', 'Sosis Sapi Bakar 500gr', 'Makanan Beku', '25000', '18000', '50', 'Ya'],
+    ['8999876543210', 'Nugget Ayam Crispy 250gr', 'Makanan Beku', '18000', '13500', '30', 'Ya'],
+    ['', 'Kantong Plastik Sedang', 'Perlengkapan', '500', '200', '100', 'Ya'],
+    ['', 'Jasa Masak / Panggang', 'Jasa', '5000', '0', '0', 'Tidak'],
+  ];
+  const lines = [headers.join(',')];
+  for (const row of sampleRows) {
+    lines.push(row.map(escapeCSV).join(','));
+  }
+  const filename = `template_import_produk.csv`;
+  const file = new File(Paths.cache, filename);
+  file.write(lines.join('\n'));
+  return file.uri;
+}
+
+function parseCleanNumber(val: any): number {
+  if (val === undefined || val === null) return 0;
+  let str = String(val).trim().replace(/[^0-9.,-]/g, '');
+  if (!str) return 0;
+
+  // Format campuran titik & koma (contoh: 15.000,50 atau 15,000.50)
+  if (str.includes('.') && str.includes(',')) {
+    const lastDot = str.lastIndexOf('.');
+    const lastComma = str.lastIndexOf(',');
+    if (lastComma > lastDot) {
+      // Indo/Eropa: 15.000,50 -> hapus titik, jadikan koma titik
+      str = str.replace(/\./g, '').replace(',', '.');
+    } else {
+      // US: 15,000.50 -> hapus koma
+      str = str.replace(/,/g, '');
+    }
+  } else if (str.includes('.')) {
+    // Hanya ada titik: jika ada lebih dari 1 titik atau persis 3 digit di belakang (contoh: 15.000 atau 1.500.000)
+    const parts = str.split('.');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      str = str.replace(/\./g, '');
+    }
+  } else if (str.includes(',')) {
+    // Hanya ada koma: jika ada 3 digit (contoh: 15,000) anggap ribuan, jika 1-2 digit desimal (15,5)
+    const parts = str.split(',');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      str = str.replace(/,/g, '');
+    } else {
+      str = str.replace(',', '.');
+    }
+  }
+
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : num;
+}
+
+function detectCSVDelimiter(line: string): string {
+  let commas = 0;
+  let semicolons = 0;
+  let tabs = 0;
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') i++;
+      else inQuotes = !inQuotes;
+    } else if (!inQuotes) {
+      if (char === ';') semicolons++;
+      else if (char === ',') commas++;
+      else if (char === '\t') tabs++;
+    }
+  }
+  if (semicolons > commas && semicolons > tabs) return ';';
+  if (tabs > commas && tabs > semicolons) return '\t';
+  return ',';
+}
+
+function parseCSVLine(line: string, delim: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === delim && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
 export async function importProductsFromCSV(db: SQLiteDatabase, csvContent: string): Promise<number> {
-  const lines = csvContent.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  // Bersihkan BOM (Byte Order Mark) Excel jika ada
+  const cleanContent = csvContent.replace(/^\uFEFF/, '').replace(/^\uFFFE/, '').trim();
+  if (!cleanContent) throw new Error('File CSV kosong atau tidak terbaca');
+
+  const lines = cleanContent.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length === 0) throw new Error('File CSV kosong');
 
-  const parseLine = (line: string): string[] => {
-    const result: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === ',' && !inQuotes) {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    result.push(current.trim());
-    return result;
-  };
+  const delimiter = detectCSVDelimiter(lines[0]);
+  const firstRow = parseCSVLine(lines[0], delimiter);
 
+  // Smart Header Mapping
+  let hasHeader = false;
+  let colBarcode = -1;
+  let colName = -1;
+  let colCategory = -1;
+  let colPrice = -1;
+  let colCostPrice = -1;
+  let colStock = -1;
+  let colHasStock = -1;
+
+  for (let i = 0; i < firstRow.length; i++) {
+    const h = firstRow[i].toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (h.includes('barcode') || h.includes('sku') || h === 'kode' || h === 'code' || h === 'kodebarang') {
+      colBarcode = i;
+      hasHeader = true;
+    } else if (h.includes('nama') || h.includes('name') || h === 'produk' || h === 'product' || h === 'item') {
+      colName = i;
+      hasHeader = true;
+    } else if (h.includes('kategori') || h.includes('category') || h.includes('grup') || h === 'group') {
+      colCategory = i;
+      hasHeader = true;
+    } else if (h.includes('modal') || h.includes('hpp') || h.includes('beli') || h.includes('cost')) {
+      colCostPrice = i;
+      hasHeader = true;
+    } else if (h.includes('harga') || h.includes('jual') || h.includes('price')) {
+      colPrice = i;
+      hasHeader = true;
+    } else if (h.includes('kelolastok') || h.includes('hasstock') || h.includes('kelola') || h.includes('managestock')) {
+      colHasStock = i;
+      hasHeader = true;
+    } else if (h.includes('stok') || h.includes('stock') || h.includes('qty') || h.includes('jumlah')) {
+      colStock = i;
+      hasHeader = true;
+    }
+  }
+
+  // Jika tidak terdeteksi header resmi, gunakan urutan baku:
+  // 0: Barcode, 1: Nama Produk, 2: Kategori, 3: Harga Jual, 4: Harga Modal, 5: Stok, 6: Kelola Stok
+  if (!hasHeader) {
+    colBarcode = 0;
+    colName = 1;
+    colCategory = 2;
+    colPrice = 3;
+    colCostPrice = 4;
+    colStock = 5;
+    colHasStock = 6;
+  } else {
+    // Fallback jika ada kolom spesifik yang tidak teridentifikasi di header
+    if (colBarcode === -1) colBarcode = 0;
+    if (colName === -1) colName = 1;
+    if (colCategory === -1) colCategory = 2;
+    if (colPrice === -1) colPrice = 3;
+    if (colCostPrice === -1) colCostPrice = 4;
+    if (colStock === -1) colStock = 5;
+    if (colHasStock === -1) colHasStock = 6;
+  }
+
+  const startIndex = hasHeader ? 1 : 0;
   let count = 0;
-  const startIndex = lines[0].toLowerCase().includes('nama') || lines[0].toLowerCase().includes('name') ? 1 : 0;
 
   await db.withExclusiveTransactionAsync(async (txn) => {
+    // 1. Optimasi Performa Tinggi: Cache kategori yang sudah ada ke Map memori
+    const existingCats = await txn.getAllAsync<{ id: number; name: string }>(
+      'SELECT id, name FROM categories'
+    );
+    const categoryMap = new Map<string, number>();
+    for (const c of existingCats) {
+      categoryMap.set(c.name.trim().toLowerCase(), c.id);
+    }
+
+    // 2. Cache produk yang sudah ada untuk pencocokan cepat tanpa ribuan query O(1)
+    const existingProds = await txn.getAllAsync<{ id: number; name: string; barcode: string | null }>(
+      'SELECT id, LOWER(name) as name, barcode FROM products'
+    );
+    const barcodeMap = new Map<string, number>();
+    const nameMap = new Map<string, number>();
+    for (const p of existingProds) {
+      if (p.barcode && p.barcode.trim()) {
+        barcodeMap.set(p.barcode.trim(), p.id);
+      }
+      if (p.name && p.name.trim()) {
+        nameMap.set(p.name.trim(), p.id);
+      }
+    }
+
+    // 3. Iterasi setiap baris produk
     for (let i = startIndex; i < lines.length; i++) {
-      const cols = parseLine(lines[i]);
+      const cols = parseCSVLine(lines[i], delimiter);
       if (cols.length < 2) continue;
 
-      let name = '';
-      let categoryName = 'Umum';
-      let price = 0;
-      let cost_price = 0;
-      let stock = 0;
+      let barcode = (cols[colBarcode] ?? '').trim();
+      let name = (cols[colName] ?? '').trim();
+
+      // Sanitasi nama: jika kosong atau tanda strip saja, lewati
+      if (!name || name === '-' || name.toLowerCase() === 'undefined' || name.toLowerCase() === 'null') {
+        continue;
+      }
+
+      // Sanitasi barcode
+      if (barcode === '-' || barcode.toLowerCase() === 'null') {
+        barcode = '';
+      }
+
+      let categoryName = (cols[colCategory] ?? '').trim() || 'Umum';
+      let price = parseCleanNumber(cols[colPrice]);
+      let cost_price = parseCleanNumber(cols[colCostPrice]);
+      let stock = Math.round(parseCleanNumber(cols[colStock]));
+
+      const rawHasStock = (cols[colHasStock] ?? '').toLowerCase().trim();
       let has_stock = 1;
-
-      if (isNaN(Number(cols[0])) && cols.length >= 2) {
-        name = cols[0];
-        categoryName = cols[1] || 'Umum';
-        price = parseFloat(cols[2]?.replace(/[^0-9.]/g, '') || '0') || 0;
-        cost_price = parseFloat(cols[3]?.replace(/[^0-9.]/g, '') || '0') || 0;
-        stock = parseInt(cols[4]?.replace(/[^0-9-]/g, '') || '0', 10) || 0;
-        has_stock = cols[5]?.toLowerCase() === 'tidak' ? 0 : 1;
-      } else if (cols.length >= 4) {
-        name = cols[1];
-        categoryName = cols[2] || 'Umum';
-        price = parseFloat(cols[3]?.replace(/[^0-9.]/g, '') || '0') || 0;
-        cost_price = parseFloat(cols[4]?.replace(/[^0-9.]/g, '') || '0') || 0;
-        stock = parseInt(cols[5]?.replace(/[^0-9-]/g, '') || '0', 10) || 0;
-        has_stock = cols[6]?.toLowerCase() === 'tidak' ? 0 : 1;
+      if (
+        rawHasStock === 'tidak' ||
+        rawHasStock === 'no' ||
+        rawHasStock === '0' ||
+        rawHasStock === 'false' ||
+        rawHasStock === 'off'
+      ) {
+        has_stock = 0;
       }
 
-      if (!name) continue;
-
-      // Cari atau buat kategori di tabel categories
-      let categoryId: number | null = null;
-      if (categoryName && categoryName.trim()) {
-        const catRow = await txn.getFirstAsync<{ id: number }>(
-          'SELECT id FROM categories WHERE LOWER(name) = LOWER(?)',
-          categoryName.trim()
-        );
-        if (catRow) {
-          categoryId = catRow.id;
-        } else {
-          const res = await txn.runAsync(
-            'INSERT INTO categories (name) VALUES (?)',
-            categoryName.trim()
-          );
-          categoryId = res.lastInsertRowId as number;
-        }
+      // Kelola Kategori (dengan memory cache)
+      const catKey = categoryName.toLowerCase();
+      let categoryId = categoryMap.get(catKey);
+      if (!categoryId) {
+        const res = await txn.runAsync('INSERT INTO categories (name) VALUES (?)', categoryName);
+        categoryId = res.lastInsertRowId as number;
+        categoryMap.set(catKey, categoryId);
       }
 
-      const existing = await txn.getFirstAsync<{ id: number }>(
-        'SELECT id FROM products WHERE LOWER(name) = LOWER(?)',
-        name
-      );
+      // Cocokkan produk yang sudah ada (berdasarkan Barcode terlebih dahulu, atau Nama Produk)
+      let existingId: number | undefined;
+      if (barcode) {
+        existingId = barcodeMap.get(barcode);
+      }
+      if (!existingId) {
+        existingId = nameMap.get(name.toLowerCase());
+      }
 
-      if (existing) {
+      if (existingId) {
         await txn.runAsync(
-          'UPDATE products SET category_id = ?, price = ?, cost_price = ?, stock = ?, has_stock = ?, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?',
-          categoryId, price, cost_price, stock, has_stock, existing.id
+          `UPDATE products 
+           SET barcode = ?, category_id = ?, price = ?, cost_price = ?, stock = ?, has_stock = ?, updated_at = datetime('now','localtime') 
+           WHERE id = ?`,
+          barcode,
+          categoryId,
+          price,
+          cost_price,
+          stock,
+          has_stock,
+          existingId
         );
       } else {
-        await txn.runAsync(
-          'INSERT INTO products (name, category_id, price, cost_price, stock, has_stock) VALUES (?, ?, ?, ?, ?, ?)',
-          name, categoryId, price, cost_price, stock, has_stock
+        const res = await txn.runAsync(
+          `INSERT INTO products (barcode, name, category_id, price, cost_price, stock, has_stock) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          barcode,
+          name,
+          categoryId,
+          price,
+          cost_price,
+          stock,
+          has_stock
         );
+        const newId = res.lastInsertRowId as number;
+        if (barcode) barcodeMap.set(barcode, newId);
+        nameMap.set(name.toLowerCase(), newId);
       }
       count++;
     }

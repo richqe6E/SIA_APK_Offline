@@ -9,6 +9,7 @@ import { useLockOrientation } from '@/hooks/use-orientation';
 import { resetEntireDatabase } from '@/services/database';
 import {
   deleteTransactions,
+  exportProductCSVTemplate,
   exportProductsToCSV,
   exportProductsToPDF,
   exportTransactionsToCSV,
@@ -96,6 +97,18 @@ export default function DataManagementScreen() {
       await shareFile(uri, 'application/pdf');
     } catch (e: any) {
       Alert.alert('Gagal', e?.message || 'Gagal mengekspor katalog produk ke PDF.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDownloadCSVTemplate = async () => {
+    setExporting(true);
+    try {
+      const uri = await exportProductCSVTemplate();
+      await shareFile(uri, 'text/csv');
+    } catch (e: any) {
+      Alert.alert('Gagal', e?.message || 'Gagal menyiapkan template CSV.');
     } finally {
       setExporting(false);
     }
@@ -292,13 +305,35 @@ export default function DataManagementScreen() {
             />
           </View>
 
-          <Button
-            title={importing ? 'Mengimpor File...' : '📥 Import Produk dari File CSV'}
-            size="sm"
-            style={{ backgroundColor: Colors.tint, marginTop: 4 }}
-            onPress={handlePickAndImportCSV}
-            disabled={importing}
-          />
+          <View style={{ backgroundColor: '#f1f5f9', padding: 10, borderRadius: 8, gap: 4 }}>
+            <ThemedText style={{ fontSize: 11, fontWeight: '700', color: Colors.tint }}>
+              📋 Format Kolom CSV (Urutan Standar):
+            </ThemedText>
+            <ThemedText style={{ fontSize: 11, color: '#475569' }}>
+              Barcode | Nama Produk | Kategori | Harga Jual | Harga Modal | Stok | Kelola Stok (Ya/Tidak)
+            </ThemedText>
+            <ThemedText style={{ fontSize: 10, color: Colors.muted, fontStyle: 'italic' }}>
+              *Mendukung otomatis pemisah koma (,) atau titik koma (;) dari Excel, serta nilai rupiah titik/koma.
+            </ThemedText>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
+            <Button
+              title="📥 Contoh Template CSV"
+              variant="outline"
+              size="sm"
+              style={{ flex: 1 }}
+              onPress={handleDownloadCSVTemplate}
+              disabled={exporting || importing}
+            />
+            <Button
+              title={importing ? 'Mengimpor...' : '📂 Pilih File CSV'}
+              size="sm"
+              style={{ flex: 1, backgroundColor: Colors.tint }}
+              onPress={handlePickAndImportCSV}
+              disabled={importing}
+            />
+          </View>
           {importing && <ActivityIndicator size="small" color={Colors.tint} style={{ marginTop: 4 }} />}
         </Card>
 
