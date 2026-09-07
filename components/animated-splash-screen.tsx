@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Animated, Image, Dimensions } from 'react-native';
+import { StyleSheet, Animated, Image, Dimensions, View } from 'react-native';
+import { ThemedText } from '@/components/themed-text';
 import * as SplashScreen from 'expo-splash-screen';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -69,16 +70,19 @@ export function AnimatedSplashScreen({ onFinish }: AnimatedSplashScreenProps) {
         ]}
       >
         <Image
-          source={require('@/assets/images/app-logo-full.png')}
+          source={require('@/assets/images/app-logo-p.png')}
           style={styles.logoImage}
           resizeMode="contain"
         />
+        <ThemedText style={styles.brandTitle}>POS AZIZAH</ThemedText>
+        <ThemedText style={styles.brandSubtitle}>Sistem Kasir & Pembukuan Usaha</ThemedText>
+        <View style={styles.badgePill}>
+          <ThemedText style={styles.badgeText}>OFFLINE • CEPAT • AKURAT</ThemedText>
+        </View>
       </Animated.View>
     </Animated.View>
   );
 }
-
-const { width } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
   container: {
@@ -92,11 +96,40 @@ const styles = StyleSheet.create({
   logoContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: Math.min(width * 0.8, 380),
-    height: 150,
+    paddingHorizontal: 24,
   },
   logoImage: {
-    width: '100%',
-    height: '100%',
+    width: 90,
+    height: 90,
+    marginBottom: 16,
+  },
+  brandTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#1e1b4b',
+    letterSpacing: 1.2,
+    textAlign: 'center',
+  },
+  brandSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748b',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  badgePill: {
+    marginTop: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 20,
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6d28d9',
+    letterSpacing: 0.8,
   },
 });

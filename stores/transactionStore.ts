@@ -29,24 +29,40 @@ export interface TransactionItem {
   subtotal: number;
 }
 
+export interface PendingOrder {
+  id: number;
+  note: string;
+  total_amount: number;
+  items_json: string;
+  items?: CartItem[];
+  created_at: string;
+}
+
 export type PeriodFilter = 'today' | 'week' | 'month' | 'all';
 
 interface TransactionState {
   cart: CartItem[];
   transactions: Transaction[];
+  pendingOrders: PendingOrder[];
   loading: boolean;
   hasMore: boolean;
   addToCart: (product: { id: number; name: string; price: number }) => void;
   updateQuantity: (productId: number, quantity: number) => void;
   removeFromCart: (productId: number) => void;
   clearCart: () => void;
+  setCart: (cart: CartItem[]) => void;
   checkout: (db: SQLiteDatabase, paymentMethod: string, paymentAmount: number) => Promise<number>;
   loadTransactions: (db: SQLiteDatabase, period?: PeriodFilter, page?: number, pageSize?: number) => Promise<void>;
+  loadPendingOrders: (db: SQLiteDatabase) => Promise<void>;
+  holdCurrentCart: (db: SQLiteDatabase, note: string) => Promise<boolean>;
+  resumePendingOrder: (db: SQLiteDatabase, orderId: number) => Promise<boolean>;
+  deletePendingOrder: (db: SQLiteDatabase, orderId: number) => Promise<void>;
 }
 
 export const useTransactionStore = create<TransactionState>((set, get) => ({
   cart: [],
   transactions: [],
+  pendingOrders: [],
   loading: false,
   hasMore: true,
 
@@ -196,5 +212,73 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
       loading: false,
       hasMore,
     }));
+  },
+
+  setCart: (cart) => set({ cart }),
+
+  loadPendingOrders: async (db) => {
+    try {
+      const rows = await db.getAllAsync<PendingOrder>(
+        'SELECT * FROM pending_orders ORDER BY id DESC'
+      );
+      const parsed = rows.map((r) => {
+        let items: CartItem[] = [];
+        try {
+          items = JSON.parse(r.items_json || '[]');
+        } catch {
+          items = [];
+        }
+        return {
+          ...r,
+          items,
+        };
+      });
+      set({ pendingOrders: parsed });
+    } catch (e) {
+      console.error('loadPendingOrders error:', e);
+    }
+  },
+
+  holdCurrentCart: async (db, note) => {
+    const { cart } = get();
+    if (cart.length === 0) return false;
+    const total = cart.reduce((sum, item) => sum + item.subtotal, 0);
+    const cleanNote = note.trim() || `Pesanan #${Date.now().toString().slice(-4)}`;
+    const itemsJson = JSON.stringify(cart);
+
+    await db.runAsync(
+      'INSERT INTO pending_orders (note, total_amount, items_json) VALUES (?, ?, ?)',
+      cleanNote,
+      total,
+      itemsJson
+    );
+    set({ cart: [] });
+    await get().loadPendingOrders(db);
+    return true;
+  },
+
+  resumePendingOrder: async (db, orderId) => {
+    const row = await db.getFirstAsync<PendingOrder>(
+      'SELECT * FROM pending_orders WHERE id = ?',
+      orderId
+    );
+    if (!row) return false;
+
+    let items: CartItem[] = [];
+    try {
+      items = JSON.parse(row.items_json || '[]');
+    } catch {
+      items = [];
+    }
+
+    set({ cart: items });
+    await db.runAsync('DELETE FROM pending_orders WHERE id = ?', orderId);
+    await get().loadPendingOrders(db);
+    return true;
+  },
+
+  deletePendingOrder: async (db, orderId) => {
+    await db.runAsync('DELETE FROM pending_orders WHERE id = ?', orderId);
+    await get().loadPendingOrders(db);
   },
 }));

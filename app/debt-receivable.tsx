@@ -213,7 +213,7 @@ export default function DebtReceivableScreen() {
       {/* Header Terstandardisasi (Poin 3) */}
       <View style={styles.header}>
         <TouchableOpacity
-          style={styles.exitBtn}
+          style={styles.backBtn}
           onPress={() => {
             if (router.canGoBack()) {
               router.back();
@@ -222,7 +222,7 @@ export default function DebtReceivableScreen() {
             }
           }}
         >
-          <ThemedText style={styles.exitBtnText}>← Keluar</ThemedText>
+          <ThemedText style={styles.backBtnText}>‹ Kembali</ThemedText>
         </TouchableOpacity>
 
         <View style={{ alignItems: 'flex-end' }}>
@@ -1500,19 +1500,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  exitBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+  backBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
     backgroundColor: '#ffffff',
     borderWidth: 1.5,
     borderColor: '#e2e8f0',
-    borderRadius: 8,
+    borderRadius: 20,
     ...Shadows.sm,
   },
-  exitBtnText: {
+  backBtnText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#0f172a',
+    color: Colors.tint,
   },
   tabContainer: {
     flexDirection: 'row',

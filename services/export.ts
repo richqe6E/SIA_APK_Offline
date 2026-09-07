@@ -302,7 +302,7 @@ export async function exportProductsToPDF(
         </tbody>
       </table>
       <div class="footer">
-        Dicetak dari POS Karya Riki Rivaldi
+        Dicetak dari POS AZIZAH
       </div>
     </body>
     </html>
@@ -391,7 +391,7 @@ export async function exportTransactionsToPDF(
         Total Omset (${rows.length} Transaksi): Rp ${Math.round(totalOmset).toLocaleString('id-ID')}
       </div>
       <div class="footer">
-        POS Karya Riki Rivaldi
+        POS AZIZAH
       </div>
     </body>
     </html>
@@ -542,7 +542,7 @@ export async function exportLabaRugiToPDF(params: {
       </table>
 
       <div class="footer">
-        Laporan Keuangan • POS Karya Riki Rivaldi<br/>
+        Laporan Keuangan • POS AZIZAH<br/>
         Dicetak pada: ${nowStr}
       </div>
     </body>
@@ -657,7 +657,7 @@ export async function exportCashLedgerToPDF(params: {
       </table>
 
       <div class="footer">
-        Laporan Keuangan • POS Karya Riki Rivaldi<br/>
+        Laporan Keuangan • POS AZIZAH<br/>
         Dicetak pada: ${nowStr}
       </div>
     </body>

@@ -154,10 +154,10 @@ export default function PrinterScreen() {
     >
       <View style={styles.topHeader}>
         <Pressable
-          style={styles.exitBtn}
+          style={styles.backBtn}
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
         >
-          <ThemedText style={styles.exitBtnText}>← Keluar</ThemedText>
+          <ThemedText style={styles.backBtnText}>‹ Kembali</ThemedText>
         </Pressable>
         <ThemedText type="title" style={styles.headerTitle}>Printer</ThemedText>
       </View>
@@ -276,15 +276,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  exitBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
+  backBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.card,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
-  exitBtnText: {
+  backBtnText: {
     fontSize: 13,
     fontWeight: '600',
     color: Colors.tint,

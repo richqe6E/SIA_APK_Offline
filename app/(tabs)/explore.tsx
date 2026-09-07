@@ -94,21 +94,55 @@ export default function ProductsScreen() {
   );
 
   const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.7,
-      legacy: true,
-    });
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
 
-    if (!result.canceled && result.assets[0]) {
-      const uri = result.assets[0].uri;
-      const ext = uri.split('.').pop() ?? 'jpg';
-      const dir = new Directory(Paths.document, 'products');
-      dir.create({ intermediates: true, idempotent: true });
-      const file = new File(dir, `${Date.now()}.${ext}`);
-      const source = new File(uri);
-      source.copy(file);
-      setImagePath(file.uri);
+      if (!result.canceled && result.assets[0]) {
+        const uri = result.assets[0].uri;
+        const ext = uri.split('.').pop() ?? 'jpg';
+        const dir = new Directory(Paths.document, 'products');
+        dir.create({ intermediates: true, idempotent: true });
+        const file = new File(dir, `${Date.now()}.${ext}`);
+        const source = new File(uri);
+        source.copy(file);
+        setImagePath(file.uri);
+      }
+    } catch {
+      Alert.alert('Perhatian', 'Gagal memuat foto dari galeri.');
+    }
+  };
+
+  const takePhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Izin Kamera', 'Izin kamera diperlukan untuk memotret produk secara langsung.');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const uri = result.assets[0].uri;
+        const ext = uri.split('.').pop() ?? 'jpg';
+        const dir = new Directory(Paths.document, 'products');
+        dir.create({ intermediates: true, idempotent: true });
+        const file = new File(dir, `${Date.now()}.${ext}`);
+        const source = new File(uri);
+        source.copy(file);
+        setImagePath(file.uri);
+      }
+    } catch {
+      Alert.alert('Perhatian', 'Gagal membuka kamera perangkat.');
     }
   };
 
@@ -556,7 +590,7 @@ export default function ProductsScreen() {
                             hasStock && styles.stockToggleTextActive,
                           ]}
                         >
-                          Lacak Stok Barang
+                          Memiliki Stok
                         </ThemedText>
                       </Pressable>
                       <Pressable
@@ -632,15 +666,37 @@ export default function ProductsScreen() {
               {/* Foto */}
               <View style={styles.imageSection}>
                 <ThemedText style={styles.label}>Foto {isRetail ? 'Barang' : 'Menu'}</ThemedText>
-                <Pressable style={styles.imagePickerBtn} onPress={pickImage}>
-                  <ThemedText style={{ fontSize: 20 }}>📸</ThemedText>
-                  <ThemedText style={{ color: Colors.placeholder, fontSize: 13 }}>
-                    {imagePath ? 'Ganti Foto' : 'Ambil dari Galeri'}
-                  </ThemedText>
-                </Pressable>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: imagePath ? 10 : 0 }}>
+                  <Pressable style={[styles.imagePickerBtn, { flex: 1 }]} onPress={pickImage}>
+                    <ThemedText style={{ fontSize: 18 }}>🖼️</ThemedText>
+                    <ThemedText style={{ color: Colors.placeholder, fontSize: 12, marginTop: 2 }}>
+                      {imagePath ? 'Ganti Galeri' : 'Buka Galeri'}
+                    </ThemedText>
+                  </Pressable>
+                  <Pressable style={[styles.imagePickerBtn, { flex: 1 }]} onPress={takePhoto}>
+                    <ThemedText style={{ fontSize: 18 }}>📷</ThemedText>
+                    <ThemedText style={{ color: Colors.placeholder, fontSize: 12, marginTop: 2 }}>
+                      Buka Kamera
+                    </ThemedText>
+                  </Pressable>
+                </View>
                 {imagePath ? (
                   <View style={styles.previewWrapper}>
                     <Image source={{ uri: imagePath }} style={styles.preview} />
+                    <Pressable
+                      style={{
+                        position: 'absolute',
+                        top: 6,
+                        right: 6,
+                        backgroundColor: 'rgba(239, 68, 68, 0.9)',
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 6,
+                      }}
+                      onPress={() => setImagePath('')}
+                    >
+                      <ThemedText style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>Hapus</ThemedText>
+                    </Pressable>
                   </View>
                 ) : null}
               </View>

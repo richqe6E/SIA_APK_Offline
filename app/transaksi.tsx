@@ -40,8 +40,18 @@ export default function TransactionScreen() {
   const db = useSQLiteContext();
   const { products, loadProducts } = useProductStore();
   const { categories, loadCategories } = useCategoryStore();
-  const { cart, addToCart, updateQuantity, removeFromCart, checkout } =
-    useTransactionStore();
+  const {
+    cart,
+    addToCart,
+    updateQuantity,
+    removeFromCart,
+    checkout,
+    pendingOrders,
+    loadPendingOrders,
+    holdCurrentCart,
+    resumePendingOrder,
+    deletePendingOrder,
+  } = useTransactionStore();
   const {
     loadSettings,
     businessMode,
@@ -77,11 +87,17 @@ export default function TransactionScreen() {
   const [showBulkQtyModal, setShowBulkQtyModal] = useState(false);
   const [showQrisCustomerModal, setShowQrisCustomerModal] = useState(false);
 
+  // Fitur Pending Order / Parkir Transaksi
+  const [showHoldModal, setShowHoldModal] = useState(false);
+  const [holdNote, setHoldNote] = useState('');
+  const [showPendingListModal, setShowPendingListModal] = useState(false);
+
   useEffect(() => {
     loadProducts(db);
     loadCategories(db);
     loadSettings(db);
-  }, [db, loadProducts, loadCategories, loadSettings]);
+    loadPendingOrders(db);
+  }, [db, loadProducts, loadCategories, loadSettings, loadPendingOrders]);
 
   // Set initial view mode based on store settings / business mode
   useEffect(() => {
@@ -144,6 +160,56 @@ export default function TransactionScreen() {
     setShowSuccess(false);
     setPaymentAmount('');
     setLastTransaction(null);
+  };
+
+  const handleHoldCart = async () => {
+    if (cart.length === 0) return;
+    const success = await holdCurrentCart(db, holdNote);
+    if (success) {
+      setHoldNote('');
+      setShowHoldModal(false);
+      Alert.alert('Pesanan Ditahan', 'Pesanan berhasil disimpan di daftar pending / antrean.');
+    }
+  };
+
+  const handleResumePendingOrder = async (orderId: number) => {
+    if (cart.length > 0) {
+      Alert.alert(
+        'Keranjang Tidak Kosong',
+        'Masih ada produk di keranjang saat ini. Apakah ingin menimpa keranjang dengan pesanan ini?',
+        [
+          { text: 'Batal', style: 'cancel' },
+          {
+            text: 'Timpa Keranjang',
+            style: 'destructive',
+            onPress: async () => {
+              await resumePendingOrder(db, orderId);
+              setShowPendingListModal(false);
+            },
+          },
+        ]
+      );
+      return;
+    }
+    await resumePendingOrder(db, orderId);
+    setShowPendingListModal(false);
+  };
+
+  const handleDeletePendingOrder = (orderId: number) => {
+    Alert.alert(
+      'Hapus Pesanan Tertunda',
+      'Apakah Anda yakin ingin membatalkan dan menghapus pesanan tertunda ini?',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            await deletePendingOrder(db, orderId);
+          },
+        },
+      ]
+    );
   };
 
   const handleAddToCartWithValidation = (product: Product) => {
@@ -211,11 +277,14 @@ export default function TransactionScreen() {
           cart={cart}
           total={total}
           gridColumns={gridColumns}
+          pendingCount={pendingOrders.length}
           onAddToCart={handleAddToCartWithValidation}
           onUpdateQty={(id, qty) => updateQuantity(id, qty)}
           onRemove={(id) => removeFromCart(id)}
           onOpenBarcodeScanner={() => setShowBarcodeScanner(true)}
           onOpenBulkQty={handleOpenBulkQty}
+          onOpenHoldModal={() => setShowHoldModal(true)}
+          onOpenPendingListModal={() => setShowPendingListModal(true)}
           onNext={() => setStep(2)}
           onDone={handleSelesaiMenjual}
         />
@@ -282,6 +351,161 @@ export default function TransactionScreen() {
           handleCheckout();
         }}
       />
+
+      {/* Modal Tahan Pesanan / Pending Order */}
+      <Modal
+        visible={showHoldModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowHoldModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.holdModalCard}>
+            <ThemedText type="subtitle" style={{ fontSize: 16, marginBottom: 4 }}>
+              ⏳ Tahan Pesanan (Pending Order)
+            </ThemedText>
+            <ThemedText style={{ fontSize: 12, color: Colors.muted, marginBottom: 14 }}>
+              Pesanan saat ini akan disimpan sementara ke antrean. Kasir dapat melayani pelanggan lain.
+            </ThemedText>
+
+            <View style={styles.holdInputBox}>
+              <ThemedText style={{ fontSize: 12, fontWeight: '600', marginBottom: 6 }}>
+                Nomor Meja / Nama Pelanggan / Catatan:
+              </ThemedText>
+              <TextInput
+                value={holdNote}
+                onChangeText={setHoldNote}
+                placeholder="Contoh: Meja 05 / Bu Rina"
+                placeholderTextColor={Colors.placeholder}
+                style={styles.holdTextInput}
+                autoFocus
+              />
+            </View>
+
+            <View style={styles.holdSummaryBox}>
+              <ThemedText style={{ fontSize: 12, color: Colors.muted }}>
+                Total Item: {cart.reduce((s, i) => s + i.quantity, 0)} pcs ({cart.length} menu)
+              </ThemedText>
+              <ThemedText type="defaultSemiBold" style={{ fontSize: 14, color: Colors.tint }}>
+                Rp {total.toLocaleString('id-ID')}
+              </ThemedText>
+            </View>
+
+            <View style={styles.holdModalActions}>
+              <TouchableOpacity
+                style={styles.holdCancelBtn}
+                onPress={() => {
+                  setHoldNote('');
+                  setShowHoldModal(false);
+                }}
+              >
+                <ThemedText style={styles.holdCancelBtnText}>Batal</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.holdConfirmBtn}
+                onPress={handleHoldCart}
+              >
+                <ThemedText style={styles.holdConfirmBtnText}>Simpan & Tahan</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </ThemedView>
+        </View>
+      </Modal>
+
+      {/* Modal Daftar Pesanan Tertunda / Pending Orders */}
+      <Modal
+        visible={showPendingListModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPendingListModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.pendingListCard}>
+            <View style={styles.pendingListHeader}>
+              <View>
+                <ThemedText type="subtitle" style={{ fontSize: 16 }}>
+                  📋 Pesanan Tertunda ({pendingOrders.length})
+                </ThemedText>
+                <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
+                  Pilih pesanan untuk melanjutkan transaksi atau batalkan antrean.
+                </ThemedText>
+              </View>
+              <TouchableOpacity
+                style={styles.pendingCloseBtn}
+                onPress={() => setShowPendingListModal(false)}
+              >
+                <ThemedText style={{ fontSize: 16, fontWeight: '700', color: Colors.muted }}>✕</ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            {pendingOrders.length === 0 ? (
+              <View style={styles.pendingEmptyBox}>
+                <ThemedText style={{ fontSize: 36, marginBottom: 8 }}>☕</ThemedText>
+                <ThemedText style={{ fontSize: 13, color: Colors.muted }}>
+                  Tidak ada pesanan yang sedang ditahan.
+                </ThemedText>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 360, marginTop: 8 }}>
+                {pendingOrders.map((order) => {
+                  const itemsSummary = (order.items || [])
+                    .map((it) => `${it.quantity}x ${it.product_name}`)
+                    .join(', ');
+                  const formattedTime = new Date(order.created_at).toLocaleTimeString('id-ID', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  });
+
+                  return (
+                    <View key={order.id} style={styles.pendingOrderItem}>
+                      <View style={{ flex: 1, paddingRight: 10 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <ThemedText type="defaultSemiBold" style={{ fontSize: 13 }}>
+                            {order.note}
+                          </ThemedText>
+                          <View style={styles.pendingTimeBadge}>
+                            <ThemedText style={styles.pendingTimeBadgeText}>{formattedTime}</ThemedText>
+                          </View>
+                        </View>
+                        <ThemedText style={styles.pendingItemsText} numberOfLines={2}>
+                          {itemsSummary || 'Tidak ada detail item'}
+                        </ThemedText>
+                        <ThemedText type="defaultSemiBold" style={{ fontSize: 13, color: Colors.tint, marginTop: 2 }}>
+                          Rp {order.total_amount.toLocaleString('id-ID')}
+                        </ThemedText>
+                      </View>
+
+                      <View style={styles.pendingItemActions}>
+                        <TouchableOpacity
+                          style={styles.pendingResumeBtn}
+                          onPress={() => handleResumePendingOrder(order.id)}
+                        >
+                          <ThemedText style={styles.pendingResumeBtnText}>Buka</ThemedText>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.pendingDeleteBtn}
+                          onPress={() => handleDeletePendingOrder(order.id)}
+                        >
+                          <ThemedText style={styles.pendingDeleteBtnText}>✕</ThemedText>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            <View style={{ marginTop: 12, alignItems: 'flex-end' }}>
+              <Button
+                title="Tutup"
+                variant="outline"
+                size="sm"
+                onPress={() => setShowPendingListModal(false)}
+              />
+            </View>
+          </ThemedView>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -299,11 +523,14 @@ function Step1View({
   cart,
   total,
   gridColumns,
+  pendingCount,
   onAddToCart,
   onUpdateQty,
   onRemove,
   onOpenBarcodeScanner,
   onOpenBulkQty,
+  onOpenHoldModal,
+  onOpenPendingListModal,
   onNext,
   onDone,
 }: {
@@ -319,11 +546,14 @@ function Step1View({
   cart: CartItem[];
   total: number;
   gridColumns: number;
+  pendingCount: number;
   onAddToCart: (p: Product) => void;
   onUpdateQty: (id: number, qty: number) => void;
   onRemove: (id: number) => void;
   onOpenBarcodeScanner: () => void;
   onOpenBulkQty: (item: CartItem) => void;
+  onOpenHoldModal: () => void;
+  onOpenPendingListModal: () => void;
   onNext: () => void;
   onDone: () => void;
 }) {
@@ -428,8 +658,30 @@ function Step1View({
       {/* Right Panel: Cart */}
       <View style={styles.rightPanel}>
         <View style={styles.rightHeader}>
-          <ThemedText type="title" style={{ fontSize: 18 }}>Keranjang</ThemedText>
-          <Button title="Selesai Menjual" variant="outline" size="sm" onPress={onDone} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <ThemedText type="title" style={{ fontSize: 17 }}>Keranjang</ThemedText>
+            {pendingCount > 0 && (
+              <TouchableOpacity
+                style={styles.pendingBadgeHeader}
+                onPress={onOpenPendingListModal}
+                activeOpacity={0.7}
+              >
+                <ThemedText style={styles.pendingBadgeHeaderText}>⏳ {pendingCount}</ThemedText>
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {pendingCount > 0 && (
+              <TouchableOpacity
+                style={styles.pendingListBtn}
+                onPress={onOpenPendingListModal}
+                activeOpacity={0.7}
+              >
+                <ThemedText style={styles.pendingListBtnText}>Antrean ({pendingCount})</ThemedText>
+              </TouchableOpacity>
+            )}
+            <Button title="Selesai" variant="outline" size="sm" onPress={onDone} />
+          </View>
         </View>
 
         <FlatList
@@ -492,11 +744,25 @@ function Step1View({
               Rp {total.toLocaleString('id-ID')}
             </ThemedText>
           </View>
-          <Button
-            title="Lanjutkan ke Pembayaran"
-            disabled={cart.length === 0}
-            onPress={onNext}
-          />
+          <View style={styles.footerActionRow}>
+            <TouchableOpacity
+              style={[styles.holdCartBtn, cart.length === 0 && styles.holdCartBtnDisabled]}
+              disabled={cart.length === 0}
+              onPress={onOpenHoldModal}
+              activeOpacity={0.7}
+            >
+              <ThemedText style={[styles.holdCartBtnText, cart.length === 0 && styles.holdCartBtnTextDisabled]}>
+                ⏳ Tahan
+              </ThemedText>
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Button
+                title="Lanjut Bayar ›"
+                disabled={cart.length === 0}
+                onPress={onNext}
+              />
+            </View>
+          </View>
         </View>
       </View>
     </>
@@ -1553,5 +1819,206 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     backgroundColor: Colors.tint,
+  },
+  pendingBadgeHeader: {
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  pendingBadgeHeaderText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#b45309',
+  },
+  pendingListBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  pendingListBtnText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  footerActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  holdCartBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#f59e0b',
+    backgroundColor: '#fffbeb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  holdCartBtnDisabled: {
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  holdCartBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#b45309',
+  },
+  holdCartBtnTextDisabled: {
+    color: '#94a3b8',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  holdModalCard: {
+    width: '100%',
+    maxWidth: 440,
+    borderRadius: 14,
+    padding: 20,
+    backgroundColor: '#ffffff',
+    ...Shadows.md,
+  },
+  holdInputBox: {
+    marginVertical: 10,
+  },
+  holdTextInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  holdSummaryBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    padding: 10,
+    borderRadius: 8,
+    marginVertical: 10,
+  },
+  holdModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 12,
+  },
+  holdCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff',
+  },
+  holdCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  holdConfirmBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: Colors.tint,
+  },
+  holdConfirmBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  pendingListCard: {
+    width: '100%',
+    maxWidth: 560,
+    borderRadius: 14,
+    padding: 20,
+    backgroundColor: '#ffffff',
+    ...Shadows.md,
+  },
+  pendingListHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  pendingCloseBtn: {
+    padding: 4,
+  },
+  pendingEmptyBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 36,
+  },
+  pendingOrderItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 8,
+  },
+  pendingTimeBadge: {
+    backgroundColor: '#e2e8f0',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  pendingTimeBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  pendingItemsText: {
+    fontSize: 11.5,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  pendingItemActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  pendingResumeBtn: {
+    backgroundColor: Colors.tint,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+  },
+  pendingResumeBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  pendingDeleteBtn: {
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 6,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+  },
+  pendingDeleteBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#dc2626',
   },
 });

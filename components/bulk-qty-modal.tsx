@@ -100,7 +100,7 @@ export function BulkQtyModal({
           {/* Info Harga & Stok */}
           <View style={styles.infoRow}>
             <ThemedText style={{ fontSize: 12, color: '#64748b' }}>
-              Harga Satuan: <strong>Rp {productPrice.toLocaleString('id-ID')}</strong>
+              Harga Satuan: <ThemedText type="defaultSemiBold" style={{ color: Colors.tint }}>Rp {productPrice.toLocaleString('id-ID')}</ThemedText>
             </ThemedText>
             {hasStock && maxStock !== undefined && (
               <ThemedText style={{ fontSize: 11, color: maxStock < 5 ? Colors.danger : Colors.tint, fontWeight: '600' }}>

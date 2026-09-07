@@ -33,7 +33,7 @@ export function ReceiptPreviewModal({
   receiptFooter: propReceiptFooter,
 }: ReceiptPreviewModalProps) {
   const settings = useSettingsStore();
-  const storeName = propStoreName || settings.storeName || 'POS Karya Riki Rivaldi';
+  const storeName = propStoreName || settings.storeName || 'POS AZIZAH';
   const storeAddress = propStoreAddress !== undefined ? propStoreAddress : settings.storeAddress;
   const storePhone = propStorePhone !== undefined ? propStorePhone : settings.storePhone;
   const receiptFooter = propReceiptFooter !== undefined ? propReceiptFooter : settings.receiptFooter;
@@ -96,7 +96,6 @@ export function ReceiptPreviewModal({
       if (receiptFooter) {
         await BluetoothEscposPrinter.printText(`${receiptFooter}\n\r`, { align: 'center' });
       }
-      await BluetoothEscposPrinter.printText('POS Karya Riki Rivaldi\n\r', { align: 'center' });
       await BluetoothEscposPrinter.printAndFeed(3);
       BluetoothEscposPrinter.cutOnePoint();
       Alert.alert('Sukses', 'Nota contoh berhasil dicetak ke printer');
@@ -207,8 +206,6 @@ export function ReceiptPreviewModal({
               ) : (
                 <ThemedText style={styles.paperFooterMsg}>Terima kasih atas kunjungan Anda!</ThemedText>
               )}
-
-              <ThemedText style={styles.paperBrand}>POS Karya Riki Rivaldi</ThemedText>
             </View>
           </ScrollView>
 

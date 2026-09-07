@@ -25,10 +25,28 @@ export default function DashboardScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
 
-  useLockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-
-  const { storeName, businessType, businessMode, isOnboarded, loadSettings } = useSettingsStore();
+  const { storeName, businessType, businessMode, isOnboarded, loadSettings, appOrientation, setAppOrientation } = useSettingsStore();
   const { currentBalance, loadLedger } = useCashStore();
+
+  useLockOrientation(
+    appOrientation === 'landscape'
+      ? ScreenOrientation.OrientationLock.LANDSCAPE
+      : ScreenOrientation.OrientationLock.PORTRAIT_UP
+  );
+
+  const toggleOrientation = async () => {
+    const next = appOrientation === 'landscape' ? 'portrait' : 'landscape';
+    await setAppOrientation(db, next);
+    try {
+      if (next === 'landscape') {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+      } else {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const [summary, setSummary] = useState({
     today: 0,
@@ -49,51 +67,43 @@ export default function DashboardScreen() {
     await loadLedger(db);
 
     const today = await db.getFirstAsync<{ total: number; count: number }>(
-      "SELECT COALESCE(SUM(total),0) as total, COUNT(*) as count FROM transactions WHERE date(created_at) = date('now','localtime')"
+      "SELECT COALESCE(SUM(total), 0) as total, COUNT(*) as count FROM transactions WHERE date(created_at) = date('now','localtime')"
     );
     const yesterday = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(total),0) as total FROM transactions WHERE date(created_at) = date('now','localtime','-1 day')"
+      "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE date(created_at) = date('now','localtime','-1 day')"
     );
     const week = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(total),0) as total FROM transactions WHERE created_at >= datetime('now','localtime','-7 days')"
+      "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE created_at >= datetime('now','localtime','-7 days')"
     );
     const month = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(total),0) as total FROM transactions WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now','localtime')"
+      "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now','localtime')"
     );
     const productCount = await db.getFirstAsync<{ count: number }>(
       'SELECT COUNT(*) as count FROM products'
     );
-
     const avgResult = await db.getFirstAsync<{ avg: number }>(
-      "SELECT COALESCE(ROUND(AVG(total)),0) as avg FROM transactions WHERE date(created_at) = date('now','localtime')"
+      'SELECT COALESCE(AVG(total), 0) as avg FROM transactions'
     );
-
     const itemsSold = await db.getFirstAsync<{ total: number }>(
-      `SELECT COALESCE(SUM(ti.quantity),0) as total FROM transaction_items ti
-       JOIN transactions t ON t.id = ti.transaction_id
-       WHERE date(t.created_at) = date('now','localtime')`
+      "SELECT COALESCE(SUM(ti.quantity), 0) as total FROM transaction_items ti JOIN transactions t ON ti.transaction_id = t.id WHERE date(t.created_at) = date('now','localtime')"
     );
 
-    const weekTrend = await db.getAllAsync<{ day: string; total: number }>(
-      `SELECT date(created_at) as day, COALESCE(SUM(total),0) as total
+    const weekRows = await db.getAllAsync<{ day: string; total: number }>(
+      `SELECT date(created_at) as day, COALESCE(SUM(total), 0) as total
        FROM transactions
        WHERE created_at >= datetime('now','localtime','-6 days')
        GROUP BY date(created_at)
        ORDER BY day ASC`
     );
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const weekMap = new Map(weekRows.map((r) => [r.day, r.total]));
     const fullWeek: { label: string; total: number }[] = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateKey = d.toISOString().slice(0, 10);
-      const dayIdx = d.getDay();
-      const found = weekTrend.find((r) => r.day === dateKey);
-      fullWeek.push({
-        label: dateKey === todayStr ? HARI_INI : DAY_LABELS[dayIdx],
-        total: found?.total ?? 0,
-      });
+      const dateStr = d.toISOString().split('T')[0];
+      const dayLabel = i === 0 ? HARI_INI : DAY_LABELS[d.getDay()];
+      fullWeek.push({ label: dayLabel, total: weekMap.get(dateStr) ?? 0 });
     }
 
     setSummary({
@@ -135,16 +145,18 @@ export default function DashboardScreen() {
       {/* Onboarding Wizard jika pertama kali buka */}
       <OnboardingModal visible={!isOnboarded} onComplete={loadSummary} />
 
-      {/* Brand & Campus Collaboration Header */}
+      {/* Brand & Store Header Card */}
       <View style={styles.topHeaderCard}>
         <View style={styles.headerLeft}>
           <ThemedText style={styles.karyaPolnesText}>
-            POS Karya Riki Rivaldi
+            POS AZIZAH
           </ThemedText>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-            <View style={styles.brandIconCircle}>
-              <ThemedText style={styles.brandIcon}>🛒</ThemedText>
-            </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
+            <Image
+              source={require('@/assets/images/app-logo-p.png')}
+              style={styles.storeLogo}
+              resizeMode="contain"
+            />
             <View style={{ flex: 1 }}>
               <ThemedText type="title" style={{ fontSize: 18, color: '#1e1b4b', fontWeight: '800' }} numberOfLines={1}>
                 {storeName}
@@ -156,29 +168,46 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        <View style={styles.logoWrapper}>
-          <Image
-            source={require('@/assets/images/app-logo-p.png')}
-            style={styles.polnesLogo}
-            resizeMode="contain"
-          />
-        </View>
+        {/* Tombol Cepat Orientasi Layar (Portrait / Landscape) */}
+        <TouchableOpacity
+          style={[
+            styles.orientationToggleBtn,
+            appOrientation === 'landscape' && styles.orientationToggleBtnActive,
+          ]}
+          onPress={toggleOrientation}
+          activeOpacity={0.8}
+        >
+          <ThemedText style={styles.orientationToggleIcon}>
+            {appOrientation === 'landscape' ? '🔄' : '📱'}
+          </ThemedText>
+          <ThemedText
+            style={[
+              styles.orientationToggleText,
+              appOrientation === 'landscape' && styles.orientationToggleTextActive,
+            ]}
+          >
+            {appOrientation === 'landscape' ? 'Landscape' : 'Portrait'}
+          </ThemedText>
+        </TouchableOpacity>
       </View>
 
       {loading ? (
         <ActivityIndicator size="large" color={Colors.tint} style={{ marginTop: 60 }} />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
-          {/* Quick Start Cashier Banner */}
+          {/* Quick Start Cashier Banner Clean */}
           <TouchableOpacity
             style={styles.cashierBanner}
             onPress={() => router.push('/transaksi')}
-            activeOpacity={0.85}
+            activeOpacity={0.88}
           >
+            <View style={styles.cashierBannerIconBox}>
+              <ThemedText style={{ fontSize: 20 }}>⚡</ThemedText>
+            </View>
             <View style={{ flex: 1 }}>
               <ThemedText style={styles.bannerTitle}>Buka Layar Kasir</ThemedText>
               <ThemedText style={styles.bannerDesc}>
-                Transaksi cepat landscape (Katalog + Keranjang)
+                Mulai transaksi kasir baru sekarang
               </ThemedText>
             </View>
             <View style={styles.bannerBtn}>
@@ -330,10 +359,49 @@ const styles = StyleSheet.create({
   },
   karyaPolnesText: {
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '800',
     color: Colors.tintDark,
-    letterSpacing: 0.3,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
+  },
+  storeLogo: {
+    width: 38,
+    height: 38,
+  },
+  orientationToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  orientationToggleBtnActive: {
+    backgroundColor: '#f5f3ff',
+    borderColor: '#c4b5fd',
+  },
+  orientationToggleIcon: {
+    fontSize: 14,
+  },
+  orientationToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  orientationToggleTextActive: {
+    color: Colors.tintDark,
+  },
+  cashierBannerIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
   },
   logoWrapper: {
     width: 48,

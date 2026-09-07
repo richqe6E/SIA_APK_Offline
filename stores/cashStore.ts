@@ -16,32 +16,49 @@ export interface CashEntry {
 export const CASH_IN_CATEGORIES = [
   { id: 'modal_awal', label: 'Modal Awal Kasir' },
   { id: 'setoran_modal', label: 'Setoran Tambahan Pemilik' },
-  { id: 'pelunasan_piutang', label: 'Pelunasan Piutang Pelanggan' },
-  { id: 'pendapatan_lain', label: 'Pendapatan Lain-lain' },
-  { id: 'retur_supplier', label: 'Pengembalian Dana Supplier' },
+  { id: 'pendapatan_jasa', label: 'Pendapatan Jasa / Penitipan' },
+  { id: 'pendapatan_lain', label: 'Pendapatan Operasional Lain' },
 ] as const;
 
-export const CASH_OUT_CATEGORIES = [
-  { id: 'belanja_bahan', label: 'Belanja Bahan Baku (Kuliner)' },
-  { id: 'kulakan_stok', label: 'Pembelian Stok Barang (Retail)' },
-  { id: 'bayar_hutang_supplier', label: 'Pembayaran Hutang Supplier' },
+export const CASH_OUT_CATEGORIES_RETAIL = [
+  { id: 'kulakan_stok', label: 'Kulakan Stok Barang' },
+  { id: 'kemasan_plastik', label: 'Kemasan & Plastik' },
+  { id: 'gaji_karyawan', label: 'Gaji Karyawan' },
   { id: 'listrik_air', label: 'Listrik, Air & Internet' },
   { id: 'sewa_tempat', label: 'Sewa Tempat / Kios' },
-  { id: 'gaji_karyawan', label: 'Gaji Karyawan' },
-  { id: 'kemasan_plastik', label: 'Kemasan & Plastik' },
   { id: 'perawatan', label: 'Perawatan & Servis Alat' },
   { id: 'transportasi', label: 'Transportasi & Logistik' },
-  { id: 'lain-lain', label: 'Beban Lain-lain' },
+  { id: 'lain-lain', label: 'Beban Operasional Lain' },
 ] as const;
+
+export const CASH_OUT_CATEGORIES_KULINER = [
+  { id: 'belanja_bahan', label: 'Belanja Bahan Baku & Bumbu' },
+  { id: 'gas_energi', label: 'Gas Elpiji & Bahan Bakar' },
+  { id: 'kemasan_plastik', label: 'Kemasan Makanan & Box' },
+  { id: 'gaji_karyawan', label: 'Gaji Karyawan' },
+  { id: 'listrik_air', label: 'Listrik, Air & Internet' },
+  { id: 'sewa_tempat', label: 'Sewa Tempat / Kios' },
+  { id: 'perawatan', label: 'Perawatan Alat Dapur' },
+  { id: 'transportasi', label: 'Transportasi & Pasar' },
+  { id: 'lain-lain', label: 'Beban Operasional Lain' },
+] as const;
+
+export const CASH_OUT_CATEGORIES = CASH_OUT_CATEGORIES_RETAIL;
+
+export function getCashOutCategories(mode?: 'retail' | 'kuliner') {
+  return mode === 'kuliner' ? CASH_OUT_CATEGORIES_KULINER : CASH_OUT_CATEGORIES_RETAIL;
+}
 
 export const CASH_CATEGORY_MAP: Record<string, string> = {
   modal_awal: 'Modal Awal Kasir',
   setoran_modal: 'Setoran Tambahan Pemilik',
+  pendapatan_jasa: 'Pendapatan Jasa / Penitipan',
+  pendapatan_lain: 'Pendapatan Operasional Lain',
   pelunasan_piutang: 'Pelunasan Piutang Pelanggan',
-  pendapatan_lain: 'Pendapatan Lain-lain',
   retur_supplier: 'Pengembalian Dana Supplier',
-  belanja_bahan: 'Belanja Bahan Baku (Kuliner)',
-  kulakan_stok: 'Pembelian Stok Barang (Retail)',
+  belanja_bahan: 'Belanja Bahan Baku & Bumbu',
+  gas_energi: 'Gas Elpiji & Bahan Bakar',
+  kulakan_stok: 'Kulakan Stok Barang',
   bayar_hutang_supplier: 'Pembayaran Hutang Supplier',
   listrik_air: 'Listrik, Air & Internet',
   sewa_tempat: 'Sewa Tempat / Kios',
@@ -49,12 +66,12 @@ export const CASH_CATEGORY_MAP: Record<string, string> = {
   kemasan_plastik: 'Kemasan & Plastik',
   perawatan: 'Perawatan & Servis Alat',
   transportasi: 'Transportasi & Logistik',
-  'lain-lain': 'Beban Lain-lain',
+  'lain-lain': 'Beban Operasional Lain',
   // Legacy aliases
   gaji: 'Gaji Karyawan',
   sewa: 'Sewa Tempat / Kios',
   listrik: 'Listrik, Air & Internet',
-  bahan_baku: 'Belanja Bahan Baku (Kuliner)',
+  bahan_baku: 'Belanja Bahan Baku & Bumbu',
 };
 
 interface CashState {

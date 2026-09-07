@@ -55,7 +55,7 @@ export function OnboardingModal({ visible, onComplete }: OnboardingModalProps) {
             </View>
             <Text style={styles.title}>Selamat Datang di POS Kasir</Text>
             <Text style={styles.subtitle}>
-              Sistem Kasir & Pembukuan Usaha Mikro (POS Karya Riki Rivaldi)
+              Sistem Kasir & Pembukuan Usaha Mikro (POS AZIZAH)
             </Text>
           </View>
 

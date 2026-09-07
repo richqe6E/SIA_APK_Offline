@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  const DATABASE_VERSION = 8;
+  const DATABASE_VERSION = 9;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -277,12 +277,27 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     currentDbVersion = 8;
   }
 
+  if (currentDbVersion === 8) {
+    // Migrasi v9: Tambah tabel pending_orders (Fitur Tahan / Pending Transaksi)
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS pending_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        note TEXT NOT NULL DEFAULT '',
+        total_amount REAL NOT NULL,
+        items_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      );
+    `);
+    currentDbVersion = 9;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }
 
 export async function resetEntireDatabase(db: SQLiteDatabase): Promise<void> {
   await db.withTransactionAsync(async () => {
     await db.execAsync(`
+      DELETE FROM pending_orders;
       DELETE FROM transaction_items;
       DELETE FROM transactions;
       DELETE FROM cash_ledger;

@@ -13,6 +13,7 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,6 +30,7 @@ import {
   CASH_IN_CATEGORIES,
   CASH_OUT_CATEGORIES,
   CASH_CATEGORY_MAP,
+  getCashOutCategories,
   type CashTransactionType,
   type CashEntry,
 } from '@/stores/cashStore';
@@ -340,31 +342,56 @@ function LabaRugiTab({
 
   return (
     <View style={{ flex: 1 }}>
-      {/* Filter Controls */}
+      {/* Filter Controls Clean & Polished */}
       <View style={styles.filterCard}>
-        <View style={styles.filterModeRow}>
-          {(['month', 'year'] as FilterMode[]).map((m) => (
-            <Pressable
-              key={m}
-              style={[styles.filterModeBtn, filterMode === m && styles.filterModeBtnActive]}
-              onPress={() => setFilterMode(m)}
-            >
-              <ThemedText style={[styles.filterModeBtnText, filterMode === m && styles.filterModeBtnTextActive]}>
-                {m === 'month' ? 'Per Bulan' : 'Per Tahun'}
-              </ThemedText>
-            </Pressable>
-          ))}
+        {/* Row 1: Mode Switch & Refresh Button */}
+        <View style={styles.filterHeaderRow}>
+          <View style={styles.filterModeRow}>
+            {(['month', 'year'] as FilterMode[]).map((m) => (
+              <Pressable
+                key={m}
+                style={[styles.filterModeBtn, filterMode === m && styles.filterModeBtnActive]}
+                onPress={() => setFilterMode(m)}
+              >
+                <ThemedText style={[styles.filterModeBtnText, filterMode === m && styles.filterModeBtnTextActive]}>
+                  {m === 'month' ? '📅 Per Bulan' : '📆 Per Tahun'}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+          <TouchableOpacity
+            style={styles.refreshBtn}
+            onPress={loadData}
+            activeOpacity={0.75}
+          >
+            <ThemedText style={styles.refreshBtnText}>🔄 Muat Ulang</ThemedText>
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.filterRow}>
+        {/* Row 2: Selectors */}
+        <View style={styles.filterSelectorRow}>
           {filterMode === 'month' && (
-            <Pressable style={styles.filterSelect} onPress={() => setShowMonthPicker(true)}>
-              <ThemedText style={styles.filterSelectLabel}>Bulan</ThemedText>
-              <ThemedText style={styles.filterSelectValue}>{MONTH_NAMES[selectedMonth - 1]}</ThemedText>
+            <Pressable style={styles.monthSelectBtn} onPress={() => setShowMonthPicker(true)}>
+              <ThemedText style={styles.selectorLabel}>Bulan</ThemedText>
+              <View style={styles.selectorValueRow}>
+                <ThemedText style={styles.selectorValueText}>{MONTH_NAMES[selectedMonth - 1]}</ThemedText>
+                <ThemedText style={{ fontSize: 12, color: Colors.tint }}>▾</ThemedText>
+              </View>
             </Pressable>
           )}
-          <View style={styles.filterSelect}>
-            <ThemedText style={styles.filterSelectLabel}>Tahun (Pilih atau Tambah Tahun Lain)</ThemedText>
+
+          <View style={[styles.yearSelectContainer, filterMode === 'year' && { flex: 1 }]}>
+            <View style={styles.yearHeaderRow}>
+              <ThemedText style={styles.selectorLabel}>Tahun</ThemedText>
+              <Pressable
+                onPress={() => {
+                  setCustomYearInput('');
+                  setShowYearModal(true);
+                }}
+              >
+                <ThemedText style={styles.yearOtherLink}>+ Tahun Lain</ThemedText>
+              </Pressable>
+            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
               {availableYears.map((y) => (
                 <Pressable
@@ -377,20 +404,9 @@ function LabaRugiTab({
                   </ThemedText>
                 </Pressable>
               ))}
-              <Pressable
-                style={styles.yearChipOther}
-                onPress={() => {
-                  setCustomYearInput('');
-                  setShowYearModal(true);
-                }}
-              >
-                <ThemedText style={styles.yearChipOtherText}>📅 Tahun Lain...</ThemedText>
-              </Pressable>
             </ScrollView>
           </View>
         </View>
-
-        <Button title="🔄 Muat Ulang Laporan" size="sm" onPress={loadData} style={{ marginTop: 8 }} />
       </View>
 
       {/* Month picker for iOS */}
@@ -801,7 +817,7 @@ function LabaRugiTab({
                 {/* Ringkasan Statistik */}
                 <View style={styles.slipStatsBox}>
                   <ThemedText style={{ fontSize: 11, color: '#475569' }}>
-                    📊 Rekapitulasi: Tercatat sebanyak <strong>{data.jumlahTransaksi} transaksi</strong> penjualan pada periode ini.
+                    📊 Rekapitulasi: Tercatat sebanyak <ThemedText type="defaultSemiBold" style={{ color: Colors.tint }}>{data.jumlahTransaksi} transaksi</ThemedText> penjualan pada periode ini.
                   </ThemedText>
                 </View>
 
@@ -815,13 +831,13 @@ function LabaRugiTab({
                   <View style={styles.slipSignCol}>
                     <ThemedText style={styles.slipSignRole}>Disetujui Oleh,</ThemedText>
                     <View style={styles.slipSignSpace} />
-                    <ThemedText style={styles.slipSignName}>( Pemilik Usaha / Toko )</ThemedText>
+                    <ThemedText style={styles.slipSignName}>( Pemilik / Pimpinan Usaha )</ThemedText>
                   </View>
                 </View>
 
                 {/* Footer Kertas Kerja */}
                 <ThemedText style={styles.slipFooterText}>
-                  POS Karya Riki Rivaldi • Dicetak otomatis pada {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  POS AZIZAH • Dicetak otomatis pada {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
                 </ThemedText>
               </View>
             </ScrollView>
@@ -898,7 +914,7 @@ function LRRow({
 // ─────────────────────────────────────────
 function BukuKasTab({ db, onMutate }: { db: SQLiteDatabase; onMutate?: () => void }) {
   const router = useRouter();
-  const { storeName, storeAddress, storePhone } = useSettingsStore();
+  const { storeName, storeAddress, storePhone, businessMode } = useSettingsStore();
   const {
     entries,
     totalCashIn,
@@ -1028,7 +1044,7 @@ function BukuKasTab({ db, onMutate }: { db: SQLiteDatabase; onMutate?: () => voi
   };
 
   const categoriesToPick: readonly { id: string; label: string }[] =
-    entryType === 'in' ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES;
+    entryType === 'in' ? CASH_IN_CATEGORIES : getCashOutCategories(businessMode);
 
   return (
     <View style={{ flex: 1 }}>
@@ -1375,35 +1391,122 @@ const styles = StyleSheet.create({
   tabBtnText: { fontSize: 12, fontWeight: '600', color: Colors.text },
   tabBtnTextActive: { color: '#fff' },
   filterCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    padding: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
-  filterModeRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  filterHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 10,
+  },
+  filterModeRow: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    padding: 3,
+    gap: 4,
+  },
   filterModeBtn: {
     flex: 1,
     paddingVertical: 6,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  filterModeBtnActive: { backgroundColor: Colors.tint, borderColor: Colors.tint },
-  filterModeBtnText: { fontSize: 12, fontWeight: '600', color: Colors.text },
-  filterModeBtnTextActive: { color: '#fff' },
-  filterRow: { gap: 8 },
-  filterSelect: {
-    padding: 8,
+  filterModeBtnActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  filterModeBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  filterModeBtnTextActive: {
+    color: Colors.tintDark,
+    fontWeight: '800',
+  },
+  refreshBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     borderRadius: 8,
+    backgroundColor: '#f5f3ff',
     borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: '#fafafa',
+    borderColor: '#ddd6fe',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  filterSelectLabel: { fontSize: 10, color: Colors.muted, marginBottom: 4 },
-  filterSelectValue: { fontSize: 13, fontWeight: '600' },
+  refreshBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.tint,
+  },
+  filterSelectorRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
+  },
+  monthSelectBtn: {
+    flex: 1,
+    padding: 9,
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  selectorLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  selectorValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  selectorValueText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1e293b',
+  },
+  yearSelectContainer: {
+    flex: 1.2,
+    padding: 9,
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  yearHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  yearOtherLink: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.tint,
+  },
   yearChip: {
     paddingHorizontal: 12,
     paddingVertical: 5,
