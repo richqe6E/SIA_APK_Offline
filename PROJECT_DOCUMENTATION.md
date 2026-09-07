@@ -17,13 +17,13 @@
 * **State Management:** Zustand 5
 * **Akun EAS Cloud:** `rikire` (`rikyrivaldi369@gmail.com`)
 * **Project ID EAS:** `97d847aa-a65d-4eb8-9d21-33f936cce00e`
-* **Commit Terakhir:** `87f1648` (*feat: implementasi beli tunai/kredit supplier, pending retail sosis, bayar hutang kasir, dan perapian buku kas*)
+* **Commit Terakhir:** `735682a` (*feat: smart CSV import/export produk, format standar barcode, template CSV, dan optimasi performa ribuan data*)
 * **File APK Terakhir (Tersimpan Lokal di Data D):**
-  📁 `D:\PROJEK APLIKASI POS OFFLINE\POS-Offline-source-code\POS-Offline-main\POS-Offline-release.apk` *(Ukuran: ~113.4 MB)*
+  📁 `D:\PROJEK APLIKASI POS OFFLINE\POS-Offline-source-code\POS-Offline-main\POS-Offline-release.apk` *(Ukuran: ~113.5 MB)*
 * **Tautan Unduhan Cloud Alternatif:**
-  🔗 [Download APK Release (Expo EAS)](https://expo.dev/artifacts/eas/y5ddT6SaZajVtnKVDF9uuy8LhlaMGYVQGAv1-elX1cc.apk)
+  🔗 [Download APK Release (Expo EAS)](https://expo.dev/artifacts/eas/iZeIE4vYIws4-YpDpk-KPkJPmDH-vlb5_qCTisxBE3U.apk)
 * **Dashboard Build EAS:**
-  🔗 [Expo Build Dashboard (Build ID: d5809c39)](https://expo.dev/accounts/rikire/projects/pos-offline/builds/d5809c39-d73b-45d5-85df-db9600924f4e)
+  🔗 [Expo Build Dashboard (Build ID: 82a8fb1b)](https://expo.dev/accounts/rikire/projects/pos-offline/builds/82a8fb1b-aa41-4c72-ba88-b5f032663741)
 
 ---
 
