@@ -386,6 +386,23 @@ Sesi ini berfokus pada penyempurnaan menyeluruh pengalaman pengguna pada tablet 
 14. **Shift Kasir & Laporan Z-Report 58mm:** Buka shift (modal awal), chip status di header, tutup shift dengan rekonsiliasi kas fisik vs sistem, serta cetak struk Z-Report resmi 58mm.
 15. **1-Click Full Backup & Restore:** Pencadangan seluruh 18 tabel SQLite ke berkas `.json` bertanggal untuk disimpan ke Google Drive / USB OTG, serta pemulihan atomik aman via `withTransactionAsync`.
 
+### E. Perbankan, Presisi Waktu & Desain Multi-Orientasi (Sesi 8 September 2026 - Bagian 2)
+16. **Setoran Uang Kas Laci ke Bank (Buku Kas):**
+    * Fitur khusus pada Buku Kas untuk mencatat pemindahan uang kas fisik laci toko ke rekening bank (BCA, BRI, Mandiri, BNI, BSI, Rekening Pemilik, atau Bank Lainnya).
+    * Mengurangi Saldo Kas Fisik Laci secara otomatis dan presisi saat kasir atau pemilik menyetor hasil penjualan ke bank.
+    * **Integritas Akuntansi Terjamin:** Kategori `setor_bank` **dikecualikan dari beban operasional** pada Laporan Laba Rugi, sehingga tidak mengurangi laba kotor maupun laba bersih toko.
+    * Dilengkapi tombol cepat (*Setor Semua, Sisakan Rp 100.000 di Laci, Sisakan Rp 200.000 di Laci*), validasi saldo agar tidak minus, serta fitur cetak tanda terima serah terima fisik kas thermal 58mm dengan kolom tanda tangan kasir dan penerima bank.
+17. **Jam & Tanggal Realtime (Live Clock Badge):**
+    * Komponen `RealtimeClockBadge` dengan penunjuk detik, menit, jam, hari, dan tanggal yang selalu bergerak realtime (interval 1000 ms) dilengkapi titik denyut live (*pulse dot*).
+    * Disematkan di **Dashboard Utama** (format penuh di mode landscape dan format ringkas di mode portrait).
+    * Disematkan di **Tampilan Kasir** (`app/transaksi.tsx`) baik pada Step 1 (di header keranjang belanja sebelah tombol Selesai/Antrean) maupun Step 2 (di baris atas ringkasan pesanan kasir).
+18. **Desain Responsif Landscape & Portrait (Keuangan & Pengaturan):**
+    * Mengadopsi mekanisme orientasi global dari Dashboard: membaca `appOrientation` (`useSettingsStore`) dan mendukung penguncian dinamis (`useLockOrientation`).
+    * Ditambahkan tombol cepat toggle orientasi (*Landscape / Portrait*) di sudut kanan atas header tab Laporan Keuangan dan Pengaturan.
+    * **Tata Letak Adaptif:**
+      - *Mode Landscape:* Tampilan 2 kolom split panel seimbang (Kolom kiri untuk filter/status toko & preview struk, kolom kanan untuk lembar laporan/menu pengaturan).
+      - *Mode Portrait:* Tampilan 1 kolom vertikal rapi bertumpuk dengan scrolling mulus.
+
 ---
 
 ## 8. Panduan Build Aplikasi (Cloud EAS vs Lokal)
