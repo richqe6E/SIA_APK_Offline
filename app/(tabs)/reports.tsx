@@ -88,7 +88,7 @@ export default function ReportsScreen() {
        ${dateFilter}
        GROUP BY ti.product_name
        ORDER BY total DESC
-       LIMIT 10`,
+       LIMIT 20`,
       ...params
     );
 
@@ -127,6 +127,8 @@ export default function ReportsScreen() {
     loadReport('daily');
   }, [loadReport]);
 
+  const [topSortMode, setTopSortMode] = useState<'omset' | 'qty'>('omset');
+
   const periods: { key: Period; label: string }[] = [
     { key: 'daily', label: 'Hari Ini' },
     { key: 'weekly', label: '7 Hari' },
@@ -134,7 +136,15 @@ export default function ReportsScreen() {
     { key: 'custom', label: 'Kustom' },
   ];
 
-  const maxProductTotal = data ? Math.max(...data.topProducts.map((i) => i.total), 1) : 1;
+  const sortedTopProducts = (data?.topProducts || [])
+    .slice()
+    .sort((a, b) => (topSortMode === 'omset' ? b.total - a.total : b.qty - a.qty))
+    .slice(0, 10);
+
+  const maxProductVal = sortedTopProducts.length > 0
+    ? Math.max(...sortedTopProducts.map((i) => (topSortMode === 'omset' ? i.total : i.qty)), 1)
+    : 1;
+
   const maxHourTotal = data ? Math.max(...data.hours.map((h) => h.total), 1) : 1;
   const maxDayTotal = data ? Math.max(...data.days.map((d) => d.total), 1) : 1;
 
@@ -253,32 +263,60 @@ export default function ReportsScreen() {
 
           {/* Section 2: Produk Terlaris */}
           <Card style={{ marginBottom: 16 }}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={{ fontSize: 18, lineHeight: 22 }}>{'\u{1F3C6}'}</ThemedText>
-              <ThemedText type="defaultSemiBold" style={{ fontSize: 15 }}>Produk Terlaris</ThemedText>
+            <View style={[styles.sectionHeader, { justifyContent: 'space-between', alignItems: 'center' }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <ThemedText style={{ fontSize: 18, lineHeight: 22 }}>{'\u{1F3C6}'}</ThemedText>
+                <ThemedText type="defaultSemiBold" style={{ fontSize: 15 }}>Produk Terlaris</ThemedText>
+              </View>
+
+              {/* Toggle Urutkan Qty vs Omset */}
+              <View style={styles.topToggleRow}>
+                <Pressable
+                  style={[styles.topToggleBtn, topSortMode === 'omset' && styles.topToggleBtnActive]}
+                  onPress={() => setTopSortMode('omset')}
+                >
+                  <ThemedText style={[styles.topToggleBtnText, topSortMode === 'omset' && styles.topToggleBtnTextActive]}>
+                    💰 Omset (Rp)
+                  </ThemedText>
+                </Pressable>
+                <Pressable
+                  style={[styles.topToggleBtn, topSortMode === 'qty' && styles.topToggleBtnActive]}
+                  onPress={() => setTopSortMode('qty')}
+                >
+                  <ThemedText style={[styles.topToggleBtnText, topSortMode === 'qty' && styles.topToggleBtnTextActive]}>
+                    📦 Qty Terjual
+                  </ThemedText>
+                </Pressable>
+              </View>
             </View>
-            {data.topProducts.map((item, i) => (
-              <View key={i} style={styles.itemRow}>
-                <View style={styles.rankBadge}>
-                  <ThemedText style={{ fontSize: 11, fontWeight: 'bold', color: '#fff' }}>{i + 1}</ThemedText>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <ThemedText style={{ fontSize: 12 }}>{item.name}</ThemedText>
-                  <View style={styles.progressBarBg}>
-                    <View style={[styles.progressBarFill, { width: `${(item.total / maxProductTotal) * 100}%` }]} />
+
+            {sortedTopProducts.map((item, i) => {
+              const currentVal = topSortMode === 'omset' ? item.total : item.qty;
+              const fillPercent = (currentVal / maxProductVal) * 100;
+
+              return (
+                <View key={i} style={styles.itemRow}>
+                  <View style={[styles.rankBadge, i === 0 && { backgroundColor: '#eab308' }, i === 1 && { backgroundColor: '#94a3b8' }, i === 2 && { backgroundColor: '#b45309' }]}>
+                    <ThemedText style={{ fontSize: 11, fontWeight: 'bold', color: '#fff' }}>{i + 1}</ThemedText>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText style={{ fontSize: 12 }}>{item.name}</ThemedText>
+                    <View style={styles.progressBarBg}>
+                      <View style={[styles.progressBarFill, { width: `${fillPercent}%` }]} />
+                    </View>
+                  </View>
+                  <View style={{ alignItems: 'flex-end', minWidth: 95 }}>
+                    <ThemedText type="defaultSemiBold" style={{ fontSize: 12, color: topSortMode === 'omset' ? Colors.tint : Colors.text }}>
+                      {topSortMode === 'omset' ? `Rp ${item.total.toLocaleString('id-ID')}` : `${item.qty} pcs`}
+                    </ThemedText>
+                    <ThemedText style={{ fontSize: 11, color: Colors.placeholder }}>
+                      {topSortMode === 'omset' ? `${item.qty} pcs` : `Rp ${item.total.toLocaleString('id-ID')}`}
+                    </ThemedText>
                   </View>
                 </View>
-                <View style={{ alignItems: 'flex-end', minWidth: 80 }}>
-                  <ThemedText type="defaultSemiBold" style={{ fontSize: 12 }}>
-                    Rp {item.total.toLocaleString()}
-                  </ThemedText>
-                  <ThemedText style={{ fontSize: 11, color: Colors.placeholder }}>
-                    {item.qty} pcs
-                  </ThemedText>
-                </View>
-              </View>
-            ))}
-            {data.topProducts.length === 0 && (
+              );
+            })}
+            {sortedTopProducts.length === 0 && (
               <ThemedText style={{ textAlign: 'center', color: Colors.muted, marginTop: 8, fontSize: 12 }}>
                 Belum ada data penjualan
               </ThemedText>
@@ -492,5 +530,34 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textAlign: 'right',
     fontWeight: '500',
+  },
+  topToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    padding: 2,
+    gap: 2,
+  },
+  topToggleBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  topToggleBtnActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 1,
+    elevation: 1,
+  },
+  topToggleBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  topToggleBtnTextActive: {
+    color: Colors.tint,
+    fontWeight: '700',
   },
 });

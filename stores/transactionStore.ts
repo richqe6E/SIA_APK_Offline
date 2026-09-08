@@ -8,15 +8,27 @@ export interface CartItem {
   product_price: number;
   quantity: number;
   subtotal: number;
+  is_weighted?: number;
+  weight_gram?: number;
+  price_per_kg?: number;
 }
 
 export interface Transaction {
   id: number;
   total: number;
   payment_method: string;
+  customer_id?: number | null;
+  is_credit?: number;
+  discount_amount?: number;
+  subtotal_amount?: number;
   payment_amount: number;
   change: number;
   created_at: string;
+}
+
+export interface TransactionDiscount {
+  type: 'nominal' | 'percent';
+  value: number;
 }
 
 export interface TransactionItem {
@@ -27,6 +39,9 @@ export interface TransactionItem {
   product_price: number;
   quantity: number;
   subtotal: number;
+  cost_price?: number;
+  weight_gram?: number | null;
+  price_per_kg?: number | null;
 }
 
 export interface PendingOrder {
@@ -42,12 +57,21 @@ export type PeriodFilter = 'today' | 'week' | 'month' | 'all';
 
 interface TransactionState {
   cart: CartItem[];
+  discount: TransactionDiscount | null;
   transactions: Transaction[];
   pendingOrders: PendingOrder[];
   loading: boolean;
   hasMore: boolean;
-  addToCart: (product: { id: number; name: string; price: number }) => void;
+  setDiscount: (value: number, type: 'nominal' | 'percent') => void;
+  clearDiscount: () => void;
+  getDiscountAmount: () => number;
+  addToCart: (
+    product: { id: number; name: string; price: number; is_weighted?: number },
+    options?: { weight_gram?: number; price_per_kg?: number }
+  ) => void;
   updateQuantity: (productId: number, quantity: number) => void;
+  updateCartItemPrice: (productId: number, newPrice: number) => void;
+  updateCartItemWeight: (productId: number, newWeightGram: number, newPricePerKg?: number) => void;
   removeFromCart: (productId: number) => void;
   clearCart: () => void;
   setCart: (cart: CartItem[]) => void;
@@ -66,40 +90,102 @@ interface TransactionState {
 
 export const useTransactionStore = create<TransactionState>((set, get) => ({
   cart: [],
+  discount: null,
   transactions: [],
   pendingOrders: [],
   loading: false,
   hasMore: true,
 
-  addToCart: (product) => {
-    const { cart } = get();
-    const existing = cart.find((item) => item.product_id === product.id);
+  setDiscount: (value, type) => {
+    set({ discount: { value, type } });
+  },
 
-    if (existing) {
-      set({
-        cart: cart.map((item) =>
-          item.product_id === product.id
-            ? {
-                ...item,
-                quantity: item.quantity + 1,
-                subtotal: (item.quantity + 1) * item.product_price,
-              }
-            : item
-        ),
-      });
+  clearDiscount: () => {
+    set({ discount: null });
+  },
+
+  getDiscountAmount: () => {
+    const { cart, discount } = get();
+    if (!discount || discount.value <= 0) return 0;
+    const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
+    if (discount.type === 'percent') {
+      const pct = Math.min(100, Math.max(0, discount.value));
+      return Math.round((subtotal * pct) / 100);
+    }
+    return Math.min(subtotal, Math.max(0, discount.value));
+  },
+
+  addToCart: (product, options) => {
+    const { cart } = get();
+    const isWeighted = (product.is_weighted ?? 0) === 1;
+
+    if (isWeighted) {
+      const weightGram = options?.weight_gram ?? 1000;
+      const pricePerKg = options?.price_per_kg ?? product.price;
+      const subtotal = Math.round((weightGram / 1000) * pricePerKg);
+
+      const existing = cart.find((item) => item.product_id === product.id);
+      if (existing) {
+        set({
+          cart: cart.map((item) =>
+            item.product_id === product.id
+              ? {
+                  ...item,
+                  weight_gram: weightGram,
+                  price_per_kg: pricePerKg,
+                  product_price: pricePerKg,
+                  quantity: 1,
+                  subtotal,
+                }
+              : item
+          ),
+        });
+      } else {
+        set({
+          cart: [
+            ...cart,
+            {
+              product_id: product.id,
+              product_name: product.name,
+              product_price: pricePerKg,
+              quantity: 1,
+              subtotal,
+              is_weighted: 1,
+              weight_gram: weightGram,
+              price_per_kg: pricePerKg,
+            },
+          ],
+        });
+      }
     } else {
-      set({
-        cart: [
-          ...cart,
-          {
-            product_id: product.id,
-            product_name: product.name,
-            product_price: product.price,
-            quantity: 1,
-            subtotal: product.price,
-          },
-        ],
-      });
+      const existing = cart.find((item) => item.product_id === product.id);
+      if (existing) {
+        set({
+          cart: cart.map((item) =>
+            item.product_id === product.id
+              ? {
+                  ...item,
+                  quantity: item.quantity + 1,
+                  subtotal: (item.quantity + 1) * item.product_price,
+                }
+              : item
+          ),
+        });
+      } else {
+        set({
+          cart: [
+            ...cart,
+            {
+              product_id: product.id,
+              product_name: product.name,
+              product_price: product.price,
+              quantity: 1,
+              subtotal: product.price,
+              is_weighted: 0,
+            },
+          ],
+        });
+      }
     }
   },
 
@@ -117,6 +203,46 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     });
   },
 
+  updateCartItemPrice: (productId, newPrice) => {
+    set({
+      cart: get().cart.map((item) => {
+        if (item.product_id !== productId) return item;
+        if (item.is_weighted === 1) {
+          const weight = item.weight_gram ?? 1000;
+          const subtotal = Math.round((weight / 1000) * newPrice);
+          return {
+            ...item,
+            product_price: newPrice,
+            price_per_kg: newPrice,
+            subtotal,
+          };
+        }
+        return {
+          ...item,
+          product_price: newPrice,
+          subtotal: item.quantity * newPrice,
+        };
+      }),
+    });
+  },
+
+  updateCartItemWeight: (productId, newWeightGram, newPricePerKg) => {
+    set({
+      cart: get().cart.map((item) => {
+        if (item.product_id !== productId) return item;
+        const pricePerKg = newPricePerKg !== undefined ? newPricePerKg : (item.price_per_kg ?? item.product_price);
+        const subtotal = Math.round((newWeightGram / 1000) * pricePerKg);
+        return {
+          ...item,
+          weight_gram: newWeightGram,
+          price_per_kg: pricePerKg,
+          product_price: pricePerKg,
+          subtotal,
+        };
+      }),
+    });
+  },
+
   removeFromCart: (productId) => {
     set({ cart: get().cart.filter((item) => item.product_id !== productId) });
   },
@@ -127,7 +253,9 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     const { cart } = get();
     if (cart.length === 0) return 0;
 
-    const total = cart.reduce((sum, item) => sum + item.subtotal, 0);
+    const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
+    const discountAmount = get().getDiscountAmount();
+    const total = Math.max(0, subtotal - discountAmount);
     const isCredit = paymentMethod === 'hutang' ? 1 : 0;
     const finalPaymentAmount = isCredit ? 0 : paymentAmount;
     const change = isCredit ? 0 : paymentAmount - total;
@@ -135,13 +263,15 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     let transactionId = 0;
     await db.withExclusiveTransactionAsync(async (txn) => {
       const result = await txn.runAsync(
-        'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit, discount_amount, subtotal_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         total,
         paymentMethod,
         finalPaymentAmount,
         change >= 0 ? change : 0,
         customerId,
-        isCredit
+        isCredit,
+        discountAmount,
+        subtotal
       );
       transactionId = result.lastInsertRowId as number;
 
@@ -151,25 +281,32 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
           'SELECT cost_price, has_stock FROM products WHERE id = ?',
           item.product_id
         );
-        const costPrice = prod?.cost_price ?? 0;
+        const baseCostPrice = prod?.cost_price ?? 0;
+        const finalCostPrice = item.is_weighted === 1
+          ? Math.round(((item.weight_gram ?? 1000) / 1000) * baseCostPrice)
+          : baseCostPrice;
 
         await txn.runAsync(
-          'INSERT INTO transaction_items (transaction_id, product_id, product_name, product_price, quantity, subtotal, cost_price) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO transaction_items (transaction_id, product_id, product_name, product_price, quantity, subtotal, cost_price, weight_gram, price_per_kg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
           transactionId,
           item.product_id,
           item.product_name,
           item.product_price,
           item.quantity,
           item.subtotal,
-          costPrice
+          finalCostPrice,
+          item.weight_gram ?? null,
+          item.price_per_kg ?? null
         );
 
         // Kurangi stok hanya untuk produk ber-stok
-        // Menggunakan MAX(0,...) agar tidak negatif dan tidak memblokir transaksi
         if (prod?.has_stock === 1) {
+          const qtyToDeduct = item.is_weighted === 1
+            ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+            : item.quantity;
           await txn.runAsync(
             `UPDATE products SET stock = MAX(0, stock - ?), updated_at = datetime('now','localtime') WHERE id = ?`,
-            item.quantity,
+            qtyToDeduct,
             item.product_id
           );
         }
@@ -186,9 +323,11 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
       }
     });
 
-    set({ cart: [] });
+    set({ cart: [], discount: null });
     await get().loadTransactions(db);
     useProductStore.getState().loadProducts(db);
+    const { useCashStore } = await import('@/stores/cashStore');
+    await useCashStore.getState().loadLedger(db);
     if (isCredit) {
       const { useDebtReceivableStore } = await import('@/stores/debtReceivableStore');
       await useDebtReceivableStore.getState().loadReceivables(db);

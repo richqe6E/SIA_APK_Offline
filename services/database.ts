@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  const DATABASE_VERSION = 10;
+  const DATABASE_VERSION = 12;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -304,12 +304,54 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     currentDbVersion = 10;
   }
 
+  if (currentDbVersion === 10) {
+    // Migrasi v11: Multi-barcode, Weighted products (timbangan), Expired date, Termin kredit, Sumber kas pembelian
+    await db.execAsync(`
+      ALTER TABLE products ADD COLUMN barcodes TEXT NOT NULL DEFAULT '';
+      ALTER TABLE products ADD COLUMN is_weighted INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE products ADD COLUMN expired_date TEXT DEFAULT NULL;
+
+      ALTER TABLE purchases ADD COLUMN due_date TEXT DEFAULT NULL;
+      ALTER TABLE purchases ADD COLUMN payment_source TEXT NOT NULL DEFAULT 'toko';
+
+      ALTER TABLE transaction_items ADD COLUMN weight_gram INTEGER DEFAULT NULL;
+      ALTER TABLE transaction_items ADD COLUMN price_per_kg REAL DEFAULT NULL;
+    `);
+    currentDbVersion = 11;
+  }
+
+  if (currentDbVersion === 11) {
+    // Migrasi v12: Tabel cash_shifts (Rekonsiliasi Shift Kasir / Z-Report), Diskon Transaksi
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS cash_shifts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cashier_name TEXT NOT NULL,
+        opened_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        closed_at TEXT DEFAULT NULL,
+        starting_cash REAL NOT NULL DEFAULT 0,
+        expected_cash REAL NOT NULL DEFAULT 0,
+        actual_cash REAL DEFAULT NULL,
+        difference REAL DEFAULT NULL,
+        total_sales_cash REAL NOT NULL DEFAULT 0,
+        total_sales_non_cash REAL NOT NULL DEFAULT 0,
+        total_transactions INTEGER NOT NULL DEFAULT 0,
+        notes TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open' -- 'open' | 'closed'
+      );
+
+      ALTER TABLE transactions ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0;
+      ALTER TABLE transactions ADD COLUMN subtotal_amount REAL NOT NULL DEFAULT 0;
+    `);
+    currentDbVersion = 12;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }
 
 export async function resetEntireDatabase(db: SQLiteDatabase): Promise<void> {
   await db.withTransactionAsync(async () => {
     await db.execAsync(`
+      DELETE FROM cash_shifts;
       DELETE FROM pending_orders;
       DELETE FROM transaction_items;
       DELETE FROM transactions;

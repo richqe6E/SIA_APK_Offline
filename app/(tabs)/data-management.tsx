@@ -17,6 +17,8 @@ import {
   importProductsFromCSV,
   shareFile,
 } from '@/services/export';
+import { exportDatabaseBackup, restoreDatabaseBackup } from '@/services/backup';
+import { useCategoryStore } from '@/stores/categoryStore';
 import { useProductStore } from '@/stores/productStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -47,6 +49,8 @@ export default function DataManagementScreen() {
   const [deleting, setDeleting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   // Admin PIN Modal for Factory Reset
   const [showAdminPin, setShowAdminPin] = useState(false);
@@ -69,6 +73,70 @@ export default function DataManagementScreen() {
       month: 'long',
       year: 'numeric',
     });
+  };
+
+  // ─────────────────────────────────────────
+  // Backup & Restore Database Lengkap (1-Ketukan)
+  // ─────────────────────────────────────────
+  const handleBackupFull = async () => {
+    setBackingUp(true);
+    try {
+      await exportDatabaseBackup(db);
+      Alert.alert(
+        'Cadangan Berhasil',
+        'Berkas JSON cadangan database berhasil dibuat dan siap disimpan ke Google Drive, Flashdisk OTG, atau memori perangkat.'
+      );
+    } catch (e: any) {
+      Alert.alert('Gagal Cadangkan', e?.message || 'Terjadi kesalahan saat mencadangkan database.');
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
+  const handleRestoreFull = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/json', 'text/json', '*/*'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const file = result.assets[0];
+
+      Alert.alert(
+        'Konfirmasi Pemulihan Data',
+        `Perhatian: Seluruh data saat ini akan digantikan dengan data dari berkas cadangan "${file.name}".\n\nApakah Anda yakin ingin melanjutkan?`,
+        [
+          { text: 'Batal', style: 'cancel' },
+          {
+            text: 'Pulihkan Sekarang',
+            style: 'destructive',
+            onPress: async () => {
+              setRestoring(true);
+              try {
+                const meta = await restoreDatabaseBackup(db, file.uri);
+                await useProductStore.getState().loadProducts(db);
+                await useCategoryStore.getState().loadCategories(db);
+                await useSettingsStore.getState().loadSettings(db);
+                Alert.alert(
+                  'Pemulihan Selesai',
+                  `Data berhasil dipulihkan secara utuh!\n• Produk: ${meta.counts.products ?? 0}\n• Kategori: ${meta.counts.categories ?? 0}\n• Transaksi: ${meta.counts.transactions ?? 0}`
+                );
+              } catch (e: any) {
+                Alert.alert('Gagal Memulihkan', e?.message || 'Berkas cadangan tidak valid atau rusak.');
+              } finally {
+                setRestoring(false);
+              }
+            },
+          },
+        ]
+      );
+    } catch (e: any) {
+      Alert.alert('Gagal Membuka Berkas', e?.message || 'Gagal memilih berkas cadangan.');
+    }
   };
 
   // ─────────────────────────────────────────
@@ -435,7 +503,52 @@ export default function DataManagementScreen() {
           {exporting && <ActivityIndicator size="small" color={Colors.tint} />}
         </Card>
 
-        {/* SECTION 3: HAPUS TRANSAKSI */}
+        {/* SECTION 3: CADANGAN & PEMULIHAN DATABASE LENGKAP */}
+        <Card padding={16} style={{ marginBottom: 16, gap: 12, backgroundColor: '#ffffff', borderColor: '#cbd5e1' }}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={{ fontSize: 20, lineHeight: 24 }}>💾</ThemedText>
+            <View style={{ flex: 1 }}>
+              <ThemedText type="defaultSemiBold" style={{ fontSize: 15 }}>
+                Cadangan & Pemulihan Database
+              </ThemedText>
+              <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
+                Simpan seluruh database kasir (18 tabel SQLite) ke berkas JSON atau pulihkan data
+              </ThemedText>
+            </View>
+          </View>
+
+          <View style={{ backgroundColor: '#f8fafc', padding: 10, borderRadius: 8, gap: 4, borderWidth: 1, borderColor: '#e2e8f0' }}>
+            <ThemedText style={{ fontSize: 11, fontWeight: '700', color: Colors.tintDark }}>
+              💡 Cadangan 1-Ketukan (Aman & Portabel):
+            </ThemedText>
+            <ThemedText style={{ fontSize: 11, color: '#475569' }}>
+              Mencadangkan produk, transaksi, buku kas, hutang piutang, dan shift kasir. Berkas JSON dapat disimpan ke Flashdisk OTG atau Google Drive.
+            </ThemedText>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Button
+              title={backingUp ? 'Mencadangkan...' : '💾 Cadangkan (Backup)'}
+              size="sm"
+              style={{ flex: 1, backgroundColor: Colors.tintDark }}
+              onPress={handleBackupFull}
+              disabled={backingUp || restoring}
+            />
+            <Button
+              title={restoring ? 'Memulihkan...' : '📥 Pulihkan (Restore)'}
+              variant="outline"
+              size="sm"
+              style={{ flex: 1, borderColor: Colors.tintDark }}
+              onPress={handleRestoreFull}
+              disabled={backingUp || restoring}
+            />
+          </View>
+          {(backingUp || restoring) && (
+            <ActivityIndicator size="small" color={Colors.tintDark} style={{ marginTop: 4 }} />
+          )}
+        </Card>
+
+        {/* SECTION 4: HAPUS TRANSAKSI */}
         <Card padding={16} style={{ gap: 12 }}>
           <View style={styles.sectionHeader}>
             <ThemedText style={{ fontSize: 20, lineHeight: 24 }}>⚠️</ThemedText>

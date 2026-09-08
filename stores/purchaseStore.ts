@@ -18,6 +18,8 @@ export interface PurchaseRecord {
   supplier_name: string;
   total_amount: number;
   payment_type?: string;
+  payment_source?: 'toko' | 'bank';
+  due_date?: string | null;
   supplier_id?: number | null;
   created_at: string;
 }
@@ -31,7 +33,9 @@ interface PurchaseState {
     supplierName: string,
     items: PurchaseItemPayload[],
     paymentType?: 'tunai' | 'kredit',
-    supplierId?: number | null
+    supplierId?: number | null,
+    dueDate?: string | null,
+    paymentSource?: 'toko' | 'bank'
   ) => Promise<{ success: boolean; message?: string }>;
 }
 
@@ -52,22 +56,30 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
     }
   },
 
-  createPurchase: async (db, supplierName, items, paymentType = 'tunai', supplierId = null) => {
+  createPurchase: async (
+    db,
+    supplierName,
+    items,
+    paymentType = 'tunai',
+    supplierId = null,
+    dueDate = null,
+    paymentSource = 'toko'
+  ) => {
     if (items.length === 0) {
       return { success: false, message: 'Tidak ada item pembelian yang dipilih!' };
     }
 
     const totalAmount = items.reduce((acc, item) => acc + item.subtotal, 0);
 
-    // 1. FINANCIAL GUARDRAIL: Jika pembayaran Tunai, validasi saldo kas toko
-    if (paymentType === 'tunai') {
+    // 1. FINANCIAL GUARDRAIL: Jika pembayaran Tunai dengan Kas Toko, validasi saldo kas toko
+    if (paymentType === 'tunai' && paymentSource === 'toko') {
       const cashBalance = await useCashStore.getState().getCashBalance(db);
       if (cashBalance < totalAmount) {
         const defisit = totalAmount - cashBalance;
         const fmt = (n: number) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
         return {
           success: false,
-          message: `Saldo kas toko tidak mencukupi untuk pembayaran tunai!\n\nSaldo Kas Tersedia: ${fmt(cashBalance)}\nTotal Pembelian: ${fmt(totalAmount)}\nKekurangan: ${fmt(defisit)}\n\nSilakan gunakan metode Kredit (Hutang Supplier) atau tambah modal kas terlebih dahulu.`,
+          message: `Saldo kas laci toko tidak mencukupi untuk pembayaran tunai!\n\nSaldo Kas Laci: ${fmt(cashBalance)}\nTotal Pembelian: ${fmt(totalAmount)}\nKekurangan: ${fmt(defisit)}\n\nSilakan gunakan opsi Kas Bank, Kredit (Hutang Supplier), atau tambah modal kas terlebih dahulu.`,
         };
       }
     }
@@ -100,12 +112,14 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
 
         // Simpan nota pembelian
         const result = await txn.runAsync(
-          'INSERT INTO purchases (invoice_no, supplier_name, total_amount, payment_type, supplier_id) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO purchases (invoice_no, supplier_name, total_amount, payment_type, supplier_id, due_date, payment_source) VALUES (?, ?, ?, ?, ?, ?, ?)',
           invoiceNo,
           cleanSupplierName,
           totalAmount,
           paymentType,
-          targetSupplierId
+          targetSupplierId,
+          dueDate,
+          paymentSource
         );
         const purchaseId = result.lastInsertRowId;
 
@@ -131,22 +145,25 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
         }
 
         if (paymentType === 'tunai') {
-          // Catat pengeluaran kas otomatis di Buku Kas
-          await txn.runAsync(
-            'INSERT INTO cash_ledger (type, category, description, amount, date) VALUES (?, ?, ?, ?, ?)',
-            'out',
-            'kulakan_stok',
-            `Kulakan Stok Nota #${invoiceNo} (${cleanSupplierName})`,
-            totalAmount,
-            today
-          );
+          // Hanya catat pengeluaran kas di Buku Kas jika menggunakan Kas Toko (Laci Kasir)
+          if (paymentSource === 'toko') {
+            await txn.runAsync(
+              'INSERT INTO cash_ledger (type, category, description, amount, date) VALUES (?, ?, ?, ?, ?)',
+              'out',
+              'kulakan_stok',
+              `Kulakan Stok Nota #${invoiceNo} (${cleanSupplierName})`,
+              totalAmount,
+              today
+            );
+          }
         } else {
           // Catat hutang supplier di tabel supplier_debts (tanpa memotong kas toko)
           await txn.runAsync(
-            'INSERT INTO supplier_debts (supplier_id, purchase_id, total_amount, paid_amount, status, created_at) VALUES (?, ?, ?, 0, "unpaid", datetime("now","localtime"))',
+            'INSERT INTO supplier_debts (supplier_id, purchase_id, total_amount, paid_amount, status, due_date, created_at) VALUES (?, ?, ?, 0, "unpaid", ?, datetime("now","localtime"))',
             targetSupplierId,
             purchaseId,
-            totalAmount
+            totalAmount,
+            dueDate
           );
         }
       });

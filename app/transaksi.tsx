@@ -31,7 +31,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BarcodeScannerModal } from '@/components/barcode-scanner-modal';
 import { BulkQtyModal } from '@/components/bulk-qty-modal';
+import { DiscountModal } from '@/components/discount-modal';
 import { QrisDisplayModal } from '@/components/qris-display-modal';
+import { WeightedProductModal } from '@/components/weighted-product-modal';
+import { EditCartPriceModal } from '@/components/edit-cart-price-modal';
 
 export default function TransactionScreen() {
   const router = useRouter();
@@ -43,6 +46,10 @@ export default function TransactionScreen() {
   const { categories, loadCategories } = useCategoryStore();
   const {
     cart,
+    discount,
+    setDiscount,
+    clearDiscount,
+    getDiscountAmount,
     addToCart,
     updateQuantity,
     removeFromCart,
@@ -84,18 +91,40 @@ export default function TransactionScreen() {
     paymentAmount: number;
     change: number;
     customerName?: string;
+    subtotalAmount?: number;
+    discountAmount?: number;
   } | null>(null);
 
-  // Fase 4 Modals: Barcode Scanner, Bulk Qty, QRIS Fullscreen
+  // Fase 4 Modals: Barcode Scanner, Bulk Qty, QRIS Fullscreen, Diskon
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [bulkQtyTarget, setBulkQtyTarget] = useState<CartItem | null>(null);
   const [showBulkQtyModal, setShowBulkQtyModal] = useState(false);
   const [showQrisCustomerModal, setShowQrisCustomerModal] = useState(false);
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
 
   // Fitur Pending Order / Parkir Transaksi
   const [showHoldModal, setShowHoldModal] = useState(false);
   const [holdNote, setHoldNote] = useState('');
   const [showPendingListModal, setShowPendingListModal] = useState(false);
+
+  // Modal Timbangan & Edit Harga Keranjang
+  const [showWeightedModal, setShowWeightedModal] = useState(false);
+  const [weightedTarget, setWeightedTarget] = useState<{
+    product: Product;
+    initialWeightGram?: number;
+    initialPricePerKg?: number;
+    isEditing?: boolean;
+  } | null>(null);
+
+  const [showEditPriceModal, setShowEditPriceModal] = useState(false);
+  const [editPriceTarget, setEditPriceTarget] = useState<{
+    productId: number;
+    productName: string;
+    currentPrice: number;
+    quantity: number;
+    isWeighted?: boolean;
+    weightGram?: number;
+  } | null>(null);
 
   const { customers, loadCustomers, addCustomer } = useDebtReceivableStore();
 
@@ -129,7 +158,9 @@ export default function TransactionScreen() {
     return matchCat && matchSearch;
   });
 
-  const total = cart.reduce((sum, item) => sum + item.subtotal, 0);
+  const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
+  const discountAmount = getDiscountAmount();
+  const total = Math.max(0, subtotal - discountAmount);
   const parsedAmount = parseInt(paymentAmount.replace(/\./g, ''), 10) || 0;
   const change = Math.max(0, parsedAmount - total);
 
@@ -170,6 +201,8 @@ export default function TransactionScreen() {
       paymentAmount: paymentMethod === 'hutang' ? 0 : (parsedAmount || total),
       change: paymentMethod === 'hutang' ? 0 : change,
       customerName: targetCustomerName,
+      subtotalAmount: subtotal,
+      discountAmount: discountAmount,
     });
     const dailySeq = await checkout(
       db,
@@ -253,6 +286,16 @@ export default function TransactionScreen() {
   };
 
   const handleAddToCartWithValidation = (product: Product) => {
+    if (product.is_weighted === 1) {
+      setWeightedTarget({
+        product,
+        initialWeightGram: 1000,
+        initialPricePerKg: product.price,
+        isEditing: false,
+      });
+      setShowWeightedModal(true);
+      return;
+    }
     if (businessMode === 'retail' && product.has_stock === 1) {
       const existingInCart = cart.find((item) => item.product_id === product.id);
       const currentQty = existingInCart ? existingInCart.quantity : 0;
@@ -267,13 +310,57 @@ export default function TransactionScreen() {
     addToCart(product);
   };
 
+  const handleOpenEditWeight = (item: CartItem) => {
+    const prod = products.find((p) => p.id === item.product_id);
+    if (prod) {
+      setWeightedTarget({
+        product: prod,
+        initialWeightGram: item.weight_gram || 1000,
+        initialPricePerKg: item.price_per_kg || prod.price,
+        isEditing: true,
+      });
+      setShowWeightedModal(true);
+    }
+  };
+
+  const handleConfirmWeight = (weightGram: number, pricePerKg: number) => {
+    if (weightedTarget) {
+      const existing = cart.find((c) => c.product_id === weightedTarget.product.id);
+      if (existing) {
+        useTransactionStore.getState().updateCartItemWeight(weightedTarget.product.id, weightGram, pricePerKg);
+      } else {
+        addToCart(weightedTarget.product, { weight_gram: weightGram, price_per_kg: pricePerKg });
+      }
+    }
+    setShowWeightedModal(false);
+    setWeightedTarget(null);
+  };
+
+  const handleOpenEditPrice = (item: CartItem) => {
+    setEditPriceTarget({
+      productId: item.product_id,
+      productName: item.product_name,
+      currentPrice: item.product_price,
+      quantity: item.quantity,
+      isWeighted: item.is_weighted === 1,
+      weightGram: item.weight_gram,
+    });
+    setShowEditPriceModal(true);
+  };
+
+  const handleConfirmEditPrice = (newPrice: number) => {
+    if (editPriceTarget) {
+      useTransactionStore.getState().updateCartItemPrice(editPriceTarget.productId, newPrice);
+    }
+    setShowEditPriceModal(false);
+    setEditPriceTarget(null);
+  };
+
   const handleBarcodeScanned = (code: string) => {
-    const trimmed = code.trim().toLowerCase();
-    const matched = products.find(
-      (p) =>
-        (p.barcode && p.barcode.trim().toLowerCase() === trimmed) ||
-        p.name.toLowerCase() === trimmed
-    );
+    const trimmed = code.trim();
+    const matched =
+      useProductStore.getState().findProductByBarcode(trimmed) ||
+      products.find((p) => p.name.toLowerCase() === trimmed.toLowerCase());
     if (matched) {
       handleAddToCartWithValidation(matched);
     } else {
@@ -315,6 +402,9 @@ export default function TransactionScreen() {
           businessMode={businessMode}
           filteredProducts={filteredProducts}
           cart={cart}
+          subtotal={subtotal}
+          discountAmount={discountAmount}
+          discount={discount}
           total={total}
           gridColumns={gridColumns}
           pendingCount={pendingOrders.length}
@@ -325,6 +415,9 @@ export default function TransactionScreen() {
           onOpenBulkQty={handleOpenBulkQty}
           onOpenHoldModal={() => setShowHoldModal(true)}
           onOpenPendingListModal={() => setShowPendingListModal(true)}
+          onOpenEditPrice={handleOpenEditPrice}
+          onOpenEditWeight={handleOpenEditWeight}
+          onOpenDiscount={() => setShowDiscountModal(true)}
           onNext={() => setStep(2)}
           onDone={handleSelesaiMenjual}
         />
@@ -338,6 +431,8 @@ export default function TransactionScreen() {
       ) : (
         <Step2View
           cart={cart}
+          subtotal={subtotal}
+          discountAmount={discountAmount}
           total={total}
           paymentMethod={paymentMethod}
           paymentAmount={paymentAmount}
@@ -585,6 +680,47 @@ export default function TransactionScreen() {
           </ThemedView>
         </View>
       </Modal>
+      {/* Modal Timbangan Produk (Poin 4) */}
+      <WeightedProductModal
+        visible={showWeightedModal}
+        productName={weightedTarget?.product.name || ''}
+        defaultPricePerKg={weightedTarget?.initialPricePerKg || weightedTarget?.product.price || 0}
+        initialPricePerKg={weightedTarget?.initialPricePerKg}
+        initialWeightGram={weightedTarget?.initialWeightGram || 1000}
+        isEditing={weightedTarget?.isEditing}
+        onClose={() => {
+          setShowWeightedModal(false);
+          setWeightedTarget(null);
+        }}
+        onConfirm={handleConfirmWeight}
+      />
+
+      {/* Modal Ubah Harga Keranjang (Poin 10) */}
+      {editPriceTarget && (
+        <EditCartPriceModal
+          visible={showEditPriceModal}
+          productName={editPriceTarget.productName}
+          currentPrice={editPriceTarget.currentPrice}
+          quantity={editPriceTarget.quantity}
+          isWeighted={editPriceTarget.isWeighted}
+          weightGram={editPriceTarget.weightGram}
+          onClose={() => {
+            setShowEditPriceModal(false);
+            setEditPriceTarget(null);
+          }}
+          onSavePrice={handleConfirmEditPrice}
+        />
+      )}
+
+      {/* Modal Diskon Transaksi */}
+      <DiscountModal
+        visible={showDiscountModal}
+        subtotal={subtotal}
+        currentDiscount={discount}
+        onClose={() => setShowDiscountModal(false)}
+        onApplyDiscount={(val, type) => setDiscount(val, type)}
+        onClearDiscount={clearDiscount}
+      />
     </ThemedView>
   );
 }
@@ -600,6 +736,9 @@ function Step1View({
   businessMode,
   filteredProducts,
   cart,
+  subtotal,
+  discountAmount,
+  discount,
   total,
   gridColumns,
   pendingCount,
@@ -610,6 +749,9 @@ function Step1View({
   onOpenBulkQty,
   onOpenHoldModal,
   onOpenPendingListModal,
+  onOpenEditPrice,
+  onOpenEditWeight,
+  onOpenDiscount,
   onNext,
   onDone,
 }: {
@@ -623,6 +765,9 @@ function Step1View({
   businessMode: BusinessMode;
   filteredProducts: Product[];
   cart: CartItem[];
+  subtotal: number;
+  discountAmount: number;
+  discount: { type: 'nominal' | 'percent'; value: number } | null;
   total: number;
   gridColumns: number;
   pendingCount: number;
@@ -633,6 +778,9 @@ function Step1View({
   onOpenBulkQty: (item: CartItem) => void;
   onOpenHoldModal: () => void;
   onOpenPendingListModal: () => void;
+  onOpenEditPrice: (item: CartItem) => void;
+  onOpenEditWeight: (item: CartItem) => void;
+  onOpenDiscount: () => void;
   onNext: () => void;
   onDone: () => void;
 }) {
@@ -771,36 +919,76 @@ function Step1View({
             <Card padding={10} style={{ marginBottom: 6 }}>
               <View style={styles.cartItem}>
                 <View style={styles.cartItemInfo}>
-                  <ThemedText type="defaultSemiBold" style={{ fontSize: 12 }}>{item.product_name}</ThemedText>
-                  <ThemedText style={{ fontSize: 11 }}>
-                    Rp {item.product_price.toLocaleString('id-ID')} x {item.quantity}
+                  <ThemedText type="defaultSemiBold" style={{ fontSize: 12 }} numberOfLines={1}>
+                    {item.product_name}
                   </ThemedText>
+
+                  {/* Berat Timbangan (Bila produk timbangan) */}
+                  {item.is_weighted === 1 ? (
+                    <TouchableOpacity
+                      style={styles.cartWeightChip}
+                      onPress={() => onOpenEditWeight(item)}
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText style={styles.cartWeightChipText}>
+                        ⚖️ {item.weight_gram || 0}g ({((item.weight_gram || 0) / 1000).toFixed(2)}kg)
+                      </ThemedText>
+                      <ThemedText style={styles.cartWeightEditHint}>Ubah Berat</ThemedText>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  {/* Harga Satuan yang dapat di-override kasir */}
+                  <TouchableOpacity
+                    style={styles.cartPriceChip}
+                    onPress={() => onOpenEditPrice(item)}
+                    activeOpacity={0.7}
+                  >
+                    <ThemedText style={styles.cartPriceChipText}>
+                      {item.is_weighted === 1
+                        ? `@ Rp ${(item.price_per_kg || item.product_price).toLocaleString('id-ID')}/kg`
+                        : `Rp ${item.product_price.toLocaleString('id-ID')} x ${item.quantity}`}
+                    </ThemedText>
+                    <ThemedText style={styles.cartPriceEditHint}>✏️ Ubah Harga</ThemedText>
+                  </TouchableOpacity>
+
                   <ThemedText type="defaultSemiBold" style={{ fontSize: 12, color: Colors.tint }}>
                     Rp {item.subtotal.toLocaleString('id-ID')}
                   </ThemedText>
                 </View>
+
                 <View style={styles.cartItemActions}>
-                  <Pressable
-                    style={styles.qtyBtn}
-                    onPress={() => onUpdateQty(item.product_id, item.quantity - 1)}
-                  >
-                    <ThemedText style={{ fontWeight: '700' }}>-</ThemedText>
-                  </Pressable>
-                  <Pressable
-                    style={styles.qtyTouchBadge}
-                    onPress={() => onOpenBulkQty(item)}
-                    hitSlop={4}
-                  >
-                    <ThemedText style={styles.qtyTouchText}>
-                      {item.quantity}
-                    </ThemedText>
-                  </Pressable>
-                  <Pressable
-                    style={styles.qtyBtn}
-                    onPress={() => onUpdateQty(item.product_id, item.quantity + 1)}
-                  >
-                    <ThemedText style={{ fontWeight: '700' }}>+</ThemedText>
-                  </Pressable>
+                  {item.is_weighted === 1 ? (
+                    <TouchableOpacity
+                      style={styles.reweightBtn}
+                      onPress={() => onOpenEditWeight(item)}
+                    >
+                      <ThemedText style={styles.reweightBtnText}>⚖️ Timbang</ThemedText>
+                    </TouchableOpacity>
+                  ) : (
+                    <>
+                      <Pressable
+                        style={styles.qtyBtn}
+                        onPress={() => onUpdateQty(item.product_id, item.quantity - 1)}
+                      >
+                        <ThemedText style={{ fontWeight: '700' }}>-</ThemedText>
+                      </Pressable>
+                      <Pressable
+                        style={styles.qtyTouchBadge}
+                        onPress={() => onOpenBulkQty(item)}
+                        hitSlop={4}
+                      >
+                        <ThemedText style={styles.qtyTouchText}>
+                          {item.quantity}
+                        </ThemedText>
+                      </Pressable>
+                      <Pressable
+                        style={styles.qtyBtn}
+                        onPress={() => onUpdateQty(item.product_id, item.quantity + 1)}
+                      >
+                        <ThemedText style={{ fontWeight: '700' }}>+</ThemedText>
+                      </Pressable>
+                    </>
+                  )}
                   <Pressable
                     style={styles.removeBtn}
                     onPress={() => onRemove(item.product_id)}
@@ -817,8 +1005,50 @@ function Step1View({
         />
 
         <View style={styles.footer}>
+          {discountAmount > 0 ? (
+            <View style={{ marginBottom: 6, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <ThemedText style={{ fontSize: 11, color: Colors.muted }}>Subtotal</ThemedText>
+                <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
+                  Rp {subtotal.toLocaleString('id-ID')}
+                </ThemedText>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                <TouchableOpacity onPress={onOpenDiscount} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <ThemedText style={{ fontSize: 11, color: Colors.danger, fontWeight: '700' }}>
+                    🏷️ Diskon ({discount?.type === 'percent' ? `${discount.value}%` : 'Nominal'})
+                  </ThemedText>
+                  <ThemedText style={{ fontSize: 10, color: Colors.tint }}>✏️</ThemedText>
+                </TouchableOpacity>
+                <ThemedText style={{ fontSize: 11, color: Colors.danger, fontWeight: '700' }}>
+                  -Rp {discountAmount.toLocaleString('id-ID')}
+                </ThemedText>
+              </View>
+            </View>
+          ) : null}
+
           <View style={styles.totalRow}>
-            <ThemedText type="defaultSemiBold" style={{ fontSize: 15 }}>Total</ThemedText>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <ThemedText type="defaultSemiBold" style={{ fontSize: 15 }}>Total</ThemedText>
+              <TouchableOpacity
+                style={[
+                  styles.discountTriggerBtn,
+                  discountAmount > 0 && styles.discountTriggerBtnActive,
+                ]}
+                onPress={onOpenDiscount}
+                disabled={cart.length === 0}
+                activeOpacity={0.7}
+              >
+                <ThemedText
+                  style={[
+                    styles.discountTriggerText,
+                    discountAmount > 0 && styles.discountTriggerTextActive,
+                  ]}
+                >
+                  {discountAmount > 0 ? '🏷️ Ubah Diskon' : '+ Diskon'}
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
             <ThemedText type="defaultSemiBold" style={{ fontSize: 18, color: Colors.success }}>
               Rp {total.toLocaleString('id-ID')}
             </ThemedText>
@@ -850,6 +1080,8 @@ function Step1View({
 
 function Step2View({
   cart,
+  subtotal,
+  discountAmount,
   total,
   paymentMethod,
   paymentAmount,
@@ -870,6 +1102,8 @@ function Step2View({
   onConfirm,
 }: {
   cart: CartItem[];
+  subtotal: number;
+  discountAmount: number;
   total: number;
   paymentMethod: 'tunai' | 'qris' | 'hutang';
   paymentAmount: string;
@@ -986,11 +1220,29 @@ function Step2View({
           )}
           ItemSeparatorComponent={() => <View style={{ height: 4 }} />}
         />
-        <View style={[styles.totalRow, { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderColor: Colors.border }]}>
-          <ThemedText type="defaultSemiBold">Total Tagihan</ThemedText>
-          <ThemedText type="defaultSemiBold" style={{ fontSize: 18, color: Colors.tint }}>
-            Rp {total.toLocaleString('id-ID')}
-          </ThemedText>
+        <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderColor: Colors.border }}>
+          {discountAmount > 0 ? (
+            <>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                <ThemedText style={{ fontSize: 12, color: Colors.muted }}>Subtotal</ThemedText>
+                <ThemedText style={{ fontSize: 12, color: Colors.muted }}>
+                  Rp {subtotal.toLocaleString('id-ID')}
+                </ThemedText>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                <ThemedText style={{ fontSize: 12, color: Colors.danger, fontWeight: '700' }}>Diskon</ThemedText>
+                <ThemedText style={{ fontSize: 12, color: Colors.danger, fontWeight: '700' }}>
+                  -Rp {discountAmount.toLocaleString('id-ID')}
+                </ThemedText>
+              </View>
+            </>
+          ) : null}
+          <View style={styles.totalRow}>
+            <ThemedText type="defaultSemiBold">Total Tagihan</ThemedText>
+            <ThemedText type="defaultSemiBold" style={{ fontSize: 18, color: Colors.tint }}>
+              Rp {total.toLocaleString('id-ID')}
+            </ThemedText>
+          </View>
         </View>
       </View>
 
@@ -1026,8 +1278,12 @@ function Step2View({
         </View>
 
         {paymentMethod === 'hutang' ? (
-          <View style={{ gap: 10, flex: 1, justifyContent: 'center' }}>
-            <Card padding={14} style={{ backgroundColor: '#fffbeb', borderColor: '#fde68a', borderWidth: 1 }}>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ gap: 8, paddingBottom: 4 }}
+            showsVerticalScrollIndicator={false}
+          >
+            <Card padding={10} style={{ backgroundColor: '#fffbeb', borderColor: '#fde68a', borderWidth: 1 }}>
               <ThemedText style={{ fontSize: 13, fontWeight: '700', color: '#92400e', marginBottom: 2 }}>
                 📋 Transaksi Hutang / Kasbon Pelanggan
               </ThemedText>
@@ -1035,8 +1291,8 @@ function Step2View({
                 Pilih nama pelanggan untuk mencatat piutang toko ke pelanggan tersebut.
               </ThemedText>
 
-              <View style={{ marginTop: 10 }}>
-                <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 6 }}>
+              <View style={{ marginTop: 8 }}>
+                <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 4 }}>
                   Pilih Pelanggan Terdaftar:
                 </ThemedText>
                 {customers.length > 0 ? (
@@ -1078,12 +1334,12 @@ function Step2View({
                 )}
               </View>
 
-              <View style={{ marginTop: 10 }}>
+              <View style={{ marginTop: 8 }}>
                 <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 4 }}>
                   Atau Input Nama Pelanggan Baru:
                 </ThemedText>
                 <TextInput
-                  style={[styles.holdTextInput, { backgroundColor: '#ffffff' }]}
+                  style={[styles.holdTextInput, { backgroundColor: '#ffffff', height: 38, fontSize: 12 }]}
                   placeholder="Ketik nama pelanggan baru..."
                   placeholderTextColor={Colors.placeholder}
                   value={quickCustomerName}
@@ -1096,28 +1352,16 @@ function Step2View({
                 />
               </View>
 
-              <View style={{ marginTop: 10, padding: 8, backgroundColor: '#fef3c7', borderRadius: 8 }}>
+              <View style={{ marginTop: 8, padding: 6, backgroundColor: '#fef3c7', borderRadius: 6 }}>
                 <ThemedText style={{ fontSize: 11, color: '#92400e', fontWeight: '700' }}>
                   Total Tagihan Hutang: Rp {total.toLocaleString('id-ID')}
                 </ThemedText>
-                <ThemedText style={{ fontSize: 10, color: '#78350f', marginTop: 2 }}>
-                  * Kas fisik tidak bertambah. Nilai piutang otomatis masuk ke Manajemen Pelanggan tanpa jatuh tempo.
+                <ThemedText style={{ fontSize: 10, color: '#78350f', marginTop: 1 }}>
+                  * Kas fisik tidak bertambah. Piutang otomatis tercatat ke Manajemen Pelanggan.
                 </ThemedText>
               </View>
             </Card>
-
-            <Button
-              title={
-                canConfirm
-                  ? `Konfirmasi Hutang (Rp ${total.toLocaleString('id-ID')})`
-                  : 'Pilih Pelanggan Terlebih Dahulu'
-              }
-              size="lg"
-              disabled={!canConfirm}
-              style={{ backgroundColor: canConfirm ? '#d97706' : Colors.disabled }}
-              onPress={onConfirm}
-            />
-          </View>
+          </ScrollView>
         ) : paymentMethod === 'tunai' ? (
           <View style={{ gap: 8, flex: 1, justifyContent: 'center' }}>
             <Card padding={12} style={{ backgroundColor: '#faf5ff', borderColor: Colors.tint + '40' }}>
@@ -1178,8 +1422,15 @@ function Step2View({
         )}
 
         <Button
-          title={paymentMethod === 'tunai' ? 'Konfirmasi Pembayaran' : 'Sudah Masuk / Lunas'}
+          title={
+            paymentMethod === 'hutang'
+              ? (canConfirm ? `Konfirmasi Hutang (Rp ${total.toLocaleString('id-ID')})` : 'Pilih Pelanggan Terlebih Dahulu')
+              : paymentMethod === 'tunai'
+              ? 'Konfirmasi Pembayaran'
+              : 'Sudah Masuk / Lunas'
+          }
           disabled={!canConfirm}
+          style={paymentMethod === 'hutang' && canConfirm ? { backgroundColor: '#d97706' } : undefined}
           onPress={onConfirm}
         />
       </View>
@@ -1228,6 +1479,8 @@ function SuccessView({
     paymentAmount: number;
     change: number;
     customerName?: string;
+    subtotalAmount?: number;
+    discountAmount?: number;
   } | null;
   onDone: () => void;
 }) {
@@ -1256,6 +1509,8 @@ function SuccessView({
         paymentMethod: lastTransaction.paymentMethod,
         paymentAmount: lastTransaction.paymentAmount,
         change: lastTransaction.change,
+        subtotalAmount: lastTransaction.subtotalAmount,
+        discountAmount: lastTransaction.discountAmount,
         storeName,
         storeAddress,
         storePhone,
@@ -1341,9 +1596,15 @@ function SuccessView({
                 <View key={idx} style={{ marginBottom: 6 }}>
                   <ThemedText style={styles.receiptItemTitle}>{item.product_name}</ThemedText>
                   <View style={styles.receiptRowBetween}>
-                    <ThemedText style={styles.receiptItemQty}>
-                      {item.quantity} x Rp {item.product_price.toLocaleString('id-ID')}
-                    </ThemedText>
+                    {item.is_weighted === 1 ? (
+                      <ThemedText style={styles.receiptItemQty}>
+                        {item.weight_gram || 0}g @ Rp {(item.price_per_kg || item.product_price).toLocaleString('id-ID')}/kg
+                      </ThemedText>
+                    ) : (
+                      <ThemedText style={styles.receiptItemQty}>
+                        {item.quantity} x Rp {item.product_price.toLocaleString('id-ID')}
+                      </ThemedText>
+                    )}
                     <ThemedText style={styles.receiptItemSubtotal}>
                       Rp {item.subtotal.toLocaleString('id-ID')}
                     </ThemedText>
@@ -1354,6 +1615,23 @@ function SuccessView({
               <View style={styles.receiptDashedLine} />
 
               {/* Rincian Total Pembayaran */}
+              {lastTransaction?.discountAmount && lastTransaction.discountAmount > 0 ? (
+                <>
+                  <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                    <ThemedText style={styles.receiptMetaText}>Subtotal</ThemedText>
+                    <ThemedText style={styles.receiptMetaText}>
+                      Rp {(lastTransaction.subtotalAmount ?? total).toLocaleString('id-ID')}
+                    </ThemedText>
+                  </View>
+                  <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                    <ThemedText style={[styles.receiptMetaText, { color: Colors.danger }]}>Diskon</ThemedText>
+                    <ThemedText style={[styles.receiptMetaText, { color: Colors.danger }]}>
+                      -Rp {lastTransaction.discountAmount.toLocaleString('id-ID')}
+                    </ThemedText>
+                  </View>
+                </>
+              ) : null}
+
               <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
                 <ThemedText style={styles.receiptTotalLabel}>Total Belanja</ThemedText>
                 <ThemedText style={styles.receiptTotalVal}>Rp {total.toLocaleString('id-ID')}</ThemedText>
@@ -1438,8 +1716,9 @@ function ProductCard({
   onPress: () => void;
 }) {
   const isRetail = businessMode === 'retail';
-  const isOutOfStock = isRetail && product.has_stock === 1 && product.stock === 0;
-  const isLowStock = isRetail && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
+  const isWeighted = product.is_weighted === 1;
+  const isOutOfStock = !isWeighted && isRetail && product.has_stock === 1 && product.stock === 0;
+  const isLowStock = !isWeighted && isRetail && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
 
   return (
     <Pressable
@@ -1454,7 +1733,9 @@ function ProductCard({
         <Image source={{ uri: product.image_path }} style={styles.cardImage} />
       ) : (
         <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
-          <ThemedText style={{ color: Colors.muted, fontSize: 18 }}>🖼️</ThemedText>
+          <ThemedText style={{ color: Colors.muted, fontSize: 18 }}>
+            {isWeighted ? '⚖️' : '🖼️'}
+          </ThemedText>
         </View>
       )}
       <ThemedText
@@ -1465,9 +1746,14 @@ function ProductCard({
         {product.name}
       </ThemedText>
       <ThemedText style={{ textAlign: 'center', fontSize: 12, color: Colors.tint, fontWeight: '700' }}>
-        Rp {product.price.toLocaleString('id-ID')}
+        Rp {product.price.toLocaleString('id-ID')} {isWeighted ? '/ kg' : ''}
       </ThemedText>
 
+      {isWeighted && (
+        <View style={styles.stockBadgeWeighted}>
+          <ThemedText style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>⚖️ Timbangan</ThemedText>
+        </View>
+      )}
       {isOutOfStock && (
         <View style={styles.stockBadgeOut}>
           <ThemedText style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>HABIS</ThemedText>
@@ -1497,8 +1783,9 @@ function ProductListItem({
   onPress: () => void;
 }) {
   const isRetail = businessMode === 'retail';
-  const isOutOfStock = isRetail && product.has_stock === 1 && product.stock === 0;
-  const isLowStock = isRetail && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
+  const isWeighted = product.is_weighted === 1;
+  const isOutOfStock = !isWeighted && isRetail && product.has_stock === 1 && product.stock === 0;
+  const isLowStock = !isWeighted && isRetail && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
 
   return (
     <Pressable
@@ -1515,9 +1802,13 @@ function ProductListItem({
         </ThemedText>
         <View style={styles.listItemMeta}>
           <ThemedText style={styles.listItemPrice}>
-            Rp {product.price.toLocaleString('id-ID')}
+            Rp {product.price.toLocaleString('id-ID')} {isWeighted ? '/ kg' : ''}
           </ThemedText>
-          {isRetail && product.has_stock === 1 && (
+          {isWeighted ? (
+            <View style={styles.listStockBadgeWeighted}>
+              <ThemedText style={styles.listStockBadgeWeightedText}>⚖️ Timbangan (kg)</ThemedText>
+            </View>
+          ) : isRetail && product.has_stock === 1 ? (
             <View
               style={[
                 styles.listStockBadge,
@@ -1529,7 +1820,7 @@ function ProductListItem({
                 {isOutOfStock ? 'Habis' : `Stok: ${product.stock}`}
               </ThemedText>
             </View>
-          )}
+          ) : null}
           {product.category_name && (
             <ThemedText style={styles.listItemCategory}>
               • {product.category_name}
@@ -1538,8 +1829,10 @@ function ProductListItem({
         </View>
       </View>
 
-      <View style={styles.listItemAddBtn}>
-        <ThemedText style={styles.listItemAddText}>+ Tambah</ThemedText>
+      <View style={[styles.listItemAddBtn, isWeighted && { backgroundColor: '#0284c7' }]}>
+        <ThemedText style={styles.listItemAddText}>
+          {isWeighted ? '⚖️ Timbang' : '+ Tambah'}
+        </ThemedText>
       </View>
     </Pressable>
   );
@@ -2218,6 +2511,98 @@ const styles = StyleSheet.create({
   pendingDeleteBtnText: {
     fontSize: 12,
     fontWeight: '700',
+    color: '#dc2626',
+  },
+  cartWeightChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginVertical: 1,
+  },
+  cartWeightChipText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#0369a1',
+  },
+  cartWeightEditHint: {
+    fontSize: 9.5,
+    color: '#0284c7',
+    textDecorationLine: 'underline',
+  },
+  cartPriceChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    paddingVertical: 1,
+  },
+  cartPriceChipText: {
+    fontSize: 11,
+    color: '#334155',
+  },
+  cartPriceEditHint: {
+    fontSize: 9.5,
+    color: Colors.tint,
+    fontWeight: '600',
+  },
+  reweightBtn: {
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  reweightBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  stockBadgeWeighted: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  listStockBadgeWeighted: {
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  listStockBadgeWeightedText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0369a1',
+  },
+  discountTriggerBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  discountTriggerBtnActive: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  discountTriggerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  discountTriggerTextActive: {
     color: '#dc2626',
   },
 });

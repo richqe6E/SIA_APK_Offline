@@ -14,6 +14,7 @@ import { Colors } from '@/constants/theme';
 import { usePrinterStore } from '@/stores/printerStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { BluetoothEscposPrinter } from '@vardrz/react-native-bluetooth-escpos-printer';
+import { printReceipt } from '@/services/print';
 
 interface ReceiptPreviewModalProps {
   visible: boolean;
@@ -49,56 +50,42 @@ export function ReceiptPreviewModal({
     }
 
     try {
-      await BluetoothEscposPrinter.printText(`${storeName.toUpperCase()}\n\r`, {
-        align: 'center',
-        fonttype: 1,
+      await printReceipt({
+        transactionId: 1,
+        createdAt: new Date().toISOString(),
+        items: [
+          {
+            product_name: 'Kopi Susu Gula Aren Spesial',
+            quantity: 2,
+            product_price: 18000,
+            subtotal: 36000,
+          },
+          {
+            product_name: 'Telur Ayam Kampung Fresh',
+            quantity: 1,
+            is_weighted: 1,
+            weight_gram: 750,
+            price_per_kg: 32000,
+            product_price: 24000,
+            subtotal: 24000,
+          },
+          {
+            product_name: 'Roti Bakar Cokelat Keju',
+            quantity: 1,
+            product_price: 18000,
+            subtotal: 18000,
+          },
+        ],
+        total: 78000,
+        paymentMethod: 'tunai',
+        paymentAmount: 80000,
+        change: 2000,
+        storeName,
+        storeAddress,
+        storePhone,
+        receiptFooter,
       });
-      if (storeAddress) {
-        await BluetoothEscposPrinter.printText(`${storeAddress}\n\r`, { align: 'center' });
-      }
-      if (storePhone) {
-        await BluetoothEscposPrinter.printText(`Telp/WA: ${storePhone}\n\r`, { align: 'center' });
-      }
-      await BluetoothEscposPrinter.printText('--------------------------------\n\r', {});
-      await BluetoothEscposPrinter.printText('CONTOH TRANSAKSI SAMPLE\n\r', {});
-      await BluetoothEscposPrinter.printColumn(
-        [20, 12],
-        [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-        ['2x Kopi Susu Aren', 'Rp 36.000'],
-        {}
-      );
-      await BluetoothEscposPrinter.printColumn(
-        [20, 12],
-        [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-        ['1x Roti Bakar Cokelat', 'Rp 18.000'],
-        {}
-      );
-      await BluetoothEscposPrinter.printText('--------------------------------\n\r', {});
-      await BluetoothEscposPrinter.printColumn(
-        [16, 16],
-        [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-        ['TOTAL', 'Rp 54.000'],
-        { fonttype: 1 }
-      );
-      await BluetoothEscposPrinter.printColumn(
-        [16, 16],
-        [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-        ['TUNAI', 'Rp 60.000'],
-        {}
-      );
-      await BluetoothEscposPrinter.printColumn(
-        [16, 16],
-        [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-        ['KEMBALI', 'Rp 6.000'],
-        {}
-      );
-      await BluetoothEscposPrinter.printText('================================\n\r', {});
-      if (receiptFooter) {
-        await BluetoothEscposPrinter.printText(`${receiptFooter}\n\r`, { align: 'center' });
-      }
-      await BluetoothEscposPrinter.printAndFeed(3);
-      BluetoothEscposPrinter.cutOnePoint();
-      Alert.alert('Sukses', 'Nota contoh berhasil dicetak ke printer');
+      Alert.alert('Sukses', 'Nota contoh berhasil dicetak ke printer thermal 58mm');
     } catch (e: any) {
       Alert.alert('Gagal Cetak', e?.message || 'Periksa koneksi printer thermal');
     }
@@ -151,26 +138,26 @@ export function ReceiptPreviewModal({
 
               {/* Items */}
               <View style={styles.paperItem}>
-                <ThemedText style={styles.paperItemName}>2x Kopi Susu Gula Aren</ThemedText>
+                <ThemedText style={styles.paperItemName}>Kopi Susu Gula Aren Spesial</ThemedText>
                 <View style={styles.paperRow}>
-                  <ThemedText style={styles.paperSubText}>@18.000</ThemedText>
-                  <ThemedText style={styles.paperText}>36.000</ThemedText>
+                  <ThemedText style={styles.paperSubText}>  2 x Rp 18.000</ThemedText>
+                  <ThemedText style={styles.paperText}>Rp 36.000</ThemedText>
                 </View>
               </View>
 
               <View style={styles.paperItem}>
-                <ThemedText style={styles.paperItemName}>1x Roti Bakar Cokelat Keju</ThemedText>
+                <ThemedText style={styles.paperItemName}>Telur Ayam Kampung Fresh</ThemedText>
                 <View style={styles.paperRow}>
-                  <ThemedText style={styles.paperSubText}>@18.000</ThemedText>
-                  <ThemedText style={styles.paperText}>18.000</ThemedText>
+                  <ThemedText style={styles.paperSubText}>  750g @ Rp 32.000/kg</ThemedText>
+                  <ThemedText style={styles.paperText}>Rp 24.000</ThemedText>
                 </View>
               </View>
 
               <View style={styles.paperItem}>
-                <ThemedText style={styles.paperItemName}>1x Air Mineral 600ml</ThemedText>
+                <ThemedText style={styles.paperItemName}>Roti Bakar Cokelat Keju</ThemedText>
                 <View style={styles.paperRow}>
-                  <ThemedText style={styles.paperSubText}>@5.000</ThemedText>
-                  <ThemedText style={styles.paperText}>5.000</ThemedText>
+                  <ThemedText style={styles.paperSubText}>  1 x Rp 18.000</ThemedText>
+                  <ThemedText style={styles.paperText}>Rp 18.000</ThemedText>
                 </View>
               </View>
 
@@ -179,23 +166,23 @@ export function ReceiptPreviewModal({
               {/* Totals */}
               <View style={styles.paperRow}>
                 <ThemedText style={styles.paperText}>Subtotal</ThemedText>
-                <ThemedText style={styles.paperText}>59.000</ThemedText>
+                <ThemedText style={styles.paperText}>Rp 78.000</ThemedText>
               </View>
               <View style={styles.paperRow}>
                 <ThemedText style={styles.paperText}>Diskon</ThemedText>
-                <ThemedText style={styles.paperText}>0</ThemedText>
+                <ThemedText style={styles.paperText}>Rp 0</ThemedText>
               </View>
               <View style={[styles.paperRow, { marginTop: 4 }]}>
                 <ThemedText style={styles.paperTotalLabel}>TOTAL</ThemedText>
-                <ThemedText style={styles.paperTotalValue}>Rp 59.000</ThemedText>
+                <ThemedText style={styles.paperTotalValue}>Rp 78.000</ThemedText>
               </View>
               <View style={styles.paperRow}>
                 <ThemedText style={styles.paperText}>Tunai</ThemedText>
-                <ThemedText style={styles.paperText}>60.000</ThemedText>
+                <ThemedText style={styles.paperText}>Rp 80.000</ThemedText>
               </View>
               <View style={styles.paperRow}>
                 <ThemedText style={styles.paperText}>Kembalian</ThemedText>
-                <ThemedText style={styles.paperText}>1.000</ThemedText>
+                <ThemedText style={styles.paperText}>Rp 2.000</ThemedText>
               </View>
 
               <ThemedText style={styles.paperDashed}>================================</ThemedText>

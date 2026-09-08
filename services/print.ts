@@ -31,22 +31,49 @@ function formatRupiah(n: number): string {
   return sign + 'Rp ' + Math.abs(Math.round(n)).toLocaleString('id-ID');
 }
 
-function formatItemLine(name: string, qty: number): string {
-  const label = name.length > 22 ? name.slice(0, 20) + '..' : name;
-  const qtyStr = qty.toString() + 'x';
-  return label.padEnd(24) + qtyStr.padStart(6);
-}
+function wrapText(text: string, maxLen: number = W): string[] {
+  if (text.length <= maxLen) return [text];
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = '';
 
-function formatPriceLine(price: number, subtotal: number): string {
-  const left = formatRupiah(price);
-  const right = formatRupiah(subtotal);
-  const gap = W - left.length - right.length;
-  return '  ' + left + ' '.repeat(Math.max(1, gap - 2)) + right;
+  for (const word of words) {
+    if ((currentLine + (currentLine ? ' ' : '') + word).length <= maxLen) {
+      currentLine += (currentLine ? ' ' : '') + word;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      if (word.length > maxLen) {
+        lines.push(word.slice(0, maxLen));
+        currentLine = word.slice(maxLen);
+      } else {
+        currentLine = word;
+      }
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines;
 }
 
 function formatTotal(label: string, value: string): string {
   const gap = W - label.length - value.length;
   return label + ' '.repeat(Math.max(1, gap)) + value;
+}
+
+function formatItemDetail(item: PrintItem): string {
+  let left = '';
+  if (item.is_weighted === 1 || (item.weight_gram && item.weight_gram > 0)) {
+    const wGram = item.weight_gram || 0;
+    const pKg = item.price_per_kg || item.product_price;
+    left = `  ${wGram}g @ ${formatRupiah(pKg)}/kg`;
+  } else {
+    left = `  ${item.quantity} x ${formatRupiah(item.product_price)}`;
+  }
+  const right = formatRupiah(item.subtotal);
+  const gap = W - left.length - right.length;
+  if (gap >= 1) {
+    return left + ' '.repeat(gap) + right;
+  }
+  return left + '\n' + ' '.repeat(Math.max(0, W - right.length)) + right;
 }
 
 function formatLRRow(label: string, value: number, indent: boolean = false): string {
@@ -57,14 +84,17 @@ function formatLRRow(label: string, value: number, indent: boolean = false): str
   return prefix + labelTrimmed.padEnd(available) + valueStr;
 }
 
-interface PrintItem {
+export interface PrintItem {
   product_name: string;
   quantity: number;
   product_price: number;
   subtotal: number;
+  is_weighted?: number;
+  weight_gram?: number;
+  price_per_kg?: number;
 }
 
-interface PrintParams {
+export interface PrintParams {
   transactionId: number;
   createdAt: string;
   items: PrintItem[];
@@ -72,6 +102,8 @@ interface PrintParams {
   paymentMethod: string;
   paymentAmount: number;
   change: number;
+  discountAmount?: number;
+  subtotalAmount?: number;
   storeName?: string;
   storeAddress?: string;
   storePhone?: string;
@@ -97,11 +129,19 @@ export async function printReceipt(params: PrintParams): Promise<void> {
   await BluetoothEscposPrinter.printText(THIN + '\n', {});
 
   for (const item of params.items) {
-    await BluetoothEscposPrinter.printText(formatItemLine(item.product_name, item.quantity) + '\n', {});
-    await BluetoothEscposPrinter.printText(formatPriceLine(item.product_price, item.subtotal) + '\n', {});
+    const wrappedName = wrapText(item.product_name, W);
+    for (const nameLine of wrappedName) {
+      await BluetoothEscposPrinter.printText(nameLine + '\n', {});
+    }
+    await BluetoothEscposPrinter.printText(formatItemDetail(item) + '\n', {});
   }
 
   await BluetoothEscposPrinter.printText(THIN + '\n', {});
+  if (params.discountAmount && params.discountAmount > 0) {
+    const subtotalCalc = params.subtotalAmount || (params.total + params.discountAmount);
+    await BluetoothEscposPrinter.printText(formatTotal('Subtotal', formatRupiah(subtotalCalc)) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Diskon', '-' + formatRupiah(params.discountAmount)) + '\n', {});
+  }
   await BluetoothEscposPrinter.printText(formatTotal('Total', formatRupiah(params.total)) + '\n', {});
   if (params.paymentMethod === 'hutang') {
     await BluetoothEscposPrinter.printText(formatTotal('Metode', 'HUTANG / BON') + '\n', {});
@@ -115,6 +155,75 @@ export async function printReceipt(params: PrintParams): Promise<void> {
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
   await BluetoothEscposPrinter.printText((params.receiptFooter || 'Terima Kasih Atas Kunjungan Anda!') + '\n', {});
+
+  await BluetoothEscposPrinter.printAndFeed(4);
+  BluetoothEscposPrinter.cutOnePoint();
+}
+
+export interface PrintZReportParams {
+  storeName: string;
+  storeAddress?: string;
+  storePhone?: string;
+  cashierName: string;
+  shiftId: number;
+  openedAt: string;
+  closedAt: string;
+  startingCash: number;
+  totalSalesCash: number;
+  totalSalesNonCash: number;
+  totalTransactions: number;
+  expectedCash: number;
+  actualCash: number;
+  difference: number;
+  notes?: string;
+}
+
+export async function printZReport(params: PrintZReportParams): Promise<void> {
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printText(params.storeName + '\n', {});
+  if (params.storeAddress) {
+    await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
+  }
+  if (params.storePhone) {
+    await BluetoothEscposPrinter.printText('Telp: ' + params.storePhone + '\n', {});
+  }
+  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+  await BluetoothEscposPrinter.printText('LAPORAN PENUTUPAN SHIFT\n', {});
+  await BluetoothEscposPrinter.printText('(Z-REPORT KASIR)\n', {});
+  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
+  await BluetoothEscposPrinter.printText(formatTotal('Shift ID', `#${params.shiftId}`) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatTotal('Kasir', params.cashierName) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatTotal('Buka', formatDate(params.openedAt)) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatTotal('Tutup', formatDate(params.closedAt)) + '\n', {});
+  await BluetoothEscposPrinter.printText(THIN + '\n', {});
+
+  await BluetoothEscposPrinter.printText(formatTotal('Modal Kas Awal', formatRupiah(params.startingCash)) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatTotal('Penjualan Tunai (+)', formatRupiah(params.totalSalesCash)) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatTotal('Penjualan QRIS', formatRupiah(params.totalSalesNonCash)) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatTotal('Total Transaksi', `${params.totalTransactions} nota`) + '\n', {});
+  await BluetoothEscposPrinter.printText(THIN + '\n', {});
+
+  await BluetoothEscposPrinter.printText(formatTotal('Kas Diharapkan', formatRupiah(params.expectedCash)) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatTotal('Kas Fisik Dihitung', formatRupiah(params.actualCash)) + '\n', {});
+
+  const diffLabel =
+    params.difference === 0
+      ? 'PAS (Rp 0)'
+      : params.difference > 0
+      ? `LEBIH (+${formatRupiah(params.difference)})`
+      : `KURANG (${formatRupiah(params.difference)})`;
+  await BluetoothEscposPrinter.printText(formatTotal('Selisih Kas', diffLabel) + '\n', {});
+
+  if (params.notes && params.notes.trim()) {
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
+    await BluetoothEscposPrinter.printText(`Catatan: ${params.notes.trim()}\n`, {});
+  }
+
+  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printText('Dicetak Otomatis oleh Sistem\n', {});
 
   await BluetoothEscposPrinter.printAndFeed(4);
   BluetoothEscposPrinter.cutOnePoint();

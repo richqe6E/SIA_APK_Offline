@@ -78,6 +78,8 @@ interface CashState {
   entries: CashEntry[];
   totalCashIn: number;
   totalCashOut: number;
+  salesCashGrossIn: number;
+  salesCashChangeOut: number;
   salesCashTotal: number;
   currentBalance: number;
   loading: boolean;
@@ -108,6 +110,8 @@ export const useCashStore = create<CashState>((set, get) => ({
   entries: [],
   totalCashIn: 0,
   totalCashOut: 0,
+  salesCashGrossIn: 0,
+  salesCashChangeOut: 0,
   salesCashTotal: 0,
   currentBalance: 0,
   loading: false,
@@ -119,13 +123,20 @@ export const useCashStore = create<CashState>((set, get) => ({
         'SELECT * FROM cash_ledger ORDER BY date DESC, id DESC'
       );
 
-      // Hitung kas masuk dari transaksi penjualan tunai
-      const salesRow = await db.getFirstAsync<{ total: number }>(
-        "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai'"
+      // Hitung uang diterima dan uang kembalian dari transaksi penjualan tunai
+      const salesRow = await db.getFirstAsync<{ gross_in: number; gross_change: number; total: number }>(
+        `SELECT 
+           COALESCE(SUM(payment_amount), 0) as gross_in,
+           COALESCE(SUM(change), 0) as gross_change,
+           COALESCE(SUM(total), 0) as total
+         FROM transactions 
+         WHERE payment_method = 'tunai'`
       );
+      const salesGrossIn = salesRow?.gross_in ?? 0;
+      const salesChangeOut = salesRow?.gross_change ?? 0;
       const salesCash = salesRow?.total ?? 0;
 
-      // Hitung manual cash in & out
+      // Hitung manual cash in & out dari buku kas
       let manualIn = 0;
       let manualOut = 0;
       for (const row of rows) {
@@ -136,12 +147,16 @@ export const useCashStore = create<CashState>((set, get) => ({
         }
       }
 
-      const balance = (salesCash + manualIn) - manualOut;
+      const totalIn = manualIn + salesGrossIn;
+      const totalOut = manualOut + salesChangeOut;
+      const balance = totalIn - totalOut;
 
       set({
         entries: rows,
-        totalCashIn: manualIn,
-        totalCashOut: manualOut,
+        totalCashIn: totalIn,
+        totalCashOut: totalOut,
+        salesCashGrossIn: salesGrossIn,
+        salesCashChangeOut: salesChangeOut,
         salesCashTotal: salesCash,
         currentBalance: balance,
         loading: false,

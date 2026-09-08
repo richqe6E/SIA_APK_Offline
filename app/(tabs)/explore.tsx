@@ -33,6 +33,8 @@ import { useCashStore } from '@/stores/cashStore';
 import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { Colors } from '@/constants/theme';
 import { BarcodeScannerModal } from '@/components/barcode-scanner-modal';
+import { ProductSearchModal } from '@/components/product-search-modal';
+import { CustomDatePickerModal } from '@/components/custom-date-picker-modal';
 
 export default function ProductsScreen() {
   useLockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);
@@ -58,13 +60,16 @@ export default function ProductsScreen() {
   const [hasStock, setHasStock] = useState(isRetail);
   const [stock, setStock] = useState('');
   const [barcode, setBarcode] = useState('');
+  const [barcodesList, setBarcodesList] = useState<string[]>(['', '', '']);
+  const [isWeighted, setIsWeighted] = useState(false);
+  const [expiredDate, setExpiredDate] = useState('');
   const [imagePath, setImagePath] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
 
   // Search & Barcode Scanner
   const [searchQuery, setSearchQuery] = useState('');
   const [scannerVisible, setScannerVisible] = useState(false);
-  const [scannerTarget, setScannerTarget] = useState<'filter' | 'form'>('form');
+  const [scannerTarget, setScannerTarget] = useState<string>('form');
 
   // Modal Kategori
   const [catModalVisible, setCatModalVisible] = useState(false);
@@ -73,6 +78,8 @@ export default function ProductsScreen() {
   // Modal Kulakan (Khusus Retail)
   const [purchaseModalVisible, setPurchaseModalVisible] = useState(false);
   const [purchasePaymentType, setPurchasePaymentType] = useState<'tunai' | 'kredit'>('tunai');
+  const [purchasePaymentSource, setPurchasePaymentSource] = useState<'toko' | 'bank'>('toko');
+  const [purchaseDueDate, setPurchaseDueDate] = useState('');
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [purchaseSupplier, setPurchaseSupplier] = useState('');
   const [purchaseProductId, setPurchaseProductId] = useState<number | null>(null);
@@ -81,12 +88,18 @@ export default function ProductsScreen() {
   const [purchasing, setPurchasing] = useState(false);
   const { suppliers, loadSuppliers } = useDebtReceivableStore();
 
-  // Modal Stock Opname (Khusus Retail)
+  // Modal Pembaruan Stok (Khusus Retail)
   const [opnameModalVisible, setOpnameModalVisible] = useState(false);
   const [opnameProductId, setOpnameProductId] = useState<number | null>(null);
   const [opnamePhysicalStock, setOpnamePhysicalStock] = useState('');
   const [opnameNotes, setOpnameNotes] = useState('');
   const [savingOpname, setSavingOpname] = useState(false);
+
+  // Modal Pembantu Pencarian Produk & Pemilih Tanggal
+  const [productSearchVisible, setProductSearchVisible] = useState(false);
+  const [productSearchTarget, setProductSearchTarget] = useState<'purchase' | 'opname' | null>(null);
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [datePickerTarget, setDatePickerTarget] = useState<'expired' | 'purchaseDue' | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -159,6 +172,9 @@ export default function ProductsScreen() {
     setHasStock(isRetail);
     setStock(isRetail ? '10' : '');
     setBarcode('');
+    setBarcodesList(['', '', '']);
+    setIsWeighted(false);
+    setExpiredDate('');
     setImagePath('');
     setSelectedCategoryId(null);
     setModalVisible(true);
@@ -172,6 +188,25 @@ export default function ProductsScreen() {
     setHasStock(product.has_stock === 1);
     setStock(product.has_stock === 1 ? product.stock.toString() : '');
     setBarcode(product.barcode || '');
+
+    let bList: string[] = [];
+    if (product.barcodes) {
+      try {
+        const parsed = JSON.parse(product.barcodes);
+        if (Array.isArray(parsed)) bList = parsed;
+      } catch {
+        bList = product.barcodes.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    if (product.barcode && !bList.includes(product.barcode)) {
+      bList = [product.barcode, ...bList];
+    }
+    while (bList.length < 3) {
+      bList.push('');
+    }
+    setBarcodesList(bList);
+    setIsWeighted(product.is_weighted === 1);
+    setExpiredDate(product.expired_date || '');
     setImagePath(product.image_path);
     setSelectedCategoryId(product.category_id);
     setModalVisible(true);
@@ -192,6 +227,9 @@ export default function ProductsScreen() {
       return;
     }
 
+    const cleanBarcodes = barcodesList.map((b) => b.trim()).filter((b) => b.length > 0);
+    const primaryBarcode = cleanBarcodes[0] || barcode.trim();
+
     try {
       if (editingProduct) {
         await updateProduct(db, editingProduct.id, {
@@ -202,7 +240,10 @@ export default function ProductsScreen() {
           stock: isRetail && hasStock ? stockNum : 0,
           image_path: imagePath,
           category_id: selectedCategoryId,
-          barcode: barcode.trim(),
+          barcode: primaryBarcode,
+          barcodes: cleanBarcodes,
+          is_weighted: isWeighted ? 1 : 0,
+          expired_date: expiredDate.trim() || null,
         });
         Alert.alert('Sukses', `${isRetail ? 'Produk' : 'Menu'} berhasil diperbarui`);
       } else {
@@ -214,7 +255,10 @@ export default function ProductsScreen() {
           stock: isRetail && hasStock ? stockNum : 0,
           image_path: imagePath,
           category_id: selectedCategoryId,
-          barcode: barcode.trim(),
+          barcode: primaryBarcode,
+          barcodes: cleanBarcodes,
+          is_weighted: isWeighted ? 1 : 0,
+          expired_date: expiredDate.trim() || null,
         });
         Alert.alert('Sukses', `${isRetail ? 'Produk' : 'Menu'} berhasil ditambahkan`);
       }
@@ -248,6 +292,8 @@ export default function ProductsScreen() {
     loadLedger(db);
     loadSuppliers(db);
     setPurchasePaymentType('tunai');
+    setPurchasePaymentSource('toko');
+    setPurchaseDueDate('');
     setSelectedSupplierId(null);
     setPurchaseSupplier('');
     setPurchaseProductId(products.length > 0 ? products[0].id : null);
@@ -288,19 +334,28 @@ export default function ProductsScreen() {
         },
       ],
       purchasePaymentType,
-      selectedSupplierId
+      selectedSupplierId,
+      purchaseDueDate || null,
+      purchasePaymentSource
     );
     setPurchasing(false);
 
     if (result.success) {
       setPurchaseModalVisible(false);
       const isKredit = purchasePaymentType === 'kredit';
+      const isBank = purchasePaymentSource === 'bank';
+      let infoBayar = '';
+      if (isKredit) {
+        infoBayar = `Dicatat sebagai HUTANG SUPPLIER (${purchaseSupplier || 'Supplier Umum'})${purchaseDueDate ? `\nJatuh Tempo: ${purchaseDueDate}` : ''}.\nKas fisik toko tidak berkurang.`;
+      } else if (isBank) {
+        infoBayar = `Dibayar via Rekening Bank/Transfer.\nKas fisik laci kasir tidak berkurang.`;
+      } else {
+        infoBayar = `Dicatat ke Buku Kas Keluar (memotong laci kasir).`;
+      }
+
       Alert.alert(
         'Pembelian Berhasil',
-        `Stok '${targetProd.name}' bertambah +${qty} pcs.\n` +
-          (isKredit
-            ? `Total Rp ${(qty * cost).toLocaleString('id-ID')} dicatat sebagai HUTANG SUPPLIER (${purchaseSupplier || 'Supplier Umum'}). Kas fisik toko tidak berkurang.`
-            : `Total Rp ${(qty * cost).toLocaleString('id-ID')} dicatat ke Buku Kas Keluar.`)
+        `Stok '${targetProd.name}' bertambah +${qty} ${targetProd.is_weighted === 1 ? 'kg' : 'pcs'}.\nTotal: Rp ${(qty * cost).toLocaleString('id-ID')}\n${infoBayar}`
       );
     } else {
       Alert.alert('Pembelian Ditolak', result.message || 'Gagal menyimpan transaksi pembelian');
@@ -308,7 +363,7 @@ export default function ProductsScreen() {
   };
 
   // ─────────────────────────────────────────
-  // Handle Stock Opname (Penyesuaian Stok)
+  // Handle Pembaruan Stok (Stock Opname)
   // ─────────────────────────────────────────
   const openOpnameModal = () => {
     const stocked = products.filter((p) => p.has_stock === 1);
@@ -343,10 +398,11 @@ export default function ProductsScreen() {
     if (result.success) {
       setOpnameModalVisible(false);
       const diff = physical - (targetProd.stock ?? 0);
-      const diffText = diff === 0 ? 'Cocok (Tidak ada selisih)' : diff > 0 ? `Surplus (+${diff})` : `Kurang (${diff})`;
-      Alert.alert('Opname Selesai', `Stok fisik '${targetProd.name}' disesuaikan menjadi ${physical} pcs.\nStatus: ${diffText}`);
+      const unitLabel = targetProd.is_weighted === 1 ? 'kg' : 'pcs';
+      const diffText = diff === 0 ? 'Cocok (Tidak ada selisih)' : diff > 0 ? `Surplus (+${diff} ${unitLabel})` : `Kurang (${diff} ${unitLabel})`;
+      Alert.alert('Pembaruan Stok Selesai', `Stok fisik '${targetProd.name}' disesuaikan menjadi ${physical} ${unitLabel}.\nStatus: ${diffText}`);
     } else {
-      Alert.alert('Error', result.message || 'Gagal melakukan opname');
+      Alert.alert('Error', result.message || 'Gagal melakukan pembaruan stok');
     }
   };
 
@@ -394,7 +450,7 @@ export default function ProductsScreen() {
                 onPress={openOpnameModal}
               >
                 <ThemedText style={[styles.retailActionBtnText, { color: '#92400e' }]}>
-                  📝 Opname
+                  📝 Pembaruan Stok
                 </ThemedText>
               </TouchableOpacity>
             </>
@@ -454,7 +510,7 @@ export default function ProductsScreen() {
               ) : (
                 <View style={[styles.thumb, styles.thumbPlaceholder]}>
                   <ThemedText style={{ color: Colors.muted, fontSize: 14 }}>
-                    {isRetail ? '📦' : '☕'}
+                    {item.is_weighted === 1 ? '⚖️' : isRetail ? '📦' : '☕'}
                   </ThemedText>
                 </View>
               )}
@@ -464,6 +520,7 @@ export default function ProductsScreen() {
                 </ThemedText>
                 <ThemedText style={{ color: Colors.tint, fontWeight: '700', fontSize: 13 }}>
                   Rp {item.price.toLocaleString('id-ID')}
+                  {item.is_weighted === 1 ? ' / kg' : ''}
                 </ThemedText>
 
                 {item.barcode ? (
@@ -483,11 +540,21 @@ export default function ProductsScreen() {
                   </ThemedText>
                 )}
 
-                <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 3 }}>
                   {item.category_name && <Badge label={item.category_name} variant="info" />}
+                  {item.is_weighted === 1 && (
+                    <Badge label="⚖️ Timbangan" variant="info" />
+                  )}
+                  {item.expired_date && (
+                    <Badge label={`Exp: ${item.expired_date}`} variant="warning" />
+                  )}
                   {isRetail && item.has_stock === 1 && (
                     <Badge
-                      label={item.stock <= 0 ? 'Stok Habis' : `Stok: ${item.stock} pcs`}
+                      label={
+                        item.stock <= 0
+                          ? 'Stok Habis'
+                          : `Stok: ${item.stock} ${item.is_weighted === 1 ? 'kg' : 'pcs'}`
+                      }
                       variant={item.stock <= 0 ? 'error' : item.stock <= 5 ? 'warning' : 'success'}
                     />
                   )}
@@ -543,41 +610,150 @@ export default function ProductsScreen() {
                 />
               </View>
 
-              {/* Barcode / SKU */}
+              {/* Multi-Barcode / SKU */}
               <View style={styles.inputGroup}>
-                <ThemedText style={styles.label}>Barcode / SKU (Opsional)</ThemedText>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <TextInput
-                    style={[styles.input, { flex: 1 }]}
-                    placeholder="cth: 8991234567890"
-                    placeholderTextColor={Colors.disabled}
-                    value={barcode}
-                    onChangeText={setBarcode}
-                  />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <ThemedText style={styles.label}>Barcode / SKU Produk</ThemedText>
                   <TouchableOpacity
-                    style={styles.scanBtnInline}
-                    onPress={() => {
-                      setScannerTarget('form');
-                      setScannerVisible(true);
-                    }}
+                    onPress={() => setBarcodesList((prev) => [...prev, ''])}
+                    style={styles.addBarcodeSmallBtn}
                   >
-                    <ThemedText style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>
-                      📷 Scan
-                    </ThemedText>
+                    <ThemedText style={styles.addBarcodeSmallText}>+ Tambah Barcode</ThemedText>
                   </TouchableOpacity>
+                </View>
+                <ThemedText style={{ fontSize: 11, color: Colors.muted, marginBottom: 8 }}>
+                  Mendukung multi-barcode (misal kemasan lama & baru). Semua barcode dapat discan di kasir.
+                </ThemedText>
+
+                {barcodesList.map((codeVal, idx) => (
+                  <View key={idx} style={{ flexDirection: 'row', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+                    <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '700', width: 22 }}>
+                      #{idx + 1}
+                    </ThemedText>
+                    <TextInput
+                      style={[styles.input, { flex: 1 }]}
+                      placeholder={`Barcode ke-${idx + 1} (cth: 899...)`}
+                      placeholderTextColor={Colors.disabled}
+                      value={codeVal}
+                      onChangeText={(val) => {
+                        setBarcodesList((prev) => {
+                          const next = [...prev];
+                          next[idx] = val;
+                          return next;
+                        });
+                        if (idx === 0) setBarcode(val);
+                      }}
+                    />
+                    <TouchableOpacity
+                      style={styles.scanBtnInline}
+                      onPress={() => {
+                        setScannerTarget(`barcode_${idx}`);
+                        setScannerVisible(true);
+                      }}
+                    >
+                      <ThemedText style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>
+                        📷 Scan
+                      </ThemedText>
+                    </TouchableOpacity>
+                    {idx >= 3 && (
+                      <TouchableOpacity
+                        style={styles.removeBarcodeBtn}
+                        onPress={() => {
+                          setBarcodesList((prev) => prev.filter((_, i) => i !== idx));
+                        }}
+                      >
+                        <ThemedText style={{ color: Colors.danger, fontSize: 13, fontWeight: '700' }}>✕</ThemedText>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+
+              {/* Opsi Tipe Produk: Biasa vs Timbangan */}
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.label}>Jenis Satuan Produk</ThemedText>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Pressable
+                    style={[
+                      styles.stockToggleBtn,
+                      !isWeighted && styles.stockToggleBtnActive,
+                    ]}
+                    onPress={() => setIsWeighted(false)}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.stockToggleText,
+                        !isWeighted && styles.stockToggleTextActive,
+                      ]}
+                    >
+                      📦 Satuan Biasa (Pcs)
+                    </ThemedText>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.stockToggleBtn,
+                      isWeighted && { backgroundColor: '#e0e7ff', borderColor: '#4f46e5' },
+                    ]}
+                    onPress={() => setIsWeighted(true)}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.stockToggleText,
+                        isWeighted && { color: '#3730a3', fontWeight: '800' },
+                      ]}
+                    >
+                      ⚖️ Produk Timbangan (Gram / Kg)
+                    </ThemedText>
+                  </Pressable>
                 </View>
               </View>
 
               <View style={styles.inputGroup}>
-                <ThemedText style={styles.label}>Harga Jual (Rp)</ThemedText>
+                <ThemedText style={styles.label}>
+                  {isWeighted ? 'Harga Jual per Kg (Rp/kg)' : 'Harga Jual Satuan (Rp)'}
+                </ThemedText>
                 <TextInput
                   style={styles.input}
-                  placeholder="cth: 15000"
+                  placeholder={isWeighted ? 'cth: 40000 (Harga per 1000 gram)' : 'cth: 15000'}
                   placeholderTextColor={Colors.disabled}
                   keyboardType="numeric"
                   value={price}
                   onChangeText={setPrice}
                 />
+              </View>
+
+              {/* Tanggal Kedaluwarsa (Expired Date) Opsional */}
+              <View style={styles.inputGroup}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <ThemedText style={styles.label}>Tanggal Kedaluwarsa / Expired (Opsional)</ThemedText>
+                  {expiredDate ? (
+                    <TouchableOpacity onPress={() => setExpiredDate('')}>
+                      <ThemedText style={{ fontSize: 11, color: Colors.danger, fontWeight: '700' }}>
+                        Hapus Tanggal ✕
+                      </ThemedText>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.dateSelectBtn,
+                    expiredDate ? styles.dateSelectBtnActive : null,
+                  ]}
+                  onPress={() => {
+                    setDatePickerTarget('expired');
+                    setDatePickerVisible(true);
+                  }}
+                >
+                  <ThemedText style={{ fontSize: 16 }}>📅</ThemedText>
+                  <ThemedText
+                    style={[
+                      styles.dateSelectBtnText,
+                      expiredDate ? { color: Colors.tintDark, fontWeight: '700' } : null,
+                    ]}
+                  >
+                    {expiredDate ? `Kedaluwarsa: ${expiredDate}` : 'Pilih Tanggal Kedaluwarsa Produk...'}
+                  </ThemedText>
+                </TouchableOpacity>
               </View>
 
               {/* Khusus Mode Retail: Input HPP & Stok */}
@@ -786,17 +962,123 @@ export default function ProductsScreen() {
                 </View>
               </View>
 
+              {/* Pilihan Sumber Pembayaran jika Tunai */}
+              {purchasePaymentType === 'tunai' && (
+                <View style={styles.inputGroup}>
+                  <ThemedText style={styles.label}>Sumber Kas Pembayaran Tunai</ThemedText>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <Pressable
+                      style={[
+                        styles.sourceToggleBtn,
+                        purchasePaymentSource === 'toko' && styles.sourceToggleBtnActive,
+                      ]}
+                      onPress={() => setPurchasePaymentSource('toko')}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.sourceToggleText,
+                          purchasePaymentSource === 'toko' && styles.sourceToggleTextActive,
+                        ]}
+                      >
+                        🏪 Kas Toko (Laci Kasir)
+                      </ThemedText>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.sourceToggleBtn,
+                        purchasePaymentSource === 'bank' && styles.sourceToggleBtnActive,
+                      ]}
+                      onPress={() => setPurchasePaymentSource('bank')}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.sourceToggleText,
+                          purchasePaymentSource === 'bank' && styles.sourceToggleTextActive,
+                        ]}
+                      >
+                        🏦 Kas Bank (Transfer Rekening)
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+
+              {/* Pilihan Jatuh Tempo jika Kredit */}
+              {purchasePaymentType === 'kredit' && (
+                <View style={styles.inputGroup}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <ThemedText style={styles.label}>Jatuh Tempo Pembayaran (Tempo)</ThemedText>
+                    {purchaseDueDate ? (
+                      <TouchableOpacity onPress={() => setPurchaseDueDate('')}>
+                        <ThemedText style={{ fontSize: 11, color: Colors.danger, fontWeight: '700' }}>Reset ✕</ThemedText>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
+                    {[
+                      { label: '+1 Hari', days: 1 },
+                      { label: '+3 Hari', days: 3 },
+                      { label: '+7 Hari', days: 7 },
+                      { label: '+14 Hari', days: 14 },
+                    ].map((item) => (
+                      <TouchableOpacity
+                        key={item.days}
+                        style={styles.dueChipBtn}
+                        onPress={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() + item.days);
+                          setPurchaseDueDate(d.toISOString().split('T')[0]);
+                        }}
+                      >
+                        <ThemedText style={styles.dueChipText}>{item.label}</ThemedText>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.dateSelectBtn,
+                      purchaseDueDate ? styles.dateSelectBtnActive : null,
+                    ]}
+                    onPress={() => {
+                      setDatePickerTarget('purchaseDue');
+                      setDatePickerVisible(true);
+                    }}
+                  >
+                    <ThemedText style={{ fontSize: 16 }}>📅</ThemedText>
+                    <ThemedText
+                      style={[
+                        styles.dateSelectBtnText,
+                        purchaseDueDate ? { color: Colors.tintDark, fontWeight: '700' } : null,
+                      ]}
+                    >
+                      {purchaseDueDate ? `Jatuh Tempo: ${purchaseDueDate}` : 'Tentukan Tanggal Jatuh Tempo...'}
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {/* Info Box Dinamis Sesuai Metode Bayar */}
               {purchasePaymentType === 'tunai' ? (
-                <View style={styles.cashInfoBox}>
-                  <ThemedText style={{ fontSize: 11, color: '#475569' }}>Saldo Kas Toko Tersedia:</ThemedText>
-                  <ThemedText style={{ fontSize: 18, fontWeight: '800', color: Colors.tintDark, marginTop: 2 }}>
-                    Rp {currentBalance.toLocaleString('id-ID')}
-                  </ThemedText>
-                  <ThemedText style={{ fontSize: 10, color: Colors.muted, marginTop: 2 }}>
-                    * Pembelian tunai akan memotong saldo kas fisik toko
-                  </ThemedText>
-                </View>
+                purchasePaymentSource === 'toko' ? (
+                  <View style={styles.cashInfoBox}>
+                    <ThemedText style={{ fontSize: 11, color: '#475569' }}>Saldo Kas Toko Tersedia:</ThemedText>
+                    <ThemedText style={{ fontSize: 18, fontWeight: '800', color: Colors.tintDark, marginTop: 2 }}>
+                      Rp {currentBalance.toLocaleString('id-ID')}
+                    </ThemedText>
+                    <ThemedText style={{ fontSize: 10, color: Colors.muted, marginTop: 2 }}>
+                      * Pembelian tunai kas toko akan memotong saldo kas fisik di laci kasir
+                    </ThemedText>
+                  </View>
+                ) : (
+                  <View style={[styles.cashInfoBox, { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' }]}>
+                    <ThemedText style={{ fontSize: 11, color: '#15803d', fontWeight: '700' }}>
+                      🏦 Pembayaran Kas Bank / Rekening
+                    </ThemedText>
+                    <ThemedText style={{ fontSize: 10, color: '#166534', marginTop: 2 }}>
+                      * Saldo kas fisik di laci kasir TIDAK akan berkurang.
+                    </ThemedText>
+                  </View>
+                )
               ) : (
                 <View style={[styles.cashInfoBox, { backgroundColor: '#fffbeb', borderColor: '#fde68a' }]}>
                   <ThemedText style={{ fontSize: 11, color: '#92400e', fontWeight: '700' }}>
@@ -808,32 +1090,34 @@ export default function ProductsScreen() {
                 </View>
               )}
 
+              {/* Pemilihan Produk Cepat */}
               <View style={styles.inputGroup}>
                 <ThemedText style={styles.label}>Pilih Produk yang Dibeli</ThemedText>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-                  {products.map((p) => (
-                    <Pressable
-                      key={p.id}
-                      style={[
-                        styles.categoryOption,
-                        purchaseProductId === p.id && styles.categoryOptionActive,
-                      ]}
+                {(() => {
+                  const targetProd = products.find((p) => p.id === purchaseProductId);
+                  return (
+                    <TouchableOpacity
+                      style={styles.selectProductBtn}
                       onPress={() => {
-                        setPurchaseProductId(p.id);
-                        if (p.cost_price > 0) setPurchaseCost(p.cost_price.toString());
+                        setProductSearchTarget('purchase');
+                        setProductSearchVisible(true);
                       }}
+                      activeOpacity={0.8}
                     >
-                      <ThemedText
-                        style={[
-                          styles.categoryOptionText,
-                          purchaseProductId === p.id && styles.categoryOptionTextActive,
-                        ]}
-                      >
-                        {p.name} (Stok: {p.stock})
-                      </ThemedText>
-                    </Pressable>
-                  ))}
-                </ScrollView>
+                      <View style={{ flex: 1 }}>
+                        <ThemedText style={styles.selectProductSub}>Produk Terpilih:</ThemedText>
+                        <ThemedText style={styles.selectProductTitle} numberOfLines={1}>
+                          {targetProd
+                            ? `${targetProd.name} (Stok: ${targetProd.stock} ${targetProd.is_weighted === 1 ? 'kg' : 'pcs'})`
+                            : 'Ketuk untuk Cari & Pilih Produk...'}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.selectProductBadge}>
+                        <ThemedText style={styles.selectProductBadgeText}>Cari 🔍</ThemedText>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })()}
               </View>
 
               {/* Pemilihan Nama Supplier */}
@@ -962,13 +1246,13 @@ export default function ProductsScreen() {
       </Modal>
 
       {/* ───────────────────────────────────────── */}
-      {/* MODAL STOCK OPNAME (KHUSUS RETAIL)        */}
+      {/* MODAL PEMBARUAN STOK (KHUSUS RETAIL)      */}
       {/* ───────────────────────────────────────── */}
       <Modal visible={opnameModalVisible} transparent animationType="fade">
         <ThemedView style={styles.modalOverlay}>
           <Card style={styles.modalContent} padding={22}>
             <View style={styles.modalHeader}>
-              <ThemedText type="subtitle">📝 Audit Stock Opname</ThemedText>
+              <ThemedText type="subtitle">📝 Pembaruan Stok Fisik</ThemedText>
               <Pressable onPress={() => setOpnameModalVisible(false)} style={styles.closeBtn}>
                 <ThemedText style={{ fontSize: 18, color: Colors.muted }}>✕</ThemedText>
               </Pressable>
@@ -976,30 +1260,27 @@ export default function ProductsScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false}>
               <View style={styles.inputGroup}>
-                <ThemedText style={styles.label}>Pilih Produk yang Di-Audit</ThemedText>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-                  {products
-                    .filter((p) => p.has_stock === 1)
-                    .map((p) => (
-                      <Pressable
-                        key={p.id}
-                        style={[
-                          styles.categoryOption,
-                          opnameProductId === p.id && styles.categoryOptionActive,
-                        ]}
-                        onPress={() => setOpnameProductId(p.id)}
-                      >
-                        <ThemedText
-                          style={[
-                            styles.categoryOptionText,
-                            opnameProductId === p.id && styles.categoryOptionTextActive,
-                          ]}
-                        >
-                          {p.name} (Stok: {p.stock})
-                        </ThemedText>
-                      </Pressable>
-                    ))}
-                </ScrollView>
+                <ThemedText style={styles.label}>Pilih Produk yang Diperbarui</ThemedText>
+                <TouchableOpacity
+                  style={styles.selectProductBtn}
+                  onPress={() => {
+                    setProductSearchTarget('opname');
+                    setProductSearchVisible(true);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flex: 1 }}>
+                    <ThemedText style={styles.selectProductSub}>Produk Terpilih:</ThemedText>
+                    <ThemedText style={styles.selectProductTitle} numberOfLines={1}>
+                      {selectedOpnameProd
+                        ? `${selectedOpnameProd.name} (Stok Sistem: ${selectedOpnameProd.stock} ${selectedOpnameProd.is_weighted === 1 ? 'kg' : 'pcs'})`
+                        : 'Ketuk untuk Cari & Pilih Produk...'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.selectProductBadge}>
+                    <ThemedText style={styles.selectProductBadgeText}>Cari 🔍</ThemedText>
+                  </View>
+                </TouchableOpacity>
               </View>
 
               {selectedOpnameProd && (
@@ -1008,16 +1289,18 @@ export default function ProductsScreen() {
                     Stok Tercatat di Sistem Saat Ini:
                   </ThemedText>
                   <ThemedText style={{ fontSize: 18, fontWeight: '800', color: Colors.tintDark, marginTop: 2 }}>
-                    {selectedOpnameProd.stock ?? 0} pcs
+                    {selectedOpnameProd.stock ?? 0} {selectedOpnameProd.is_weighted === 1 ? 'kg' : 'pcs'}
                   </ThemedText>
                 </View>
               )}
 
               <View style={styles.inputGroup}>
-                <ThemedText style={styles.label}>Jumlah Hitungan Fisik di Toko (Pcs)</ThemedText>
+                <ThemedText style={styles.label}>
+                  Jumlah Hitungan Fisik Riil ({selectedOpnameProd?.is_weighted === 1 ? 'Kg' : 'Pcs'})
+                </ThemedText>
                 <TextInput
                   style={styles.input}
-                  placeholder="Hitung barang fisik di rak/gudang"
+                  placeholder={`Hitung stok fisik di rak/gudang (${selectedOpnameProd?.is_weighted === 1 ? 'kg' : 'pcs'})`}
                   placeholderTextColor={Colors.disabled}
                   keyboardType="numeric"
                   value={opnamePhysicalStock}
@@ -1044,7 +1327,7 @@ export default function ProductsScreen() {
                   onPress={() => setOpnameModalVisible(false)}
                 />
                 <Button
-                  title={savingOpname ? 'Menyimpan...' : 'Sesuaikan Stok'}
+                  title={savingOpname ? 'Menyimpan...' : 'Sesuaikan Stok Fisik'}
                   style={{ flex: 1 }}
                   onPress={handleSaveOpname}
                   disabled={savingOpname}
@@ -1116,13 +1399,71 @@ export default function ProductsScreen() {
         visible={scannerVisible}
         onClose={() => setScannerVisible(false)}
         onScanned={(code) => {
-          if (scannerTarget === 'form') {
-            setBarcode(code);
-          } else {
+          if (scannerTarget === 'filter') {
             setSearchQuery(code);
+          } else if (scannerTarget.startsWith('barcode_')) {
+            const idx = parseInt(scannerTarget.replace('barcode_', ''), 10);
+            setBarcodesList((prev) => {
+              const next = [...prev];
+              next[idx] = code;
+              return next;
+            });
+            if (idx === 0) setBarcode(code);
+          } else {
+            setBarcode(code);
+            setBarcodesList((prev) => {
+              const next = [...prev];
+              next[0] = code;
+              return next;
+            });
           }
+          setScannerVisible(false);
         }}
-        title={scannerTarget === 'form' ? 'Pindai Barcode Produk' : 'Cari Produk via Barcode'}
+        title={scannerTarget === 'filter' ? 'Cari Produk via Barcode' : 'Pindai Barcode Produk'}
+      />
+
+      {/* Modal Pencarian Cepat Produk (Pembaruan Stok & Pembelian) */}
+      <ProductSearchModal
+        visible={productSearchVisible}
+        onClose={() => {
+          setProductSearchVisible(false);
+          setProductSearchTarget(null);
+        }}
+        products={products}
+        hasStockOnly={productSearchTarget === 'opname'}
+        title={productSearchTarget === 'opname' ? 'Pilih Produk Pembaruan Stok' : 'Pilih Produk Pembelian Stok'}
+        subtitle={productSearchTarget === 'opname' ? 'Pilih produk ber-stok untuk disesuaikan' : 'Pilih produk kulakan dari katalog'}
+        onSelectProduct={(p) => {
+          if (productSearchTarget === 'purchase') {
+            setPurchaseProductId(p.id);
+            if (p.cost_price > 0) setPurchaseCost(p.cost_price.toString());
+          } else if (productSearchTarget === 'opname') {
+            setOpnameProductId(p.id);
+          }
+          setProductSearchVisible(false);
+          setProductSearchTarget(null);
+        }}
+      />
+
+      {/* Modal Pemilih Tanggal (Expired Date & Due Date) */}
+      <CustomDatePickerModal
+        visible={datePickerVisible}
+        onClose={() => {
+          setDatePickerVisible(false);
+          setDatePickerTarget(null);
+        }}
+        title={datePickerTarget === 'expired' ? 'Pilih Tanggal Kedaluwarsa' : 'Pilih Tanggal Jatuh Tempo'}
+        initialDate={datePickerTarget === 'expired' ? expiredDate : purchaseDueDate}
+        mode={datePickerTarget === 'expired' ? 'expired' : 'due_date'}
+        onSelectDate={(dStr) => {
+          if (datePickerTarget === 'expired') {
+            setExpiredDate(dStr);
+          } else if (datePickerTarget === 'purchaseDue') {
+            setPurchaseDueDate(dStr);
+          }
+          setDatePickerVisible(false);
+          setDatePickerTarget(null);
+        }}
       />
     </ThemedView>
   );
@@ -1343,5 +1684,108 @@ const styles = StyleSheet.create({
   paymentTypeToggleTextActive: {
     color: Colors.tintDark,
     fontWeight: '700',
+  },
+  selectProductBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    padding: 12,
+  },
+  selectProductSub: {
+    fontSize: 10,
+    color: '#64748b',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  selectProductTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1e293b',
+    marginTop: 2,
+  },
+  selectProductBadge: {
+    backgroundColor: '#ede9fe',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  selectProductBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.tintDark,
+  },
+  dateSelectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    padding: 12,
+  },
+  dateSelectBtnActive: {
+    backgroundColor: '#f5f3ff',
+    borderColor: '#c4b5fd',
+  },
+  dateSelectBtnText: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  addBarcodeSmallBtn: {
+    backgroundColor: '#ede9fe',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  addBarcodeSmallText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.tintDark,
+  },
+  removeBarcodeBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#fee2e2',
+  },
+  sourceToggleBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+  },
+  sourceToggleBtnActive: {
+    backgroundColor: '#f5f3ff',
+    borderColor: Colors.tint,
+  },
+  sourceToggleText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  sourceToggleTextActive: {
+    color: Colors.tintDark,
+    fontWeight: '700',
+  },
+  dueChipBtn: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  dueChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
   },
 });

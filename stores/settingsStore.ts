@@ -4,6 +4,7 @@ import type { SQLiteDatabase } from '@/services/database';
 export type BusinessMode = 'retail' | 'kuliner';
 export type ViewMode = 'list' | 'grid';
 export type AppOrientation = 'portrait' | 'landscape';
+export type UserRole = 'kasir' | 'pemilik';
 
 interface SettingsState {
   storeName: string;
@@ -17,6 +18,7 @@ interface SettingsState {
   receiptFooter: string;
   qrisImagePath: string;
   appOrientation: AppOrientation;
+  currentUserRole: UserRole | null;
   loading: boolean;
 
   loadSettings: (db: SQLiteDatabase) => Promise<void>;
@@ -41,6 +43,9 @@ interface SettingsState {
     mode?: BusinessMode
   ) => Promise<void>;
   verifyPin: (pin: string) => boolean;
+  loginAsKasir: () => void;
+  loginAsPemilik: (pin: string) => boolean;
+  logoutRole: () => void;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -55,6 +60,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   receiptFooter: 'Terima kasih atas kunjungan Anda!',
   qrisImagePath: '',
   appOrientation: 'portrait',
+  currentUserRole: null,
   loading: false,
 
   loadSettings: async (db) => {
@@ -178,5 +184,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   verifyPin: (pin) => {
     const currentPin = get().adminPin || '123456';
     return pin.trim() === currentPin.trim();
+  },
+
+  loginAsKasir: () => {
+    set({ currentUserRole: 'kasir' });
+  },
+
+  loginAsPemilik: (pin: string) => {
+    if (get().verifyPin(pin)) {
+      set({ currentUserRole: 'pemilik' });
+      return true;
+    }
+    return false;
+  },
+
+  logoutRole: () => {
+    set({ currentUserRole: null });
   },
 }));

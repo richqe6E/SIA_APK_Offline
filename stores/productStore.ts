@@ -9,6 +9,9 @@ export interface Product {
   has_stock: number;   // 0 = tidak ber-stok, 1 = ber-stok
   stock: number;
   barcode: string;
+  barcodes?: string;   // JSON array string of additional barcodes
+  is_weighted: number; // 0 = Pcs biasa, 1 = timbangan (gram/kg)
+  expired_date: string | null;
   image_path: string;
   category_id: number | null;
   category_name: string | null;
@@ -27,6 +30,9 @@ interface ProductState {
     has_stock?: boolean;
     stock?: number;
     barcode?: string;
+    barcodes?: string[] | string;
+    is_weighted?: boolean | number;
+    expired_date?: string | null;
     image_path?: string;
     category_id?: number | null;
   }) => Promise<void>;
@@ -37,11 +43,15 @@ interface ProductState {
     has_stock?: boolean;
     stock?: number;
     barcode?: string;
+    barcodes?: string[] | string;
+    is_weighted?: boolean | number;
+    expired_date?: string | null;
     image_path?: string;
     category_id?: number | null;
   }) => Promise<void>;
   deleteProduct: (db: SQLiteDatabase, id: number) => Promise<void>;
   adjustStock: (db: SQLiteDatabase, productId: number, delta: number) => Promise<void>;
+  findProductByBarcode: (code: string) => Product | undefined;
 }
 
 export const useProductStore = create<ProductState>((set, get) => ({
@@ -65,14 +75,23 @@ export const useProductStore = create<ProductState>((set, get) => ({
   },
 
   addProduct: async (db, product) => {
+    const barcodesStr = Array.isArray(product.barcodes)
+      ? JSON.stringify(product.barcodes.filter((b) => b.trim().length > 0))
+      : (product.barcodes ?? '');
+
+    const isWeightedInt = product.is_weighted ? 1 : 0;
+
     await db.runAsync(
-      'INSERT INTO products (name, price, cost_price, has_stock, stock, barcode, image_path, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO products (name, price, cost_price, has_stock, stock, barcode, barcodes, is_weighted, expired_date, image_path, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       product.name,
       product.price,
       product.cost_price ?? 0,
       product.has_stock ? 1 : 0,
       product.stock ?? 0,
       product.barcode ?? '',
+      barcodesStr,
+      isWeightedInt,
+      product.expired_date ?? null,
       product.image_path ?? '',
       product.category_id ?? null
     );
@@ -89,6 +108,21 @@ export const useProductStore = create<ProductState>((set, get) => ({
     if (product.has_stock !== undefined) { fields.push('has_stock = ?'); values.push(product.has_stock ? 1 : 0); }
     if (product.stock !== undefined) { fields.push('stock = ?'); values.push(product.stock); }
     if (product.barcode !== undefined) { fields.push('barcode = ?'); values.push(product.barcode); }
+    if (product.barcodes !== undefined) {
+      const barcodesStr = Array.isArray(product.barcodes)
+        ? JSON.stringify(product.barcodes.filter((b) => b.trim().length > 0))
+        : product.barcodes;
+      fields.push('barcodes = ?');
+      values.push(barcodesStr);
+    }
+    if (product.is_weighted !== undefined) {
+      fields.push('is_weighted = ?');
+      values.push(product.is_weighted ? 1 : 0);
+    }
+    if (product.expired_date !== undefined) {
+      fields.push('expired_date = ?');
+      values.push(product.expired_date || null);
+    }
     if (product.image_path !== undefined) { fields.push('image_path = ?'); values.push(product.image_path); }
     if (product.category_id !== undefined) { fields.push('category_id = ?'); values.push(product.category_id); }
 
@@ -109,8 +143,6 @@ export const useProductStore = create<ProductState>((set, get) => ({
     await get().loadProducts(db);
   },
 
-  // Kurangi/tambah stok — hanya untuk produk has_stock=1
-  // Tidak akan error / memblokir jika stok sudah habis
   adjustStock: async (db, productId, delta) => {
     await db.runAsync(
       `UPDATE products
@@ -120,5 +152,22 @@ export const useProductStore = create<ProductState>((set, get) => ({
       productId
     );
     await get().loadProducts(db);
+  },
+
+  findProductByBarcode: (code: string) => {
+    const cleanCode = code.trim();
+    if (!cleanCode) return undefined;
+    return get().products.find((p) => {
+      if (p.barcode && p.barcode.trim() === cleanCode) return true;
+      if (p.barcodes) {
+        try {
+          const list: string[] = JSON.parse(p.barcodes);
+          if (Array.isArray(list) && list.some((b) => b.trim() === cleanCode)) return true;
+        } catch {
+          if (p.barcodes.includes(cleanCode)) return true;
+        }
+      }
+      return false;
+    });
   },
 }));
