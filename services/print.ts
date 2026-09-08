@@ -315,4 +315,99 @@ export async function printLaporanLabaRugi(params: {
   BluetoothEscposPrinter.cutOnePoint();
 }
 
+export async function printBankDepositReceipt(params: {
+  storeName: string;
+  depositAmount: number;
+  remainingCash: number;
+  bankTarget: string;
+  notes?: string;
+  cashierName?: string;
+  date?: Date;
+}): Promise<void> {
+  const {
+    storeName,
+    depositAmount,
+    remainingCash,
+    bankTarget,
+    notes,
+    cashierName = 'Kasir',
+    date = new Date(),
+  } = params;
+
+  const dateStr = date.toLocaleDateString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+  const timeStr = date.toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printText(storeName.toUpperCase() + '\n', {});
+  await BluetoothEscposPrinter.printText('BUKTI SETORAN KAS LACI\n', {});
+  await BluetoothEscposPrinter.printText(`${dateStr} ${timeStr}\n`, {});
+  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
+  await BluetoothEscposPrinter.printColumn(
+    [14, 18],
+    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+    ['Petugas/Kasir', cashierName],
+    {}
+  );
+  await BluetoothEscposPrinter.printColumn(
+    [14, 18],
+    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+    ['Tujuan Setor', bankTarget],
+    {}
+  );
+
+  if (notes) {
+    await BluetoothEscposPrinter.printColumn(
+      [14, 18],
+      [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+      ['Keterangan', notes],
+      {}
+    );
+  }
+
+  await BluetoothEscposPrinter.printText(THIN + '\n', {});
+  await BluetoothEscposPrinter.printColumn(
+    [14, 18],
+    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+    ['NOMINAL SETOR', 'Rp ' + depositAmount.toLocaleString('id-ID')],
+    {}
+  );
+  await BluetoothEscposPrinter.printColumn(
+    [14, 18],
+    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+    ['Sisa Kas Laci', 'Rp ' + remainingCash.toLocaleString('id-ID')],
+    {}
+  );
+  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printText('Tanda Tangan Serah Terima:\n\n\n\n', {});
+  await BluetoothEscposPrinter.printColumn(
+    [16, 16],
+    [BluetoothEscposPrinter.ALIGN.CENTER, BluetoothEscposPrinter.ALIGN.CENTER],
+    ['( ____________ )', '( ____________ )'],
+    {}
+  );
+  await BluetoothEscposPrinter.printColumn(
+    [16, 16],
+    [BluetoothEscposPrinter.ALIGN.CENTER, BluetoothEscposPrinter.ALIGN.CENTER],
+    ['Penyetor / Kasir', 'Penerima / Owner'],
+    {}
+  );
+
+  await BluetoothEscposPrinter.printText('\nSimpan bukti ini sebagai arsip mutasi kas.\n', {});
+  await BluetoothEscposPrinter.printAndFeed(4);
+  BluetoothEscposPrinter.cutOnePoint();
+}
+
+
 

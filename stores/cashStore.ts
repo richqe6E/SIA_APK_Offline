@@ -67,6 +67,7 @@ export const CASH_CATEGORY_MAP: Record<string, string> = {
   perawatan: 'Perawatan & Servis Alat',
   transportasi: 'Transportasi & Logistik',
   'lain-lain': 'Beban Operasional Lain',
+  setor_bank: 'Setoran Kas Laci ke Bank',
   // Legacy aliases
   gaji: 'Gaji Karyawan',
   sewa: 'Sewa Tempat / Kios',
@@ -81,6 +82,7 @@ interface CashState {
   salesCashGrossIn: number;
   salesCashChangeOut: number;
   salesCashTotal: number;
+  totalBankDeposited: number;
   currentBalance: number;
   loading: boolean;
 
@@ -91,6 +93,13 @@ interface CashState {
     category: string,
     description: string,
     amount: number,
+    date?: string
+  ) => Promise<void>;
+  depositToBank: (
+    db: SQLiteDatabase,
+    amount: number,
+    bankName: string,
+    notes?: string,
     date?: string
   ) => Promise<void>;
   updateEntry: (
@@ -113,6 +122,7 @@ export const useCashStore = create<CashState>((set, get) => ({
   salesCashGrossIn: 0,
   salesCashChangeOut: 0,
   salesCashTotal: 0,
+  totalBankDeposited: 0,
   currentBalance: 0,
   loading: false,
 
@@ -139,11 +149,15 @@ export const useCashStore = create<CashState>((set, get) => ({
       // Hitung manual cash in & out dari buku kas
       let manualIn = 0;
       let manualOut = 0;
+      let bankDeposited = 0;
       for (const row of rows) {
         if (row.type === 'in') {
           manualIn += row.amount;
         } else {
           manualOut += row.amount;
+          if (row.category === 'setor_bank') {
+            bankDeposited += row.amount;
+          }
         }
       }
 
@@ -158,6 +172,7 @@ export const useCashStore = create<CashState>((set, get) => ({
         salesCashGrossIn: salesGrossIn,
         salesCashChangeOut: salesChangeOut,
         salesCashTotal: salesCash,
+        totalBankDeposited: bankDeposited,
         currentBalance: balance,
         loading: false,
       });
@@ -178,6 +193,13 @@ export const useCashStore = create<CashState>((set, get) => ({
       today
     );
     await get().loadLedger(db);
+  },
+
+  depositToBank: async (db, amount, bankName, notes, date) => {
+    const cleanBank = bankName.trim() || 'Bank';
+    const cleanNotes = notes?.trim() ? ` - ${notes.trim()}` : '';
+    const desc = `Setoran Kas Laci ke ${cleanBank}${cleanNotes}`;
+    await get().addEntry(db, 'out', 'setor_bank', desc, amount, date);
   },
 
   updateEntry: async (db, id, type, category, description, amount, date) => {

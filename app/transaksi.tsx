@@ -35,6 +35,7 @@ import { DiscountModal } from '@/components/discount-modal';
 import { QrisDisplayModal } from '@/components/qris-display-modal';
 import { WeightedProductModal } from '@/components/weighted-product-modal';
 import { EditCartPriceModal } from '@/components/edit-cart-price-modal';
+import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
 
 export default function TransactionScreen() {
   const router = useRouter();
@@ -898,6 +899,7 @@ function Step1View({
             )}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <RealtimeClockBadge compact />
             {pendingCount > 0 && (
               <TouchableOpacity
                 style={styles.pendingListBtn}
@@ -1200,9 +1202,12 @@ function Step2View({
   return (
     <>
       <View style={styles.colSummary}>
-        <Pressable onPress={onBack} style={styles.backRow}>
-          <ThemedText style={{ color: Colors.tint, fontWeight: '600' }}>← Kembali</ThemedText>
-        </Pressable>
+        <View style={styles.step2TopRow}>
+          <Pressable onPress={onBack} hitSlop={6}>
+            <ThemedText style={{ color: Colors.tint, fontWeight: '600' }}>← Kembali</ThemedText>
+          </Pressable>
+          <RealtimeClockBadge compact />
+        </View>
         <ThemedText type="title" style={{ fontSize: 16, marginBottom: 8 }}>
           Ringkasan Pesanan
         </ThemedText>
@@ -2123,6 +2128,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   backRow: { marginBottom: 12 },
+  step2TopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
 
   paymentMethods: { flexDirection: 'row', gap: 8 },
   paymentBtn: {

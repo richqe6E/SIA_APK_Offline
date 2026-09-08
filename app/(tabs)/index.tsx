@@ -1,5 +1,6 @@
 import { CashShiftModal } from '@/components/cash-shift-modal';
 import { OnboardingModal } from '@/components/onboarding-modal';
+import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Card } from '@/components/ui/card';
@@ -165,7 +166,7 @@ export default function DashboardScreen() {
         : 0;
   const isUp = percentChange >= 0;
   const { width } = useWindowDimensions();
-  const isTabletOrLandscape = width >= 720;
+  const isTabletOrLandscape = width >= 720 || appOrientation === 'landscape';
   const { currentUserRole, logoutRole } = useSettingsStore();
 
   return (
@@ -179,7 +180,7 @@ export default function DashboardScreen() {
       <OnboardingModal visible={!isOnboarded} onComplete={loadSummary} />
 
       {/* Brand & Store Header Card */}
-      <View style={styles.topHeaderCard}>
+      <View style={[styles.topHeaderCard, !isTabletOrLandscape && styles.topHeaderCardPortrait]}>
         <View style={styles.headerLeft}>
           <ThemedText style={styles.karyaPolnesText}>
             POS AZIZAH
@@ -201,67 +202,126 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Action Header: Role Switcher & Orientation */}
-        <View style={styles.headerRightActions}>
-          {/* Tombol Shift Kasir */}
-          <TouchableOpacity
-            style={[
-              styles.shiftBadgeBtn,
-              currentShift ? styles.shiftBadgeActive : styles.shiftBadgeInactive,
-            ]}
-            onPress={() => setShiftModalVisible(true)}
-            activeOpacity={0.8}
-          >
-            <View style={[styles.shiftDot, currentShift ? styles.shiftDotActive : styles.shiftDotInactive]} />
-            <View>
-              <ThemedText style={styles.shiftBadgeRole}>
-                {currentShift ? 'Shift Aktif' : 'Shift Kasir'}
-              </ThemedText>
-              <ThemedText style={styles.shiftBadgeAction} numberOfLines={1}>
-                {currentShift ? currentShift.cashier_name : 'Buka Shift ›'}
-              </ThemedText>
+        {isTabletOrLandscape ? (
+          <>
+            {/* Jam & Tanggal Realtime (Landscape: Format Lengkap) */}
+            <View style={{ marginHorizontal: 8 }}>
+              <RealtimeClockBadge />
             </View>
-          </TouchableOpacity>
 
-          {/* Tombol Peran Kasir / Pemilik */}
-          <TouchableOpacity
-            style={styles.roleBadgeBtn}
-            onPress={logoutRole}
-            activeOpacity={0.8}
-          >
-            <ThemedText style={styles.roleBadgeIcon}>
-              {currentUserRole === 'pemilik' ? '👑' : '🛒'}
-            </ThemedText>
-            <View>
-              <ThemedText style={styles.roleBadgeRole}>
-                {currentUserRole === 'pemilik' ? 'Pemilik' : 'Kasir'}
-              </ThemedText>
-              <ThemedText style={styles.roleBadgeAction}>Ganti ›</ThemedText>
+            {/* Action Header: Role Switcher & Orientation */}
+            <View style={styles.headerRightActions}>
+              {/* Tombol Shift Kasir */}
+              <TouchableOpacity
+                style={[
+                  styles.shiftBadgeBtn,
+                  currentShift ? styles.shiftBadgeActive : styles.shiftBadgeInactive,
+                ]}
+                onPress={() => setShiftModalVisible(true)}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.shiftDot, currentShift ? styles.shiftDotActive : styles.shiftDotInactive]} />
+                <View>
+                  <ThemedText style={styles.shiftBadgeRole}>
+                    {currentShift ? 'Shift Aktif' : 'Shift Kasir'}
+                  </ThemedText>
+                  <ThemedText style={styles.shiftBadgeAction} numberOfLines={1}>
+                    {currentShift ? currentShift.cashier_name : 'Buka Shift ›'}
+                  </ThemedText>
+                </View>
+              </TouchableOpacity>
+
+              {/* Tombol Peran Kasir / Pemilik */}
+              <TouchableOpacity
+                style={styles.roleBadgeBtn}
+                onPress={logoutRole}
+                activeOpacity={0.8}
+              >
+                <ThemedText style={styles.roleBadgeIcon}>
+                  {currentUserRole === 'pemilik' ? '👑' : '🛒'}
+                </ThemedText>
+                <View>
+                  <ThemedText style={styles.roleBadgeRole}>
+                    {currentUserRole === 'pemilik' ? 'Pemilik' : 'Kasir'}
+                  </ThemedText>
+                  <ThemedText style={styles.roleBadgeAction}>Ganti ›</ThemedText>
+                </View>
+              </TouchableOpacity>
+
+              {/* Tombol Cepat Orientasi Layar (Portrait / Landscape) */}
+              <TouchableOpacity
+                style={[
+                  styles.orientationToggleBtn,
+                  appOrientation === 'landscape' && styles.orientationToggleBtnActive,
+                ]}
+                onPress={toggleOrientation}
+                activeOpacity={0.8}
+              >
+                <ThemedText style={styles.orientationToggleIcon}>
+                  {appOrientation === 'landscape' ? '🔄' : '📱'}
+                </ThemedText>
+                <ThemedText
+                  style={[
+                    styles.orientationToggleText,
+                    appOrientation === 'landscape' && styles.orientationToggleTextActive,
+                  ]}
+                >
+                  {appOrientation === 'landscape' ? 'Landscape' : 'Portrait'}
+                </ThemedText>
+              </TouchableOpacity>
             </View>
-          </TouchableOpacity>
+          </>
+        ) : (
+          /* Mode Portrait: Baris kedua memuat jam compact & aksi */
+          <View style={styles.headerBottomRowPortrait}>
+            <RealtimeClockBadge compact />
+            <View style={styles.headerRightActions}>
+              <TouchableOpacity
+                style={[
+                  styles.shiftBadgeBtn,
+                  currentShift ? styles.shiftBadgeActive : styles.shiftBadgeInactive,
+                ]}
+                onPress={() => setShiftModalVisible(true)}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.shiftDot, currentShift ? styles.shiftDotActive : styles.shiftDotInactive]} />
+                <View>
+                  <ThemedText style={styles.shiftBadgeRole}>
+                    {currentShift ? 'Shift Aktif' : 'Shift Kasir'}
+                  </ThemedText>
+                  <ThemedText style={styles.shiftBadgeAction} numberOfLines={1}>
+                    {currentShift ? currentShift.cashier_name : 'Buka Shift ›'}
+                  </ThemedText>
+                </View>
+              </TouchableOpacity>
 
-          {/* Tombol Cepat Orientasi Layar (Portrait / Landscape) */}
-          <TouchableOpacity
-            style={[
-              styles.orientationToggleBtn,
-              appOrientation === 'landscape' && styles.orientationToggleBtnActive,
-            ]}
-            onPress={toggleOrientation}
-            activeOpacity={0.8}
-          >
-            <ThemedText style={styles.orientationToggleIcon}>
-              {appOrientation === 'landscape' ? '🔄' : '📱'}
-            </ThemedText>
-            <ThemedText
-              style={[
-                styles.orientationToggleText,
-                appOrientation === 'landscape' && styles.orientationToggleTextActive,
-              ]}
-            >
-              {appOrientation === 'landscape' ? 'Landscape' : 'Portrait'}
-            </ThemedText>
-          </TouchableOpacity>
-        </View>
+              <TouchableOpacity
+                style={styles.roleBadgeBtn}
+                onPress={logoutRole}
+                activeOpacity={0.8}
+              >
+                <ThemedText style={styles.roleBadgeIcon}>
+                  {currentUserRole === 'pemilik' ? '👑' : '🛒'}
+                </ThemedText>
+                <View>
+                  <ThemedText style={styles.roleBadgeRole}>
+                    {currentUserRole === 'pemilik' ? 'Pemilik' : 'Kasir'}
+                  </ThemedText>
+                  <ThemedText style={styles.roleBadgeAction}>Ganti ›</ThemedText>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.orientationToggleBtn}
+                onPress={toggleOrientation}
+                activeOpacity={0.8}
+              >
+                <ThemedText style={styles.orientationToggleIcon}>📱</ThemedText>
+                <ThemedText style={styles.orientationToggleText}>Portrait</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
       {loading ? (
@@ -764,6 +824,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
     marginBottom: 12,
+  },
+  topHeaderCardPortrait: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 8,
+  },
+  headerBottomRowPortrait: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
   },
   headerLeft: {
     flex: 1,
