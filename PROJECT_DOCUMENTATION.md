@@ -11,19 +11,17 @@
 * **Package Name (Android):** `com.rumahmakan.posoffline`
 * **Slug Proyek:** `pos-offline`
 * **Versi Rilis:** `1.0.0`
-* **Orientasi Layar:** Landscape Locked (Tablet & HP)
+* **Orientasi Layar:** Landscape Locked (Optimal Redmi Pad 2 11" 2.5K & Kompatibel HP)
 * **Arsitektur:** Offline-First (SQLite Lokal Murni, tanpa internet)
 * **SDK / Framework:** Expo SDK 54 (`~54.0.37`), React Native 0.81.5, React 19, Hermes Engine, New Architecture Enabled
 * **State Management:** Zustand 5
 * **Akun EAS Cloud:** `rikire` (`rikyrivaldi369@gmail.com`)
 * **Project ID EAS:** `97d847aa-a65d-4eb8-9d21-33f936cce00e`
-* **Commit Terakhir:** `735682a` (*feat: smart CSV import/export produk, format standar barcode, template CSV, dan optimasi performa ribuan data*)
-* **File APK Terakhir (Tersimpan Lokal di Data D):**
-  📁 `D:\PROJEK APLIKASI POS OFFLINE\POS-Offline-source-code\POS-Offline-main\POS-Offline-release.apk` *(Ukuran: ~113.5 MB)*
-* **Tautan Unduhan Cloud Alternatif:**
-  🔗 [Download APK Release (Expo EAS)](https://expo.dev/artifacts/eas/iZeIE4vYIws4-YpDpk-KPkJPmDH-vlb5_qCTisxBE3U.apk)
+* **Commit Terakhir:** `1e650ac` (*feat: implement shift kasir z-report, expired alerts, diskon transaksi, dan 1-click backup restore*)
+* **Tautan Unduhan Cloud APK Terakhir (Rilis 8 September 2026):**
+  🔗 [Download APK Release (Expo EAS)](https://expo.dev/artifacts/eas/tmPpAMITrbMDduPgkKND1PW7oGWaM6sB_-0Z4SeQPq4.apk)
 * **Dashboard Build EAS:**
-  🔗 [Expo Build Dashboard (Build ID: 82a8fb1b)](https://expo.dev/accounts/rikire/projects/pos-offline/builds/82a8fb1b-aa41-4c72-ba88-b5f032663741)
+  🔗 [Expo Build Dashboard (Build ID: c0d37f91)](https://expo.dev/accounts/rikire/projects/pos-offline/builds/c0d37f91-9146-4752-aac1-e91b2d138aa1)
 
 ---
 
@@ -50,22 +48,31 @@ POS-Offline-main/
 │   ├── animated-splash-screen.tsx    # Animasi Pembuka Aplikasi (Logo Lengkap)
 │   ├── barcode-scanner-modal.tsx     # Pemindai Barcode Kamera Belakang (Torch & Zoom)
 │   ├── bulk-qty-modal.tsx            # Input Qty Borongan/Grosir Cepat
+│   ├── cash-shift-modal.tsx          # Modal Buka & Tutup Shift Kasir (Z-Report)
+│   ├── custom-date-picker-modal.tsx  # Modal Pemilih Tanggal Kalender
+│   ├── discount-modal.tsx            # Modal Diskon Transaksi (Nominal Rp & Persen %)
+│   ├── edit-cart-price-modal.tsx     # Modal Override Harga Satuan di Keranjang
+│   ├── product-search-modal.tsx      # Modal Pencarian Cepat Produk Stok & Kulakan
 │   ├── qris-display-modal.tsx        # Tampilan Layar Penuh QRIS untuk Pelanggan
-│   ├── receipt-preview-modal.tsx     # Pratinjau Kertas Struk 58mm
+│   ├── receipt-preview-modal.tsx     # Pratinjau Kertas Struk 58mm Presisi
+│   ├── role-login-modal.tsx          # Modal Login PIN Otorisasi Kasir vs Pemilik
+│   ├── weighted-product-modal.tsx    # Modal Timbangan Produk Curah (Gram / Kg)
 │   ├── admin-pin-modal.tsx           # Otorisasi Keamanan PIN 6-Digit
 │   └── onboarding-modal.tsx          # Wizard Inisialisasi Toko Baru
 ├── stores/                           # State Management (Zustand)
-│   ├── productStore.ts               # CRUD Produk, Kategori & Stok Opname
-│   ├── transactionStore.ts           # Keranjang, Checkout Tunai/QRIS/Hutang, Snapshot HPP
+│   ├── productStore.ts               # CRUD Produk, Kategori, Multi-Barcode & Kadaluarsa
+│   ├── transactionStore.ts           # Keranjang, Diskon, Checkout Tunai/QRIS/Hutang, HPP
 │   ├── cashStore.ts                  # Buku Kas Fisik & Kategori Mutasi Arus Kas
+│   ├── shiftStore.ts                 # Sesi Shift Kasir, Riwayat & Rekonsiliasi Z-Report
 │   ├── debtReceivableStore.ts        # Buku CRM Pelanggan/Supplier, Hutang & Kasbon
-│   ├── purchaseStore.ts              # Beli Stok (Tunai vs Kredit) & Validasi Kas/Hutang
+│   ├── purchaseStore.ts              # Beli Stok (Kas Toko vs Bank & Tempo)
 │   ├── printerStore.ts               # Status Koneksi Bluetooth & Target MAC Address
-│   └── settingsStore.ts              # Preferensi Toko, Orientasi Layar & PIN
+│   └── settingsStore.ts              # Preferensi Toko, Orientasi Layar, Peran & PIN
 ├── services/                         # Logika Data, Ekspor & Hardware
-│   ├── database.ts                   # SQLite Database Engine & Skema Migrasi (v7)
+│   ├── database.ts                   # SQLite Database Engine & Skema Migrasi (v12)
+│   ├── backup.ts                     # 1-Click Backup & Restore 18 Tabel SQLite (JSON)
 │   ├── export.ts                     # Generator File PDF & CSV (Sharing API)
-│   └── print.ts                      # Protokol Raw Thermal ESC/POS (58mm/32 Kolom)
+│   └── print.ts                      # Protokol Raw Thermal ESC/POS (58mm/32 Kolom) & Z-Report
 ├── assets/images/                    # Aset Logo & Grafis
 │   ├── app-logo-p.png                # Logo "P" Biasa (Ikon Launcher & Dashboard)
 │   ├── app-logo-full.png             # Logo Lengkap dengan Nama (Animasi Splash)
@@ -80,9 +87,9 @@ POS-Offline-main/
 
 ---
 
-## 3. Skema Database SQLite (Versi 10 Terkini)
+## 3. Skema Database SQLite (Versi 12 Terkini)
 
-File: `services/database.ts` (`DATABASE_VERSION = 10`). Database dijalankan secara lokal offline (`pos.db`) dengan indeks performa tinggi untuk ribuan produk dan transaksi.
+File: `services/database.ts` (`DATABASE_VERSION = 12`). Database dijalankan secara lokal offline (`pos.db`) dengan indeks performa tinggi untuk ribuan produk dan transaksi.
 
 ### A. Tabel Master Produk & Inventaris
 ```sql
@@ -350,7 +357,38 @@ Aplikasi dibangun dengan prinsip **Landscape-First & Responsive Proportional Lay
 
 ---
 
-## 7. Panduan Build Aplikasi (Cloud EAS vs Lokal)
+---
+
+## 7. Rekap Sesi Pengembangan (8 September 2026) — Optimasi Tablet Redmi Pad 2 & Fitur Profesional
+
+Sesi ini berfokus pada penyempurnaan menyeluruh pengalaman pengguna pada tablet **Redmi Pad 2 (11 inci 2.5K)** dan penambahan 4 fitur enterprise kasir:
+
+### A. Desain & Ergonomi Layar
+1. **Tombol Masuk Kasir di Bawah:** Ditempatkan di bagian paling bawah layar dashboard tepat di atas tab navigasi agar mudah dijangkau saat tablet ditaruh di stand kasir.
+2. **Layout Grid 2-Kolom Seimbang:** Kolom kiri untuk metrik kas riil dan perbandingan hari ini vs kemarin; kolom kanan untuk status operasional, item terjual, grafik 7 hari, dan peringatan kadaluarsa.
+3. **Pemisahan Peran Pengguna (Kasir vs Pemilik):** Sesi login tersimpan selama aplikasi berjalan. Kasir hanya mengakses menu transaksi & katalog; fitur sensitif diproteksi PIN 6-digit.
+
+### B. Produk & Inventaris
+4. **Multi-Barcode per Produk:** Mendukung input banyak barcode dengan scan kamera langsung untuk kemasan yang berubah atau variasi batch.
+5. **Produk Timbangan Curah (`is_weighted`):** Perhitungan harga berbasis gram/kg dengan modal timbangan interaktif.
+6. **Tanggal Kadaluarsa (`expired_date`) & Expired Alert:** Input kalender kadaluarsa di form produk dan widget pemantauan otomatis ($\le 30$ hari) di dashboard.
+7. **Pembaruan Stok Cepat:** Mengganti istilah "Stok Opname" menjadi "Pembaruan Stok" dengan modal cari cepat `ProductSearchModal`.
+8. **Pembelian Stok Tunai vs Bank & Tempo:** Pemisahan sumber dana pembelian (Kas Toko laci vs Rekening/Pribadi) dan tanggal jatuh tempo cepat (+1, +3, +7, +14 hari).
+
+### C. Transaksi Kasir & Akuntansi
+9. **Diskon Transaksi (Nominal Rp & Persen %):** Input diskon pada keranjang kasir dengan preset tombol cepat, rincian subtotal/diskon/total, serta pencetakan pada struk.
+10. **Override Harga Keranjang:** Kasir dapat mengetuk harga satuan barang di keranjang untuk mengubah harga tanpa mengubah master data produk.
+11. **Presisi Pembukuan Saldo Kas Laci:** Pemisahan mutasi kas bruto vs kembalian sehingga saldo kas riil di laci akurat 100%.
+12. **Perapian Form Pembayaran Hutang / Bon:** Desain form hutang bebas dari tombol ganda dan mendukung scrolling proporsional.
+13. **Format Struk Thermal 58mm Presisi:** Kertas dikunci 58mm (32 karakter), auto-wrap nama barang panjang, dan hasil cetak fisik persis sama dengan preview pengaturan.
+
+### D. Manajemen Shift & Keamanan Data
+14. **Shift Kasir & Laporan Z-Report 58mm:** Buka shift (modal awal), chip status di header, tutup shift dengan rekonsiliasi kas fisik vs sistem, serta cetak struk Z-Report resmi 58mm.
+15. **1-Click Full Backup & Restore:** Pencadangan seluruh 18 tabel SQLite ke berkas `.json` bertanggal untuk disimpan ke Google Drive / USB OTG, serta pemulihan atomik aman via `withTransactionAsync`.
+
+---
+
+## 8. Panduan Build Aplikasi (Cloud EAS vs Lokal)
 
 ### Kenapa Memakai Expo EAS Cloud?
 1. **Waktu Kompilasi Cepat (~14 Menit):** Server Linux Expo telah dikonfigurasi optimal untuk NDK, CMake, dan toolchain React Native New Architecture.
@@ -364,18 +402,18 @@ git add .
 git commit -m "feat: deskripsi pembaruan"
 
 # 2. Jalankan build di Expo Cloud (profil preview menghasilkan file .apk standalone)
-npx eas build -p android --profile preview --non-interactive --no-wait
+npx eas-cli build --platform android --profile preview --non-interactive
 
 # 3. Pantau status build melalui dashboard atau CLI:
-npx eas build:view [BUILD_ID]
+npx eas-cli build:view [BUILD_ID]
 
-# 4. Setelah selesai, unduh file APK langsung ke Data D:
-powershell -Command "Invoke-WebRequest -Uri '[APPLICATION_ARCHIVE_URL]' -OutFile 'D:\PROJEK APLIKASI POS OFFLINE\POS-Offline-source-code\POS-Offline-main\POS-Offline-release.apk'"
+# 4. Unduh file APK hasil build terbaru:
+powershell -Command "Invoke-WebRequest -Uri 'https://expo.dev/artifacts/eas/tmPpAMITrbMDduPgkKND1PW7oGWaM6sB_-0Z4SeQPq4.apk' -OutFile 'D:\PROJEK APLIKASI POS OFFLINE\POS-Offline-source-code\POS-Offline-main\POS-Offline-release.apk'"
 ```
 
 ---
 
-## 8. Panduan Verifikasi Kode
+## 9. Panduan Verifikasi Kode
 
 Sebelum memulai perubahan atau melakukan build baru, jalankan selalu:
 ```powershell
@@ -388,4 +426,4 @@ npx expo export --platform android
 
 ---
 
-*Dokumen ini diperbarui secara resmi pada 7 September 2026 sebagai panduan kesinambungan proyek POS Karya Riki Rivaldi.*
+*Dokumen ini diperbarui secara resmi pada 8 September 2026 sebagai catatan riwayat lengkap dan panduan kesinambungan proyek POS Karya Riki Rivaldi.*
