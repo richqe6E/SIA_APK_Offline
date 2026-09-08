@@ -17,11 +17,11 @@
 * **State Management:** Zustand 5
 * **Akun EAS Cloud:** `rikire` (`rikyrivaldi369@gmail.com`)
 * **Project ID EAS:** `97d847aa-a65d-4eb8-9d21-33f936cce00e`
-* **Commit Terakhir:** `1e650ac` (*feat: implement shift kasir z-report, expired alerts, diskon transaksi, dan 1-click backup restore*)
-* **Tautan Unduhan Cloud APK Terakhir (Rilis 8 September 2026):**
+* **Commit Terakhir:** `a1de3d9` (*feat: implementasi setor kas laci ke bank, jam realtime dashboard kasir, serta responsivitas landscape portrait keuangan pengaturan*)
+* **Dashboard Build EAS (Build Baru):**
+  🔗 [Expo Build Dashboard (Build ID: c376fe26)](https://expo.dev/accounts/rikire/projects/pos-offline/builds/c376fe26-ee29-4f8d-856c-414d1eee738f)
+* **Tautan Unduhan Cloud APK Terakhir (Rilis Sebelumnya):**
   🔗 [Download APK Release (Expo EAS)](https://expo.dev/artifacts/eas/tmPpAMITrbMDduPgkKND1PW7oGWaM6sB_-0Z4SeQPq4.apk)
-* **Dashboard Build EAS:**
-  🔗 [Expo Build Dashboard (Build ID: c0d37f91)](https://expo.dev/accounts/rikire/projects/pos-offline/builds/c0d37f91-9146-4752-aac1-e91b2d138aa1)
 
 ---
 
