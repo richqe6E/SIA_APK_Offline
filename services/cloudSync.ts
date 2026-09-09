@@ -185,11 +185,11 @@ export async function compileSyncPayload(
   let nonCashTxTotal = 0;
 
   for (const pm of pmSummary) {
-    const m = (pm.payment_method || '').toLowerCase();
+    const m = (pm.payment_method || '').toLowerCase().trim();
     if (m === 'cash' || m === 'tunai') {
       cashTxCount += pm.cnt;
       cashTxTotal += pm.tot;
-    } else {
+    } else if (m !== 'hutang') {
       nonCashTxCount += pm.cnt;
       nonCashTxTotal += pm.tot;
     }
