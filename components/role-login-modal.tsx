@@ -108,9 +108,7 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
             <ThemedText style={styles.storeName}>{storeName}</ThemedText>
             <ThemedText style={styles.subtitle}>
               {pinMode
-                ? targetRole === 'pemilik'
-                  ? 'Masukkan PIN Otorisasi Pemilik Toko (Tablet)'
-                  : 'Masukkan PIN Pemantau Usaha (Mode HP)'
+                ? 'Masukkan PIN Otorisasi Pemilik Toko'
                 : 'Pilih peran untuk melanjutkan akses aplikasi'}
             </ThemedText>
           </View>
@@ -151,36 +149,13 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <ThemedText style={styles.roleName}>2. Masuk Pemilik Toko (Tablet)</ThemedText>
+                    <ThemedText style={styles.roleName}>2. Masuk Pemilik Toko</ThemedText>
                     <View style={styles.badgePin}>
                       <ThemedText style={styles.badgePinText}>Akses Penuh</ThemedText>
                     </View>
                   </View>
                   <ThemedText style={styles.roleDesc}>
                     Akses lengkap: kasir, buku kas, setor bank, utang piutang, dan pengaturan
-                  </ThemedText>
-                </View>
-                <ThemedText style={styles.chevron}>›</ThemedText>
-              </TouchableOpacity>
-
-              {/* Opsi 3: Pemantau Usaha (Mode HP) */}
-              <TouchableOpacity
-                style={[styles.roleCard, styles.pemantauCard]}
-                activeOpacity={0.85}
-                onPress={() => handleOpenPin('pemantau')}
-              >
-                <View style={styles.roleIconBoxPemantau}>
-                  <ThemedText style={styles.roleIcon}>📱</ThemedText>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <ThemedText style={styles.roleName}>3. Masuk Pemantau Usaha (HP)</ThemedText>
-                    <View style={styles.badgeHp}>
-                      <ThemedText style={styles.badgeHpText}>Mode HP</ThemedText>
-                    </View>
-                  </View>
-                  <ThemedText style={styles.roleDesc}>
-                    Tampilan vertikal HP: pantau omset realtime, mutasi kas, setor bank, dan utang piutang
                   </ThemedText>
                 </View>
                 <ThemedText style={styles.chevron}>›</ThemedText>

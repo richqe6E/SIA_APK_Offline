@@ -49,6 +49,12 @@ export interface StoreSyncPayload {
     operatingExpenses: number;
     netProfitToday: number;
     itemsSold: number;
+    cashTxCount?: number;
+    cashTxTotal?: number;
+    nonCashTxCount?: number;
+    nonCashTxTotal?: number;
+    grossMarginPercent?: number;
+    peakHour?: string;
   };
   monthlyProfitLoss: {
     periodLabel: string;
@@ -82,6 +88,20 @@ export interface StoreSyncPayload {
     outOfStockCount: number;
     lowStockCount: number;
     expiredSoonCount: number;
+  };
+  inventoryValuation?: {
+    totalStockValue: number;
+    totalItems: number;
+  };
+  dueSoonReceivables?: {
+    count: number;
+    totalAmount: number;
+    items: {
+      customer_name: string;
+      remaining_amount: number;
+      due_date: string;
+      days_left: number;
+    }[];
   };
   topProducts: {
     id: number;
@@ -144,6 +164,53 @@ export async function compileSyncPayload(
   const transactionCount = txSummary?.tx_count || 0;
   const avgPerTransaction = transactionCount > 0 ? Math.round(omset / transactionCount) : 0;
 
+  // 1b. Cash vs Non-Cash transactions today
+  const pmSummary = await db.getAllAsync<{
+    payment_method: string;
+    cnt: number;
+    tot: number;
+  }>(
+    `SELECT 
+       payment_method,
+       COUNT(id) as cnt,
+       COALESCE(SUM(total), 0) as tot
+     FROM transactions
+     WHERE date(created_at) = date('now','localtime')
+     GROUP BY payment_method`
+  );
+
+  let cashTxCount = 0;
+  let cashTxTotal = 0;
+  let nonCashTxCount = 0;
+  let nonCashTxTotal = 0;
+
+  for (const pm of pmSummary) {
+    const m = (pm.payment_method || '').toLowerCase();
+    if (m === 'cash' || m === 'tunai') {
+      cashTxCount += pm.cnt;
+      cashTxTotal += pm.tot;
+    } else {
+      nonCashTxCount += pm.cnt;
+      nonCashTxTotal += pm.tot;
+    }
+  }
+
+  // 1c. Peak hour today
+  const peakHourRow = await db.getFirstAsync<{ hr: string; tx_cnt: number }>(
+    `SELECT 
+       strftime('%H', created_at) as hr,
+       COUNT(id) as tx_cnt
+     FROM transactions
+     WHERE date(created_at) = date('now','localtime')
+     GROUP BY hr
+     ORDER BY tx_cnt DESC, hr ASC
+     LIMIT 1`
+  );
+  const peakHour =
+    peakHourRow && peakHourRow.tx_cnt > 0
+      ? `${peakHourRow.hr}:00 - ${(parseInt(peakHourRow.hr, 10) + 1).toString().padStart(2, '0')}:00`
+      : '-';
+
   // Yesterday sales
   const yestSummary = await db.getFirstAsync<{ total_omset: number | null }>(
     `SELECT COALESCE(SUM(total), 0) as total_omset 
@@ -177,6 +244,7 @@ export async function compileSyncPayload(
   const itemsSold = itemsSummary?.total_qty || 0;
   const cogs = itemsSummary?.total_cogs || 0;
   const estimatedGrossProfit = Math.max(0, omset - cogs);
+  const grossMarginPercent = omset > 0 ? Math.round((estimatedGrossProfit / omset) * 100) : 0;
 
   // Today Operating Expenses (cash out not including setor_bank)
   const expSummary = await db.getFirstAsync<{ total_exp: number | null }>(
@@ -403,6 +471,42 @@ export async function compileSyncPayload(
      LIMIT 10`
   );
 
+  // 12. Total modal sosis & frozen food di freezer (Aset stok)
+  const stockValRow = await db.getFirstAsync<{ total_val: number | null; total_qty: number | null }>(
+    `SELECT 
+       COALESCE(SUM(stock * COALESCE(cost_price, 0)), 0) as total_val,
+       COALESCE(SUM(stock), 0) as total_qty
+     FROM products
+     WHERE is_active = 1`
+  );
+  const inventoryValuation = {
+    totalStockValue: stockValRow?.total_val || 0,
+    totalItems: stockValRow?.total_qty || 0,
+  };
+
+  // 13. Piutang jatuh tempo <= 3 hari
+  const dueSoonList: { customer_name: string; remaining_amount: number; due_date: string; days_left: number }[] = [];
+  for (const rec of receivablesList) {
+    if (rec.due_date && rec.remaining_amount > 0) {
+      const diffDays = Math.ceil(
+        (new Date(rec.due_date).getTime() - todayMs) / (1000 * 60 * 60 * 24)
+      );
+      if (diffDays <= 3) {
+        dueSoonList.push({
+          customer_name: rec.customer_name,
+          remaining_amount: rec.remaining_amount,
+          due_date: rec.due_date,
+          days_left: diffDays,
+        });
+      }
+    }
+  }
+  const dueSoonReceivables = {
+    count: dueSoonList.length,
+    totalAmount: dueSoonList.reduce((acc, curr) => acc + curr.remaining_amount, 0),
+    items: dueSoonList,
+  };
+
   return {
     pairingCode,
     storeName: settingsStore.storeName,
@@ -417,6 +521,12 @@ export async function compileSyncPayload(
       operatingExpenses,
       netProfitToday,
       itemsSold,
+      cashTxCount,
+      cashTxTotal,
+      nonCashTxCount,
+      nonCashTxTotal,
+      grossMarginPercent,
+      peakHour,
     },
     monthlyProfitLoss: {
       periodLabel,
@@ -445,6 +555,8 @@ export async function compileSyncPayload(
       lowStockCount: lowStockRow?.count || 0,
       expiredSoonCount,
     },
+    inventoryValuation,
+    dueSoonReceivables,
     topProducts,
     recentTransactions,
     recentLedger,

@@ -18,7 +18,7 @@ export default function TabLayout() {
   }, [db, loadSettings]);
 
   useEffect(() => {
-    if (!isOnboarded || currentUserRole === 'pemantau') return;
+    if (!isOnboarded) return;
     // Initial sync on startup
     triggerAutoSync(db);
 
@@ -28,10 +28,9 @@ export default function TabLayout() {
     }, 30000);
 
     return () => clearInterval(timer);
-  }, [db, isOnboarded, currentUserRole]);
+  }, [db, isOnboarded]);
 
   const isKasir = currentUserRole === 'kasir';
-  const isPemantau = currentUserRole === 'pemantau';
 
   return (
     <>
@@ -45,7 +44,7 @@ export default function TabLayout() {
         <Tabs.Screen
           name="index"
           options={{
-            title: isPemantau ? 'Pantau Toko' : 'Dashboard',
+            title: 'Dashboard',
             tabBarIcon: ({ color }) => (
               <IconSymbol size={28} name="square.grid.2x2.fill" color={color} />
             ),
@@ -55,7 +54,6 @@ export default function TabLayout() {
           name="explore"
           options={{
             title: 'Produk',
-            href: isPemantau ? null : undefined,
             tabBarIcon: ({ color }) => (
               <IconSymbol size={28} name="shippingbox.fill" color={color} />
             ),
@@ -65,7 +63,6 @@ export default function TabLayout() {
           name="history"
           options={{
             title: 'Riwayat',
-            href: isPemantau ? null : undefined,
             tabBarIcon: ({ color }) => (
               <IconSymbol size={28} name="clock.fill" color={color} />
             ),

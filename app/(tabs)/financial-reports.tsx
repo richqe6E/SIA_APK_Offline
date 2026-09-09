@@ -113,20 +113,13 @@ export default function FinancialReportsScreen() {
   const { printerTarget } = usePrinterStore();
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const isPemantau = currentUserRole === 'pemantau';
-  const isTabletOrLandscape = !isPemantau && (width >= 720 || appOrientation === 'landscape');
+  const isTabletOrLandscape = width >= 720 || appOrientation === 'landscape';
 
   useLockOrientation(
-    isPemantau
-      ? ScreenOrientation.OrientationLock.PORTRAIT_UP
-      : appOrientation === 'landscape'
-        ? ScreenOrientation.OrientationLock.LANDSCAPE
-        : ScreenOrientation.OrientationLock.PORTRAIT_UP
+    appOrientation === 'landscape'
+      ? ScreenOrientation.OrientationLock.LANDSCAPE
+      : ScreenOrientation.OrientationLock.PORTRAIT_UP
   );
-
-  if (isPemantau) {
-    return <OwnerMobileFinance />;
-  }
 
   const toggleOrientation = async () => {
     const next = appOrientation === 'landscape' ? 'portrait' : 'landscape';

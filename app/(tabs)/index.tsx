@@ -181,10 +181,6 @@ export default function DashboardScreen() {
   const { width } = useWindowDimensions();
   const isTabletOrLandscape = width >= 720 || appOrientation === 'landscape';
 
-  if (currentUserRole === 'pemantau') {
-    return <OwnerMobileDashboard />;
-  }
-
   const DENOMINATIONS_LIST = [
     { value: 100000, label: '100rb' },
     { value: 50000, label: '50rb' },
