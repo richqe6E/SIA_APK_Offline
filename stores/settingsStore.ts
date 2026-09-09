@@ -23,6 +23,8 @@ interface SettingsState {
   storePairingCode: string;
   isCloudConnected: boolean;
   cloudSyncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+  supabaseUrl: string;
+  supabaseAnonKey: string;
   loading: boolean;
 
   loadSettings: (db: SQLiteDatabase) => Promise<void>;
@@ -55,6 +57,7 @@ interface SettingsState {
   setPairingCode: (code: string) => void;
   setCloudConnected: (connected: boolean) => void;
   setCloudSyncStatus: (status: 'idle' | 'syncing' | 'synced' | 'error') => void;
+  setCloudCredentials: (db: SQLiteDatabase, url: string, key: string) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -74,6 +77,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   storePairingCode: 'AZ-7789',
   isCloudConnected: false,
   cloudSyncStatus: 'idle',
+  supabaseUrl: '',
+  supabaseAnonKey: '',
   loading: false,
 
   loadSettings: async (db) => {
@@ -99,6 +104,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         receiptFooter: map.receipt_footer ?? 'Terima kasih atas kunjungan Anda!',
         qrisImagePath: map.qris_image_path ?? '',
         appOrientation: (map.app_orientation as AppOrientation) || 'portrait',
+        supabaseUrl: map.supabase_url ?? '',
+        supabaseAnonKey: map.supabase_anon_key ?? '',
         loading: false,
       });
     } catch (e) {
@@ -230,4 +237,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setPairingCode: (code: string) => set({ storePairingCode: code }),
   setCloudConnected: (connected: boolean) => set({ isCloudConnected: connected }),
   setCloudSyncStatus: (status) => set({ cloudSyncStatus: status }),
+  setCloudCredentials: async (db, url, key) => {
+    await db.runAsync(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('supabase_url', ?)",
+      url
+    );
+    await db.runAsync(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('supabase_anon_key', ?)",
+      key
+    );
+    set({ supabaseUrl: url, supabaseAnonKey: key });
+  },
 }));

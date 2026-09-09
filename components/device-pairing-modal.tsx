@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -32,9 +33,12 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
     currentUserRole,
     storePairingCode,
     isCloudConnected,
+    supabaseUrl,
+    supabaseAnonKey,
     setPairingCode,
     setCloudConnected,
     setCloudSyncStatus,
+    setCloudCredentials,
   } = useSettingsStore();
 
   const isPemantau = currentUserRole === 'pemantau';
@@ -42,6 +46,9 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
   const [inputCode, setInputCode] = useState(storePairingCode);
   const [testing, setTesting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [showCloudConfig, setShowCloudConfig] = useState(false);
+  const [urlInput, setUrlInput] = useState(supabaseUrl || '');
+  const [keyInput, setKeyInput] = useState(supabaseAnonKey || '');
 
   const handleGenerateNewCode = () => {
     const newCode = generatePairingCode();
@@ -121,157 +128,231 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
     );
   };
 
+  const handleSaveCloudConfig = async () => {
+    setTesting(true);
+    await setCloudCredentials(db, urlInput.trim(), keyInput.trim());
+    setTesting(false);
+    setMsg({
+      type: 'success',
+      text: 'Pengaturan server Supabase berhasil disimpan!',
+    });
+  };
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <ThemedView style={styles.overlay}>
         <Card style={styles.card} padding={24}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.iconBox}>
-              <ThemedText style={styles.icon}>🔗</ThemedText>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+            {/* Header */}
+            <View style={styles.header}>
+              <View style={styles.iconBox}>
+                <ThemedText style={styles.icon}>🔗</ThemedText>
+              </View>
+              <ThemedText style={styles.title}>Sambungkan Perangkat</ThemedText>
+              <ThemedText style={styles.subtitle}>
+                Integrasi Cloud Realtime Tablet Toko & HP Pemilik Usaha
+              </ThemedText>
             </View>
-            <ThemedText style={styles.title}>Sambungkan Perangkat</ThemedText>
-            <ThemedText style={styles.subtitle}>
-              Integrasi Cloud Realtime Tablet Toko & HP Pemilik Usaha
-            </ThemedText>
-          </View>
 
-          {/* Feedback Message */}
-          {msg && (
-            <View
-              style={[
-                styles.msgBox,
-                msg.type === 'success' ? styles.msgSuccess : styles.msgError,
-              ]}
-            >
-              <ThemedText
+            {/* Feedback Message */}
+            {msg && (
+              <View
                 style={[
-                  styles.msgText,
-                  msg.type === 'success' ? styles.msgTextSuccess : styles.msgTextError,
+                  styles.msgBox,
+                  msg.type === 'success' ? styles.msgSuccess : styles.msgError,
                 ]}
               >
-                {msg.type === 'success' ? '✓ ' : '⚠️ '}
-                {msg.text}
-              </ThemedText>
-            </View>
-          )}
+                <ThemedText
+                  style={[
+                    styles.msgText,
+                    msg.type === 'success' ? styles.msgTextSuccess : styles.msgTextError,
+                  ]}
+                >
+                  {msg.type === 'success' ? '✓ ' : '⚠️ '}
+                  {msg.text}
+                </ThemedText>
+              </View>
+            )}
 
-          {/* Section A: Tablet View (Pemilik / Kasir) */}
-          {!isPemantau ? (
-            <View style={styles.body}>
-              <View style={styles.qrCodeSimulation}>
-                <ThemedText style={styles.qrIcon}>📱 ⇄ 💻</ThemedText>
-                <ThemedText style={styles.qrStoreName}>{storeName}</ThemedText>
-                <View style={styles.pairingCodeBox}>
-                  <ThemedText style={styles.pairingCodeText}>{storePairingCode}</ThemedText>
+            {/* Section A: Tablet View (Pemilik / Kasir) */}
+            {!isPemantau ? (
+              <View style={styles.body}>
+                <View style={styles.qrCodeSimulation}>
+                  <ThemedText style={styles.qrIcon}>📱 ⇄ 💻</ThemedText>
+                  <ThemedText style={styles.qrStoreName}>{storeName}</ThemedText>
+                  <View style={styles.pairingCodeBox}>
+                    <ThemedText style={styles.pairingCodeText}>{storePairingCode}</ThemedText>
+                  </View>
+                  <ThemedText style={styles.qrHint}>
+                    Kode Otorisasi Cloud Perangkat Toko
+                  </ThemedText>
                 </View>
-                <ThemedText style={styles.qrHint}>
-                  Kode Otorisasi Cloud Perangkat Toko
+
+                <View style={styles.statusIndicatorRow}>
+                  <View
+                    style={[
+                      styles.dot,
+                      isCloudConnected ? styles.dotConnected : styles.dotWaiting,
+                    ]}
+                  />
+                  <ThemedText style={styles.statusText}>
+                    {isCloudConnected
+                      ? '🟢 Cloud Bridge Aktif • HP Pemilik Terhubung'
+                      : '🟡 Menunggu Sambungan dari HP Pemilik Usaha'}
+                  </ThemedText>
+                </View>
+
+                <ThemedText style={styles.instructionText}>
+                  1. Buka aplikasi POS AZIZAH di smartphone / HP Pemilik.{'\n'}
+                  2. Masuk dengan peran <ThemedText style={{ fontWeight: '800' }}>3. Pemantau Usaha</ThemedText>.{'\n'}
+                  3. Buka Pengaturan &gt; Sambungkan Perangkat lalu masukkan kode <ThemedText style={{ fontWeight: '800' }}>{storePairingCode}</ThemedText>.
                 </ThemedText>
-              </View>
 
-              <View style={styles.statusIndicatorRow}>
-                <View
-                  style={[
-                    styles.dot,
-                    isCloudConnected ? styles.dotConnected : styles.dotWaiting,
-                  ]}
-                />
-                <ThemedText style={styles.statusText}>
-                  {isCloudConnected
-                    ? '🟢 Cloud Bridge Aktif • HP Pemilik Terhubung'
-                    : '🟡 Menunggu Sambungan dari HP Pemilik Usaha'}
-                </ThemedText>
-              </View>
-
-              <ThemedText style={styles.instructionText}>
-                1. Buka aplikasi POS AZIZAH di smartphone / HP Pemilik.{'\n'}
-                2. Masuk dengan peran <ThemedText style={{ fontWeight: '800' }}>3. Pemantau Usaha</ThemedText>.{'\n'}
-                3. Buka Pengaturan &gt; Sambungkan Perangkat lalu masukkan kode <ThemedText style={{ fontWeight: '800' }}>{storePairingCode}</ThemedText>.
-              </ThemedText>
-
-              <View style={styles.btnRow}>
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnOutline]}
-                  onPress={handleGenerateNewCode}
-                >
-                  <ThemedText style={styles.btnOutlineText}>🎲 Acak Kode Baru</ThemedText>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnPrimary]}
-                  onPress={handlePushSyncTablet}
-                  disabled={testing}
-                >
-                  {testing ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <ThemedText style={styles.btnPrimaryText}>☁️ Sinkronkan Sekarang</ThemedText>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            /* Section B: Phone View (Pemantau Usaha) */
-            <View style={styles.body}>
-              <ThemedText style={styles.inputLabel}>
-                Masukkan Kode Pairing dari Tablet Toko:
-              </ThemedText>
-              <TextInput
-                style={styles.input}
-                value={inputCode}
-                onChangeText={setInputCode}
-                placeholder="Contoh: AZ-7789"
-                placeholderTextColor="#94a3b8"
-                autoCapitalize="characters"
-                maxLength={10}
-              />
-
-              <View style={styles.statusIndicatorRow}>
-                <View
-                  style={[
-                    styles.dot,
-                    isCloudConnected ? styles.dotConnected : styles.dotOffline,
-                  ]}
-                />
-                <ThemedText style={styles.statusText}>
-                  {isCloudConnected
-                    ? `🟢 Terhubung ke Toko (${storePairingCode})`
-                    : '🔴 Belum Terhubung'}
-                </ThemedText>
-              </View>
-
-              <View style={styles.btnRow}>
-                {isCloudConnected ? (
+                <View style={styles.btnRow}>
                   <TouchableOpacity
-                    style={[styles.btn, styles.btnDanger]}
-                    onPress={handleDisconnect}
+                    style={[styles.btn, styles.btnOutline]}
+                    onPress={handleGenerateNewCode}
                   >
-                    <ThemedText style={styles.btnDangerText}>Putuskan Koneksi</ThemedText>
+                    <ThemedText style={styles.btnOutlineText}>🎲 Acak Kode Baru</ThemedText>
                   </TouchableOpacity>
-                ) : null}
+
+                  <TouchableOpacity
+                    style={[styles.btn, styles.btnPrimary]}
+                    onPress={handlePushSyncTablet}
+                    disabled={testing}
+                  >
+                    {testing ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <ThemedText style={styles.btnPrimaryText}>☁️ Sinkronkan Sekarang</ThemedText>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              /* Section B: Phone View (Pemantau Usaha) */
+              <View style={styles.body}>
+                <ThemedText style={styles.inputLabel}>
+                  Masukkan Kode Pairing dari Tablet Toko:
+                </ThemedText>
+                <TextInput
+                  style={styles.input}
+                  value={inputCode}
+                  onChangeText={setInputCode}
+                  placeholder="Contoh: AZ-7789"
+                  placeholderTextColor="#94a3b8"
+                  autoCapitalize="characters"
+                  maxLength={10}
+                />
+
+                <View style={styles.statusIndicatorRow}>
+                  <View
+                    style={[
+                      styles.dot,
+                      isCloudConnected ? styles.dotConnected : styles.dotOffline,
+                    ]}
+                  />
+                  <ThemedText style={styles.statusText}>
+                    {isCloudConnected
+                      ? `🟢 Terhubung ke Toko (${storePairingCode})`
+                      : '🔴 Belum Terhubung'}
+                  </ThemedText>
+                </View>
+
+                <View style={styles.btnRow}>
+                  {isCloudConnected ? (
+                    <TouchableOpacity
+                      style={[styles.btn, styles.btnDanger]}
+                      onPress={handleDisconnect}
+                    >
+                      <ThemedText style={styles.btnDangerText}>Putuskan Koneksi</ThemedText>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  <TouchableOpacity
+                    style={[styles.btn, styles.btnPrimary, { flex: 2 }]}
+                    onPress={handleConnectPhone}
+                    disabled={testing}
+                  >
+                    {testing ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <ThemedText style={styles.btnPrimaryText}>
+                        🔗 Hubungkan ke Toko
+                      </ThemedText>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* Section C: Pengaturan Cloud Supabase (Jarak Jauh) */}
+            <TouchableOpacity
+              style={styles.toggleCloudConfigBtn}
+              onPress={() => setShowCloudConfig(!showCloudConfig)}
+              activeOpacity={0.7}
+            >
+              <ThemedText style={styles.toggleCloudConfigText}>
+                {showCloudConfig ? '▲ Tutup Server Cloud' : '⚙️ Pengaturan Server Cloud Supabase (Jarak Jauh)'}
+              </ThemedText>
+            </TouchableOpacity>
+
+            {showCloudConfig && (
+              <View style={styles.cloudConfigBox}>
+                <ThemedText style={styles.cloudConfigDesc}>
+                  Hubungkan database cloud gratis (Supabase) agar tablet toko dan HP pemilik dapat saling bertukar data secara online di mana pun berada.
+                </ThemedText>
+
+                <ThemedText style={styles.fieldLabelSmall}>Project URL Supabase:</ThemedText>
+                <TextInput
+                  style={styles.configInput}
+                  value={urlInput}
+                  onChangeText={setUrlInput}
+                  placeholder="https://xyzproject.supabase.co"
+                  placeholderTextColor="#94a3b8"
+                  autoCapitalize="none"
+                />
+
+                <ThemedText style={styles.fieldLabelSmall}>Anon Public API Key:</ThemedText>
+                <TextInput
+                  style={styles.configInput}
+                  value={keyInput}
+                  onChangeText={setKeyInput}
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  placeholderTextColor="#94a3b8"
+                  autoCapitalize="none"
+                  secureTextEntry
+                />
 
                 <TouchableOpacity
-                  style={[styles.btn, styles.btnPrimary, { flex: 2 }]}
-                  onPress={handleConnectPhone}
+                  style={[styles.btn, styles.btnSaveConfig]}
+                  onPress={handleSaveCloudConfig}
                   disabled={testing}
                 >
-                  {testing ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <ThemedText style={styles.btnPrimaryText}>
-                      🔗 Hubungkan ke Toko
-                    </ThemedText>
-                  )}
+                  <ThemedText style={styles.btnSaveConfigText}>
+                    💾 Simpan Kredensial Supabase
+                  </ThemedText>
                 </TouchableOpacity>
-              </View>
-            </View>
-          )}
 
-          {/* Close Button */}
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-            <ThemedText style={styles.closeBtnText}>Tutup</ThemedText>
-          </TouchableOpacity>
+                <View style={styles.sqlHelpBox}>
+                  <ThemedText style={styles.sqlHelpTitle}>Perintah SQL Tabel Supabase (SQL Editor):</ThemedText>
+                  <ThemedText style={styles.sqlCodeText}>
+                    CREATE TABLE IF NOT EXISTS store_sync ({'\n'}
+                    {'  '}pairing_code TEXT PRIMARY KEY,{'\n'}
+                    {'  '}store_name TEXT,{'\n'}
+                    {'  '}payload JSONB,{'\n'}
+                    {'  '}updated_at TIMESTAMPTZ DEFAULT now(){'\n'}
+                    );
+                  </ThemedText>
+                </View>
+              </View>
+            )}
+
+            {/* Close Button */}
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+              <ThemedText style={styles.closeBtnText}>Tutup</ThemedText>
+            </TouchableOpacity>
+          </ScrollView>
         </Card>
       </ThemedView>
     </Modal>
@@ -476,7 +557,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   closeBtn: {
-    marginTop: 14,
+    marginTop: 8,
     paddingVertical: 8,
     alignItems: 'center',
   },
@@ -484,5 +565,73 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
     fontWeight: '600',
+  },
+  toggleCloudConfigBtn: {
+    marginTop: 6,
+    paddingVertical: 10,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  toggleCloudConfigText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  cloudConfigBox: {
+    backgroundColor: '#f8fafc',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 8,
+  },
+  cloudConfigDesc: {
+    fontSize: 11,
+    color: '#64748b',
+    lineHeight: 16,
+  },
+  fieldLabelSmall: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+    marginTop: 4,
+  },
+  configInput: {
+    height: 40,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    fontSize: 12,
+    color: '#0f172a',
+  },
+  btnSaveConfig: {
+    backgroundColor: '#0284c7',
+    marginTop: 6,
+  },
+  btnSaveConfigText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  sqlHelpBox: {
+    backgroundColor: '#0f172a',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  sqlHelpTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#38bdf8',
+    marginBottom: 4,
+  },
+  sqlCodeText: {
+    fontSize: 10,
+    fontFamily: 'monospace',
+    color: '#e2e8f0',
+    lineHeight: 14,
   },
 });

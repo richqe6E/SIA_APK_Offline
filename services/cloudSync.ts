@@ -259,7 +259,7 @@ export async function compileSyncPayload(
 }
 
 /**
- * Upload/publish sync snapshot from Store Tablet to Cloud Bridge
+ * Upload/publish sync snapshot from Store Tablet to Cloud Bridge (Supabase REST or local relay)
  */
 export async function pushSyncToCloud(
   db: SQLiteDatabase,
@@ -269,8 +269,39 @@ export async function pushSyncToCloud(
     useSettingsStore.getState().setCloudSyncStatus('syncing');
     const payload = await compileSyncPayload(db, pairingCode);
 
-    // Save to cloud bridge buffer
+    // Save to local cloud bridge buffer
     cloudBuffer[pairingCode] = payload;
+
+    const { supabaseUrl, supabaseAnonKey } = useSettingsStore.getState();
+
+    // If Supabase project credentials are configured, push over HTTPS internet
+    if (supabaseUrl && supabaseAnonKey) {
+      try {
+        const cleanUrl = supabaseUrl.trim().replace(/\/+$/, '');
+        const response = await fetch(`${cleanUrl}/rest/v1/store_sync`, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseAnonKey.trim(),
+            Authorization: `Bearer ${supabaseAnonKey.trim()}`,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=merge-duplicates',
+          },
+          body: JSON.stringify({
+            pairing_code: pairingCode,
+            store_name: payload.storeName,
+            payload: JSON.stringify(payload),
+            updated_at: new Date().toISOString(),
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          console.warn('Supabase push warning:', errText);
+        }
+      } catch (cloudErr: any) {
+        console.warn('Supabase push network error:', cloudErr?.message);
+      }
+    }
 
     useSettingsStore.getState().setCloudSyncStatus('synced');
     useSettingsStore.getState().setCloudConnected(true);
@@ -290,8 +321,41 @@ export async function fetchSyncFromCloud(
 ): Promise<{ success: boolean; payload?: StoreSyncPayload; error?: string }> {
   try {
     useSettingsStore.getState().setCloudSyncStatus('syncing');
+    const { supabaseUrl, supabaseAnonKey } = useSettingsStore.getState();
 
-    // Check if cloud buffer has data for this code
+    // If Supabase is configured, pull over internet via HTTPS REST
+    if (supabaseUrl && supabaseAnonKey) {
+      try {
+        const cleanUrl = supabaseUrl.trim().replace(/\/+$/, '');
+        const response = await fetch(
+          `${cleanUrl}/rest/v1/store_sync?pairing_code=eq.${encodeURIComponent(pairingCode)}&select=*`,
+          {
+            headers: {
+              apikey: supabaseAnonKey.trim(),
+              Authorization: `Bearer ${supabaseAnonKey.trim()}`,
+            },
+          }
+        );
+
+        if (response.ok) {
+          const rows = await response.json();
+          if (Array.isArray(rows) && rows.length > 0) {
+            const raw = rows[0].payload;
+            const parsedPayload: StoreSyncPayload =
+              typeof raw === 'string' ? JSON.parse(raw) : raw;
+
+            cloudBuffer[pairingCode] = parsedPayload;
+            useSettingsStore.getState().setCloudSyncStatus('synced');
+            useSettingsStore.getState().setCloudConnected(true);
+            return { success: true, payload: parsedPayload };
+          }
+        }
+      } catch (cloudErr: any) {
+        console.warn('Supabase fetch network error:', cloudErr?.message);
+      }
+    }
+
+    // Check local memory buffer
     if (cloudBuffer[pairingCode]) {
       const payload = cloudBuffer[pairingCode];
       useSettingsStore.getState().setCloudSyncStatus('synced');
@@ -311,7 +375,7 @@ export async function fetchSyncFromCloud(
     useSettingsStore.getState().setCloudSyncStatus('error');
     return {
       success: false,
-      error: `Kode perangkat "${pairingCode}" tidak ditemukan atau tablet kasir sedang offline.`,
+      error: `Kode perangkat "${pairingCode}" belum terhubung atau tablet kasir sedang offline.`,
     };
   } catch (err: any) {
     useSettingsStore.getState().setCloudSyncStatus('error');
