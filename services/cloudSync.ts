@@ -1,6 +1,40 @@
 import type { SQLiteDatabase } from './database';
 import { useSettingsStore } from '@/stores/settingsStore';
 
+export interface DebtSyncItem {
+  id: number;
+  supplier_id?: number;
+  supplier_name: string;
+  supplier_phone?: string;
+  total_amount: number;
+  paid_amount: number;
+  remaining_amount: number;
+  due_date: string | null;
+  status: string; // 'unpaid' | 'partial' | 'paid'
+  created_at: string;
+}
+
+export interface ReceivableSyncItem {
+  id: number;
+  customer_id?: number;
+  customer_name: string;
+  customer_phone?: string;
+  total_amount: number;
+  paid_amount: number;
+  remaining_amount: number;
+  due_date: string | null;
+  status: string; // 'unpaid' | 'partial' | 'paid'
+  created_at: string;
+}
+
+export interface PendingBankDeposit {
+  id: string;
+  amount: number;
+  bankTarget: string;
+  notes: string;
+  timestamp: string;
+}
+
 export interface StoreSyncPayload {
   pairingCode: string;
   storeName: string;
@@ -35,22 +69,9 @@ export interface StoreSyncPayload {
     totalDebtUnpaid: number;
     totalReceivableUnpaid: number;
   };
-  debtsList: {
-    id: number;
-    supplier_name: string;
-    total_amount: number;
-    paid_amount: number;
-    due_date: string | null;
-    status: string;
-  }[];
-  receivablesList: {
-    id: number;
-    customer_name: string;
-    total_amount: number;
-    paid_amount: number;
-    due_date: string | null;
-    status: string;
-  }[];
+  debtsList: DebtSyncItem[];
+  receivablesList: ReceivableSyncItem[];
+  pendingDeposits?: PendingBankDeposit[];
   activeShift: {
     cashierName: string;
     shiftNumber: number;
@@ -236,50 +257,42 @@ export async function compileSyncPayload(
   const totalDebtUnpaid = debtRow?.total_unpaid || 0;
   const totalReceivableUnpaid = recRow?.total_unpaid || 0;
 
-  // Detailed debts list
-  const debtsList = await db.getAllAsync<{
-    id: number;
-    supplier_name: string;
-    total_amount: number;
-    paid_amount: number;
-    due_date: string | null;
-    status: string;
-  }>(
+  // Detailed debts list (seluruh hutang aktif dan riwayat hutang supplier)
+  const debtsList = await db.getAllAsync<DebtSyncItem>(
     `SELECT 
        sd.id,
+       sd.supplier_id,
        COALESCE(s.name, 'Supplier Umum') as supplier_name,
+       COALESCE(s.phone, '') as supplier_phone,
        sd.total_amount,
        sd.paid_amount,
+       MAX(0, sd.total_amount - sd.paid_amount) as remaining_amount,
        sd.due_date,
-       sd.status
+       sd.status,
+       sd.created_at
      FROM supplier_debts sd
      LEFT JOIN suppliers s ON s.id = sd.supplier_id
-     WHERE sd.status != 'paid'
      ORDER BY sd.id DESC
-     LIMIT 5`
+     LIMIT 50`
   );
 
-  // Detailed receivables list
-  const receivablesList = await db.getAllAsync<{
-    id: number;
-    customer_name: string;
-    total_amount: number;
-    paid_amount: number;
-    due_date: string | null;
-    status: string;
-  }>(
+  // Detailed receivables list (seluruh piutang/kasbon pelanggan aktif dan riwayat)
+  const receivablesList = await db.getAllAsync<ReceivableSyncItem>(
     `SELECT 
        cr.id,
+       cr.customer_id,
        COALESCE(c.name, 'Pelanggan Bon') as customer_name,
+       COALESCE(c.phone, '') as customer_phone,
        cr.total_amount,
        cr.paid_amount,
+       MAX(0, cr.total_amount - cr.paid_amount) as remaining_amount,
        cr.due_date,
-       cr.status
+       cr.status,
+       cr.created_at
      FROM customer_receivables cr
      LEFT JOIN customers c ON c.id = cr.customer_id
-     WHERE cr.status != 'paid'
      ORDER BY cr.id DESC
-     LIMIT 5`
+     LIMIT 50`
   );
 
   // 7. Active Shift
@@ -454,10 +467,67 @@ export async function pushSyncToCloud(
 
     const { supabaseUrl, supabaseAnonKey } = useSettingsStore.getState();
 
-    // If Supabase project credentials are configured, push over HTTPS internet
+    // If Supabase project credentials are configured, check for pending owner actions & push over HTTPS
     if (supabaseUrl && supabaseAnonKey) {
       try {
         const cleanUrl = supabaseUrl.trim().replace(/\/+$/, '');
+
+        // Reconcile pending bank deposits from HP Pemilik if any
+        try {
+          const checkRes = await fetch(
+            `${cleanUrl}/rest/v1/store_sync?pairing_code=eq.${encodeURIComponent(pairingCode)}&select=payload`,
+            {
+              headers: {
+                apikey: supabaseAnonKey.trim(),
+                Authorization: `Bearer ${supabaseAnonKey.trim()}`,
+              },
+            }
+          );
+          if (checkRes.ok) {
+            const rows = await checkRes.json();
+            if (Array.isArray(rows) && rows.length > 0) {
+              const cloudPl: StoreSyncPayload =
+                typeof rows[0].payload === 'string'
+                  ? JSON.parse(rows[0].payload)
+                  : rows[0].payload;
+
+              if (cloudPl?.pendingDeposits && cloudPl.pendingDeposits.length > 0) {
+                let anyApplied = false;
+                for (const dep of cloudPl.pendingDeposits) {
+                  const tag = `[dep_${dep.id}]`;
+                  const existing = await db.getFirstAsync<{ id: number }>(
+                    `SELECT id FROM cash_ledger WHERE note LIKE ?`,
+                    [`%${tag}%`]
+                  );
+                  if (!existing) {
+                    await db.runAsync(
+                      `INSERT INTO cash_ledger (type, category, amount, source, note, created_at)
+                       VALUES ('expense', 'Setor Kas ke Bank', ?, 'cash', ?, datetime('now', 'localtime'))`,
+                      [dep.amount, `Setor ke ${dep.bankTarget} via HP Pemilik ${tag}${dep.notes ? ` - ${dep.notes}` : ''}`]
+                    );
+                    await db.runAsync(
+                      `INSERT INTO cash_ledger (type, category, amount, source, note, created_at)
+                       VALUES ('income', 'Setor Kas ke Bank', ?, 'bank', ?, datetime('now', 'localtime'))`,
+                      [dep.amount, `Terima setoran laci ke ${dep.bankTarget} via HP Pemilik ${tag}`]
+                    );
+                    anyApplied = true;
+                  }
+                }
+                if (anyApplied) {
+                  try {
+                    const { useCashStore } = await import('@/stores/cashStore');
+                    await useCashStore.getState().loadLedger(db);
+                  } catch {}
+                }
+              }
+            }
+          }
+        } catch {}
+
+        // Re-read payload after applying pending deposits so balances match exactly
+        const finalPayload = await compileSyncPayload(db, pairingCode);
+        cloudBuffer[pairingCode] = finalPayload;
+
         const response = await fetch(`${cleanUrl}/rest/v1/store_sync`, {
           method: 'POST',
           headers: {
@@ -468,8 +538,8 @@ export async function pushSyncToCloud(
           },
           body: JSON.stringify({
             pairing_code: pairingCode,
-            store_name: payload.storeName,
-            payload: JSON.stringify(payload),
+            store_name: finalPayload.storeName,
+            payload: JSON.stringify(finalPayload),
             updated_at: new Date().toISOString(),
           }),
         });
@@ -588,3 +658,118 @@ export async function fetchSyncFromCloud(
     return { success: false, error: err?.message || 'Gagal mengambil data dari server' };
   }
 }
+
+/**
+ * Submit a bank deposit transaction from Owner's smartphone directly to Cloud Bridge,
+ * queued for reconciliation by the Store Tablet upon its next sync.
+ */
+export async function submitRemoteBankDeposit(
+  pairingCode: string,
+  amount: number,
+  bankTarget: string,
+  notes: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabaseUrl, supabaseAnonKey } = useSettingsStore.getState();
+    if (!supabaseUrl || !supabaseAnonKey || !pairingCode) {
+      return { success: false, error: 'Koneksi Cloud / Kode Pairing belum aktif' };
+    }
+
+    const cleanUrl = supabaseUrl.trim().replace(/\/+$/, '');
+    // 1. Fetch current cloud payload
+    const getRes = await fetch(
+      `${cleanUrl}/rest/v1/store_sync?pairing_code=eq.${encodeURIComponent(pairingCode)}&select=*`,
+      {
+        headers: {
+          apikey: supabaseAnonKey.trim(),
+          Authorization: `Bearer ${supabaseAnonKey.trim()}`,
+        },
+      }
+    );
+
+    if (!getRes.ok) {
+      return { success: false, error: 'Gagal menghubungi server cloud' };
+    }
+
+    const rows = await getRes.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { success: false, error: 'Data toko belum ditemukan di cloud' };
+    }
+
+    const currentPayload: StoreSyncPayload =
+      typeof rows[0].payload === 'string'
+        ? JSON.parse(rows[0].payload)
+        : rows[0].payload;
+
+    // 2. Mutate balances in payload
+    const oldCashHand = currentPayload.cashLiquidity?.cashHand ?? 0;
+    const oldCashBank = currentPayload.cashLiquidity?.cashBank ?? 0;
+    const newCashHand = Math.max(0, oldCashHand - amount);
+    const newCashBank = oldCashBank + amount;
+
+    currentPayload.cashLiquidity = {
+      ...currentPayload.cashLiquidity,
+      cashHand: newCashHand,
+      cashBank: newCashBank,
+      totalCash: newCashHand + newCashBank,
+    };
+
+    // 3. Add to recent ledger
+    const nowIso = new Date().toISOString();
+    const newLedgerItem = {
+      id: Date.now(),
+      type: 'expense',
+      category: 'Setor Kas ke Bank',
+      amount,
+      source: 'cash',
+      note: `Setor ke ${bankTarget} via HP Pemilik${notes ? ` (${notes})` : ''}`,
+      created_at: nowIso,
+    };
+    currentPayload.recentLedger = [
+      newLedgerItem,
+      ...(currentPayload.recentLedger || []).slice(0, 9),
+    ];
+
+    // 4. Add to pendingDeposits queue for tablet to apply to local SQLite
+    const depositItem: PendingBankDeposit = {
+      id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      amount,
+      bankTarget,
+      notes: notes.trim(),
+      timestamp: nowIso,
+    };
+
+    currentPayload.pendingDeposits = [
+      ...(currentPayload.pendingDeposits || []),
+      depositItem,
+    ];
+    currentPayload.updatedAt = nowIso;
+
+    // 5. Push updated payload back to Supabase
+    const putRes = await fetch(`${cleanUrl}/rest/v1/store_sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseAnonKey.trim(),
+        Authorization: `Bearer ${supabaseAnonKey.trim()}`,
+        Prefer: 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify({
+        pairing_code: pairingCode,
+        store_name: currentPayload.storeName,
+        payload: JSON.stringify(currentPayload),
+        updated_at: nowIso,
+      }),
+    });
+
+    if (!putRes.ok) {
+      return { success: false, error: 'Gagal memperbarui data setoran di cloud' };
+    }
+
+    cloudBuffer[pairingCode] = currentPayload;
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Gagal mencatat setor bank ke cloud' };
+  }
+}
+

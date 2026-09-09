@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
 import { useCashStore } from '@/stores/cashStore';
+import { triggerAutoSync } from '@/services/cloudSync';
 
 export interface Customer {
   id: number;
@@ -174,6 +175,7 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       await db.runAsync('DELETE FROM customers WHERE id = ?', id);
       await get().loadCustomers(db);
       await get().loadReceivables(db);
+      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       return { success: false, message: e?.message || 'Gagal menghapus pelanggan' };
@@ -232,6 +234,7 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       await db.runAsync('DELETE FROM suppliers WHERE id = ?', id);
       await get().loadSuppliers(db);
       await get().loadDebts(db);
+      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       return { success: false, message: e?.message || 'Gagal menghapus supplier' };
@@ -299,6 +302,7 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       dueDate ?? null
     );
     await get().loadReceivables(db);
+    triggerAutoSync(db);
   },
 
   payReceivable: async (db, receivableId, amount, notes = '', paymentDate, paymentSource = 'hand') => {
@@ -370,6 +374,7 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
 
       await get().loadReceivables(db);
       await useCashStore.getState().loadLedger(db);
+      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       console.error('payReceivable error:', e);
@@ -465,6 +470,7 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       dueDate ?? null
     );
     await get().loadDebts(db);
+    triggerAutoSync(db);
   },
 
   payDebt: async (db, debtId, amount, notes = '', paymentDate, paymentSource = 'hand') => {
@@ -551,6 +557,7 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
 
       await get().loadDebts(db);
       await useCashStore.getState().loadLedger(db);
+      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       console.error('payDebt error:', e);

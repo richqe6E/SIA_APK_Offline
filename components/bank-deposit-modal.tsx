@@ -19,6 +19,7 @@ import { useCashStore } from '@/stores/cashStore';
 import { usePrinterStore } from '@/stores/printerStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { printBankDepositReceipt } from '@/services/print';
+import { submitRemoteBankDeposit } from '@/services/cloudSync';
 
 const POPULAR_BANKS = [
   'BCA',
@@ -103,25 +104,42 @@ export function BankDepositModal({
     }
 
     const targetBank = selectedBank === 'Lainnya' ? (customBank.trim() || 'Bank Lain') : selectedBank;
+    const { storePairingCode } = useSettingsStore.getState();
 
     try {
       setSubmitting(true);
-      await depositToBank(db, numAmount, targetBank, notes.trim());
 
-      // Cetak tanda terima jika dipilih dan printer terhubung
-      if (autoPrint && printerTarget) {
-        try {
-          await printBankDepositReceipt({
-            storeName,
-            depositAmount: numAmount,
-            remainingCash: currentBalance - numAmount,
-            bankTarget: targetBank,
-            notes: notes.trim(),
-            cashierName: currentUserRole === 'kasir' ? 'Kasir' : 'Pemilik Toko',
-            date: new Date(),
-          });
-        } catch (printErr) {
-          console.warn('Gagal cetak tanda terima setor bank:', printErr);
+      if (currentUserRole === 'pemantau') {
+        // Eksekusi dari HP Pemilik: Kirim ke Cloud Bridge & antrekan untuk rekonsiliasi tablet
+        const res = await submitRemoteBankDeposit(
+          storePairingCode,
+          numAmount,
+          targetBank,
+          notes.trim()
+        );
+
+        if (!res.success) {
+          throw new Error(res.error || 'Gagal mengirim data setoran ke cloud');
+        }
+      } else {
+        // Eksekusi dari Tablet Kasir: Tulis langsung ke database lokal SQLite
+        await depositToBank(db, numAmount, targetBank, notes.trim());
+
+        // Cetak tanda terima jika dipilih dan printer terhubung
+        if (autoPrint && printerTarget) {
+          try {
+            await printBankDepositReceipt({
+              storeName,
+              depositAmount: numAmount,
+              remainingCash: currentBalance - numAmount,
+              bankTarget: targetBank,
+              notes: notes.trim(),
+              cashierName: currentUserRole === 'kasir' ? 'Kasir' : 'Pemilik Toko',
+              date: new Date(),
+            });
+          } catch (printErr) {
+            console.warn('Gagal cetak tanda terima setor bank:', printErr);
+          }
         }
       }
 
@@ -133,8 +151,8 @@ export function BankDepositModal({
       onClose();
 
       Alert.alert(
-        'Setoran Berhasil Dicatat',
-        `Uang kas sebesar Rp ${numAmount.toLocaleString('id-ID')} telah dipindahkan ke ${targetBank}.\n\nSaldo kas fisik di laci telah diperbarui secara akurat dan laba usaha Anda tetap utuh.`
+        'Setoran Berhasil Dicatat & Terhubung',
+        `Uang kas sebesar Rp ${numAmount.toLocaleString('id-ID')} telah dipindahkan ke ${targetBank}.\n\nData telah tersinkronisasi secara otomatis antara HP Pemilik dan Tablet Kasir di toko.`
       );
     } catch (err: any) {
       setSubmitting(false);

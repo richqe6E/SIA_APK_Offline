@@ -13,16 +13,33 @@ import { Card } from '@/components/ui/card';
 import { Colors } from '@/constants/theme';
 import { useSettingsStore } from '@/stores/settingsStore';
 
+import { useSQLiteContext } from 'expo-sqlite';
+
 interface RoleLoginModalProps {
   visible: boolean;
 }
 
 export function RoleLoginModal({ visible }: RoleLoginModalProps) {
-  const { storeName, loginAsKasir, loginAsPemilik, loginAsPemantau } = useSettingsStore();
+  const db = useSQLiteContext();
+  const { storeName, loginAsKasir, loginAsPemilik, loginAsPemantau, loadSettings } = useSettingsStore();
   const [pinMode, setPinMode] = useState(false);
   const [targetRole, setTargetRole] = useState<'pemilik' | 'pemantau'>('pemilik');
   const [pin, setPin] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
+      setErrorMsg('');
+      setPin('');
+      await loadSettings(db);
+    } catch {
+      // ignore
+    } finally {
+      setTimeout(() => setRefreshing(false), 400);
+    }
+  };
 
   const handleKasirLogin = () => {
     setErrorMsg('');
@@ -65,6 +82,21 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
     <Modal visible={visible} transparent animationType="fade">
       <ThemedView style={styles.overlay}>
         <Card style={styles.card} padding={28}>
+          {/* Top Action Bar: Refresh */}
+          <View style={styles.topBar}>
+            <TouchableOpacity
+              style={styles.refreshBtn}
+              onPress={handleRefresh}
+              activeOpacity={0.7}
+              disabled={refreshing}
+            >
+              <ThemedText style={styles.refreshIcon}>{refreshing ? '⏳' : '🔄'}</ThemedText>
+              <ThemedText style={styles.refreshText}>
+                {refreshing ? 'Menyegarkan...' : 'Segarkan Halaman'}
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
+
           {/* Header Toko */}
           <View style={styles.header}>
             <Image
@@ -451,6 +483,30 @@ const styles = StyleSheet.create({
   },
   backspaceKeyText: {
     fontSize: 18,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 4,
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  refreshIcon: {
+    fontSize: 13,
+  },
+  refreshText: {
+    fontSize: 12,
     fontWeight: '700',
     color: '#475569',
   },

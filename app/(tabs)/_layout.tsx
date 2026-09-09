@@ -7,6 +7,7 @@ import { Colors } from '@/constants/theme';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { RoleLoginModal } from '@/components/role-login-modal';
 import { useSQLiteContext } from 'expo-sqlite';
+import { triggerAutoSync } from '@/services/cloudSync';
 
 export default function TabLayout() {
   const db = useSQLiteContext();
@@ -15,6 +16,19 @@ export default function TabLayout() {
   useEffect(() => {
     loadSettings(db);
   }, [db, loadSettings]);
+
+  useEffect(() => {
+    if (!isOnboarded || currentUserRole === 'pemantau') return;
+    // Initial sync on startup
+    triggerAutoSync(db);
+
+    // Periodic check every 30s to keep cloud & tablet reconciled
+    const timer = setInterval(() => {
+      triggerAutoSync(db);
+    }, 30000);
+
+    return () => clearInterval(timer);
+  }, [db, isOnboarded, currentUserRole]);
 
   const isKasir = currentUserRole === 'kasir';
   const isPemantau = currentUserRole === 'pemantau';

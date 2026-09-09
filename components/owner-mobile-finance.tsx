@@ -5,6 +5,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -15,7 +16,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Card } from '@/components/ui/card';
-import { Colors } from '@/constants/theme';
+import { Colors, Shadows } from '@/constants/theme';
 import { BankDepositModal } from '@/components/bank-deposit-modal';
 
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -44,6 +45,11 @@ export function OwnerMobileFinance() {
   const [refreshing, setRefreshing] = useState(false);
   const [syncData, setSyncData] = useState<StoreSyncPayload | null>(null);
   const [showBankDepositModal, setShowBankDepositModal] = useState(false);
+
+  // Tab 3: Utang Piutang Controls
+  const [debtSubTab, setDebtSubTab] = useState<'receivable' | 'debt'>('receivable');
+  const [debtFilterStatus, setDebtFilterStatus] = useState<'all' | 'unpaid' | 'paid'>('all');
+  const [debtSearchQuery, setDebtSearchQuery] = useState('');
 
   const loadData = useCallback(async () => {
     try {
@@ -371,87 +377,415 @@ export function OwnerMobileFinance() {
           </View>
         )}
 
-        {/* TAB 3: UTANG & PIUTANG */}
+        {/* TAB 3: UTANG & PIUTANG LENGKAP */}
         {activeTab === 'utangpiutang' && (
           <View style={styles.tabContent}>
             {/* Overview Comparison Cards */}
             <View style={styles.debtOverviewRow}>
-              <Card style={[styles.debtSummaryCard, styles.recSummaryCard]} padding={16}>
-                <ThemedText style={styles.debtCardTitle}>PIUTANG PELANGGAN</ThemedText>
+              <Card style={[styles.debtSummaryCard, styles.recSummaryCard]} padding={14}>
+                <ThemedText style={styles.debtCardTitle}>PIUTANG KASBON</ThemedText>
                 <ThemedText style={styles.recHero}>{formatRupiah(recUnpaid)}</ThemedText>
-                <ThemedText style={styles.debtCardSub}>Uang toko di pelanggan</ThemedText>
+                <ThemedText style={styles.debtCardSub}>Total {recList.length} nota kasbon</ThemedText>
               </Card>
 
-              <Card style={[styles.debtSummaryCard, styles.debtSupplierCard]} padding={16}>
-                <ThemedText style={styles.debtCardTitle}>UTANG KE SUPPLIER</ThemedText>
+              <Card style={[styles.debtSummaryCard, styles.debtSupplierCard]} padding={14}>
+                <ThemedText style={styles.debtCardTitle}>HUTANG SUPPLIER</ThemedText>
                 <ThemedText style={styles.debtHero}>{formatRupiah(debtUnpaid)}</ThemedText>
-                <ThemedText style={styles.debtCardSub}>Kewajiban kulakan stok</ThemedText>
+                <ThemedText style={styles.debtCardSub}>Total {debtsList.length} tagihan kulakan</ThemedText>
               </Card>
             </View>
 
-            {/* List Piutang Pelanggan */}
-            <Card style={styles.card} padding={16}>
-              <ThemedText style={styles.sectionTitle}>👥 Tagihan Pelanggan Belum Lunas</ThemedText>
-              {recList.length === 0 ? (
-                <ThemedText style={styles.emptyText}>Tidak ada piutang pelanggan saat ini.</ThemedText>
-              ) : (
-                recList.map((item) => (
-                  <View key={item.id} style={styles.debtListItem}>
-                    <View style={{ flex: 1 }}>
-                      <ThemedText style={styles.debtEntityName}>{item.customer_name}</ThemedText>
-                      <ThemedText style={styles.debtDueDate}>
-                        Tempo: {item.due_date ? item.due_date : 'Belum diatur'}
-                      </ThemedText>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <ThemedText style={styles.debtItemTotal}>
-                        {formatRupiah(item.total_amount - item.paid_amount)}
-                      </ThemedText>
-                      <ThemedText style={styles.debtItemStatus}>
-                        {item.status === 'partial' ? 'Dicicil' : 'Belum Lunas'}
-                      </ThemedText>
-                    </View>
-                  </View>
-                ))
-              )}
-            </Card>
+            {/* Sub-Tab Switcher: Kasbon Pelanggan vs Hutang Supplier */}
+            <View style={styles.subTabRow}>
+              <TouchableOpacity
+                style={[styles.subTabBtn, debtSubTab === 'receivable' && styles.subTabBtnActive]}
+                onPress={() => setDebtSubTab('receivable')}
+                activeOpacity={0.8}
+              >
+                <ThemedText
+                  style={[styles.subTabText, debtSubTab === 'receivable' && styles.subTabTextActive]}
+                >
+                  👥 Kasbon Pelanggan ({recList.length})
+                </ThemedText>
+              </TouchableOpacity>
 
-            {/* List Utang Supplier */}
-            <Card style={styles.card} padding={16}>
-              <ThemedText style={styles.sectionTitle}>🏢 Utang Supplier Belum Lunas</ThemedText>
-              {debtsList.length === 0 ? (
-                <ThemedText style={styles.emptyText}>Tidak ada utang supplier saat ini.</ThemedText>
-              ) : (
-                debtsList.map((item) => (
-                  <View key={item.id} style={styles.debtListItem}>
-                    <View style={{ flex: 1 }}>
-                      <ThemedText style={styles.debtEntityName}>{item.supplier_name}</ThemedText>
-                      <ThemedText style={styles.debtDueDate}>
-                        Tempo: {item.due_date ? item.due_date : 'Belum diatur'}
-                      </ThemedText>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <ThemedText style={[styles.debtItemTotal, { color: '#dc2626' }]}>
-                        {formatRupiah(item.total_amount - item.paid_amount)}
-                      </ThemedText>
-                      <ThemedText style={styles.debtItemStatus}>
-                        {item.status === 'partial' ? 'Dicicil' : 'Belum Lunas'}
-                      </ThemedText>
-                    </View>
-                  </View>
-                ))
-              )}
-            </Card>
+              <TouchableOpacity
+                style={[styles.subTabBtn, debtSubTab === 'debt' && styles.subTabBtnActive]}
+                onPress={() => setDebtSubTab('debt')}
+                activeOpacity={0.8}
+              >
+                <ThemedText
+                  style={[styles.subTabText, debtSubTab === 'debt' && styles.subTabTextActive]}
+                >
+                  🏢 Hutang Supplier ({debtsList.length})
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
 
-            <TouchableOpacity
-              style={styles.manageDebtBtn}
-              activeOpacity={0.8}
-              onPress={() => router.push('/debt-receivable' as any)}
-            >
-              <ThemedText style={styles.manageDebtBtnText}>
-                ⚙️ Buka Menu Kelola Hutang & Piutang Lengkap ›
+            {/* Search and Status Filters */}
+            <View style={styles.filterSection}>
+              <View style={styles.searchBox}>
+                <ThemedText style={{ fontSize: 14 }}>🔍</ThemedText>
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder={
+                    debtSubTab === 'receivable'
+                      ? 'Cari nama pelanggan atau nomor HP...'
+                      : 'Cari nama supplier atau telepon...'
+                  }
+                  placeholderTextColor="#94a3b8"
+                  value={debtSearchQuery}
+                  onChangeText={setDebtSearchQuery}
+                />
+                {debtSearchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setDebtSearchQuery('')}>
+                    <ThemedText style={{ fontSize: 13, color: '#94a3b8' }}>✕</ThemedText>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.filterPillsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterPill,
+                    debtFilterStatus === 'all' && styles.filterPillActive,
+                  ]}
+                  onPress={() => setDebtFilterStatus('all')}
+                >
+                  <ThemedText
+                    style={[
+                      styles.filterPillText,
+                      debtFilterStatus === 'all' && styles.filterPillTextActive,
+                    ]}
+                  >
+                    Semua
+                  </ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.filterPill,
+                    debtFilterStatus === 'unpaid' && styles.filterPillActive,
+                  ]}
+                  onPress={() => setDebtFilterStatus('unpaid')}
+                >
+                  <ThemedText
+                    style={[
+                      styles.filterPillText,
+                      debtFilterStatus === 'unpaid' && styles.filterPillTextActive,
+                    ]}
+                  >
+                    Belum Lunas
+                  </ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.filterPill,
+                    debtFilterStatus === 'paid' && styles.filterPillActive,
+                  ]}
+                  onPress={() => setDebtFilterStatus('paid')}
+                >
+                  <ThemedText
+                    style={[
+                      styles.filterPillText,
+                      debtFilterStatus === 'paid' && styles.filterPillTextActive,
+                    ]}
+                  >
+                    Lunas
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Content List: Kasbon Pelanggan */}
+            {debtSubTab === 'receivable' && (
+              <View style={{ gap: 10 }}>
+                {recList.filter((item) => {
+                  const matchQuery =
+                    item.customer_name?.toLowerCase().includes(debtSearchQuery.toLowerCase()) ||
+                    (item.customer_phone && item.customer_phone.includes(debtSearchQuery));
+                  if (!matchQuery) return false;
+                  if (debtFilterStatus === 'unpaid') return item.status !== 'paid';
+                  if (debtFilterStatus === 'paid') return item.status === 'paid';
+                  return true;
+                }).length === 0 ? (
+                  <Card style={styles.emptyCard} padding={24}>
+                    <ThemedText style={{ fontSize: 32, textAlign: 'center', marginBottom: 8 }}>
+                      🎉
+                    </ThemedText>
+                    <ThemedText style={styles.emptyCardTitle}>
+                      {debtSearchQuery
+                        ? 'Tidak ada pelanggan yang sesuai pencarian'
+                        : debtFilterStatus === 'unpaid'
+                        ? 'Semua kasbon pelanggan telah lunas!'
+                        : 'Belum ada catatan kasbon pelanggan'}
+                    </ThemedText>
+                    <ThemedText style={styles.emptyCardSub}>
+                      Data kasbon langsung disinkronkan otomatis dari tablet kasir toko.
+                    </ThemedText>
+                  </Card>
+                ) : (
+                  recList
+                    .filter((item) => {
+                      const matchQuery =
+                        item.customer_name?.toLowerCase().includes(debtSearchQuery.toLowerCase()) ||
+                        (item.customer_phone && item.customer_phone.includes(debtSearchQuery));
+                      if (!matchQuery) return false;
+                      if (debtFilterStatus === 'unpaid') return item.status !== 'paid';
+                      if (debtFilterStatus === 'paid') return item.status === 'paid';
+                      return true;
+                    })
+                    .map((item) => {
+                      const remaining = Math.max(0, item.total_amount - item.paid_amount);
+                      const isPaid = item.status === 'paid' || remaining <= 0;
+                      const isPartial = item.status === 'partial' && remaining > 0;
+                      const percent =
+                        item.total_amount > 0
+                          ? Math.min(100, Math.round((item.paid_amount / item.total_amount) * 100))
+                          : 0;
+
+                      return (
+                        <Card key={item.id} style={styles.itemCard} padding={16}>
+                          {/* Top Row: Name & Status Badge */}
+                          <View style={styles.itemHeaderRow}>
+                            <View style={{ flex: 1 }}>
+                              <ThemedText style={styles.itemName} numberOfLines={1}>
+                                {item.customer_name}
+                              </ThemedText>
+                              {item.customer_phone ? (
+                                <ThemedText style={styles.itemPhone}>
+                                  📞 {item.customer_phone}
+                                </ThemedText>
+                              ) : null}
+                            </View>
+
+                            <View
+                              style={[
+                                styles.statusBadge,
+                                isPaid
+                                  ? styles.badgeLunas
+                                  : isPartial
+                                  ? styles.badgePartial
+                                  : styles.badgeUnpaid,
+                              ]}
+                            >
+                              <ThemedText
+                                style={[
+                                  styles.statusBadgeText,
+                                  isPaid
+                                    ? styles.textLunas
+                                    : isPartial
+                                    ? styles.textPartial
+                                    : styles.textUnpaid,
+                                ]}
+                              >
+                                {isPaid ? '✓ Lunas' : isPartial ? 'Cicilan' : 'Belum Lunas'}
+                              </ThemedText>
+                            </View>
+                          </View>
+
+                          {/* Progress Bar */}
+                          <View style={styles.progressTrack}>
+                            <View
+                              style={[
+                                styles.progressBar,
+                                {
+                                  width: `${percent}%`,
+                                  backgroundColor: isPaid ? '#16a34a' : '#0284c7',
+                                },
+                              ]}
+                            />
+                          </View>
+
+                          {/* Financial Details Row */}
+                          <View style={styles.itemDetailRow}>
+                            <View style={styles.detailCol}>
+                              <ThemedText style={styles.detailLbl}>Total Kasbon</ThemedText>
+                              <ThemedText style={styles.detailVal}>
+                                {formatRupiah(item.total_amount)}
+                              </ThemedText>
+                            </View>
+                            <View style={styles.detailCol}>
+                              <ThemedText style={styles.detailLbl}>Sudah Dibayar</ThemedText>
+                              <ThemedText style={[styles.detailVal, { color: '#16a34a' }]}>
+                                {formatRupiah(item.paid_amount)}
+                              </ThemedText>
+                            </View>
+                            <View style={[styles.detailCol, { alignItems: 'flex-end' }]}>
+                              <ThemedText style={styles.detailLbl}>Sisa Tagihan</ThemedText>
+                              <ThemedText
+                                style={[
+                                  styles.detailVal,
+                                  { color: isPaid ? '#16a34a' : '#0284c7', fontWeight: '900' },
+                                ]}
+                              >
+                                {formatRupiah(remaining)}
+                              </ThemedText>
+                            </View>
+                          </View>
+
+                          {/* Footer Info: Due Date */}
+                          <View style={styles.itemFooterRow}>
+                            <ThemedText style={styles.itemFooterText}>
+                              📅 Jatuh Tempo: {item.due_date ? item.due_date : 'Tidak Ditentukan'}
+                            </ThemedText>
+                            <ThemedText style={styles.itemPercentText}>{percent}% Terbayar</ThemedText>
+                          </View>
+                        </Card>
+                      );
+                    })
+                )}
+              </View>
+            )}
+
+            {/* Content List: Hutang Supplier */}
+            {debtSubTab === 'debt' && (
+              <View style={{ gap: 10 }}>
+                {debtsList.filter((item) => {
+                  const matchQuery =
+                    item.supplier_name?.toLowerCase().includes(debtSearchQuery.toLowerCase()) ||
+                    (item.supplier_phone && item.supplier_phone.includes(debtSearchQuery));
+                  if (!matchQuery) return false;
+                  if (debtFilterStatus === 'unpaid') return item.status !== 'paid';
+                  if (debtFilterStatus === 'paid') return item.status === 'paid';
+                  return true;
+                }).length === 0 ? (
+                  <Card style={styles.emptyCard} padding={24}>
+                    <ThemedText style={{ fontSize: 32, textAlign: 'center', marginBottom: 8 }}>
+                      🎉
+                    </ThemedText>
+                    <ThemedText style={styles.emptyCardTitle}>
+                      {debtSearchQuery
+                        ? 'Tidak ada supplier yang sesuai pencarian'
+                        : debtFilterStatus === 'unpaid'
+                        ? 'Semua hutang supplier telah lunas!'
+                        : 'Belum ada catatan hutang supplier'}
+                    </ThemedText>
+                    <ThemedText style={styles.emptyCardSub}>
+                      Data hutang langsung disinkronkan otomatis dari tablet kasir toko.
+                    </ThemedText>
+                  </Card>
+                ) : (
+                  debtsList
+                    .filter((item) => {
+                      const matchQuery =
+                        item.supplier_name?.toLowerCase().includes(debtSearchQuery.toLowerCase()) ||
+                        (item.supplier_phone && item.supplier_phone.includes(debtSearchQuery));
+                      if (!matchQuery) return false;
+                      if (debtFilterStatus === 'unpaid') return item.status !== 'paid';
+                      if (debtFilterStatus === 'paid') return item.status === 'paid';
+                      return true;
+                    })
+                    .map((item) => {
+                      const remaining = Math.max(0, item.total_amount - item.paid_amount);
+                      const isPaid = item.status === 'paid' || remaining <= 0;
+                      const isPartial = item.status === 'partial' && remaining > 0;
+                      const percent =
+                        item.total_amount > 0
+                          ? Math.min(100, Math.round((item.paid_amount / item.total_amount) * 100))
+                          : 0;
+
+                      return (
+                        <Card key={item.id} style={styles.itemCard} padding={16}>
+                          {/* Top Row: Supplier Name & Status Badge */}
+                          <View style={styles.itemHeaderRow}>
+                            <View style={{ flex: 1 }}>
+                              <ThemedText style={styles.itemName} numberOfLines={1}>
+                                {item.supplier_name}
+                              </ThemedText>
+                              {item.supplier_phone ? (
+                                <ThemedText style={styles.itemPhone}>
+                                  📞 {item.supplier_phone}
+                                </ThemedText>
+                              ) : null}
+                            </View>
+
+                            <View
+                              style={[
+                                styles.statusBadge,
+                                isPaid
+                                  ? styles.badgeLunas
+                                  : isPartial
+                                  ? styles.badgePartial
+                                  : styles.badgeUnpaid,
+                              ]}
+                            >
+                              <ThemedText
+                                style={[
+                                  styles.statusBadgeText,
+                                  isPaid
+                                    ? styles.textLunas
+                                    : isPartial
+                                    ? styles.textPartial
+                                    : styles.textUnpaid,
+                                ]}
+                              >
+                                {isPaid ? '✓ Lunas' : isPartial ? 'Dicicil' : 'Belum Lunas'}
+                              </ThemedText>
+                            </View>
+                          </View>
+
+                          {/* Progress Bar */}
+                          <View style={styles.progressTrack}>
+                            <View
+                              style={[
+                                styles.progressBar,
+                                {
+                                  width: `${percent}%`,
+                                  backgroundColor: isPaid ? '#16a34a' : '#ea580c',
+                                },
+                              ]}
+                            />
+                          </View>
+
+                          {/* Financial Details Row */}
+                          <View style={styles.itemDetailRow}>
+                            <View style={styles.detailCol}>
+                              <ThemedText style={styles.detailLbl}>Total Hutang</ThemedText>
+                              <ThemedText style={styles.detailVal}>
+                                {formatRupiah(item.total_amount)}
+                              </ThemedText>
+                            </View>
+                            <View style={styles.detailCol}>
+                              <ThemedText style={styles.detailLbl}>Sudah Dibayar</ThemedText>
+                              <ThemedText style={[styles.detailVal, { color: '#16a34a' }]}>
+                                {formatRupiah(item.paid_amount)}
+                              </ThemedText>
+                            </View>
+                            <View style={[styles.detailCol, { alignItems: 'flex-end' }]}>
+                              <ThemedText style={styles.detailLbl}>Sisa Hutang</ThemedText>
+                              <ThemedText
+                                style={[
+                                  styles.detailVal,
+                                  { color: isPaid ? '#16a34a' : '#ea580c', fontWeight: '900' },
+                                ]}
+                              >
+                                {formatRupiah(remaining)}
+                              </ThemedText>
+                            </View>
+                          </View>
+
+                          {/* Footer Info: Due Date */}
+                          <View style={styles.itemFooterRow}>
+                            <ThemedText style={styles.itemFooterText}>
+                              📅 Jatuh Tempo: {item.due_date ? item.due_date : 'Tidak Ditentukan'}
+                            </ThemedText>
+                            <ThemedText style={styles.itemPercentText}>{percent}% Terbayar</ThemedText>
+                          </View>
+                        </Card>
+                      );
+                    })
+                )}
+              </View>
+            )}
+
+            {/* Sync Status Banner at Bottom */}
+            <View style={styles.syncFooterBanner}>
+              <ThemedText style={styles.syncFooterText}>
+                🟢 Data tersinkronisasi otomatis dari Tablet Kasir Toko ({storePairingCode})
               </ThemedText>
-            </TouchableOpacity>
+            </View>
           </View>
         )}
       </ScrollView>
@@ -473,12 +807,12 @@ export function OwnerMobileFinance() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
   },
   headerBar: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    borderBottomColor: '#e2e8f0',
     paddingHorizontal: 16,
     paddingBottom: 12,
   },
@@ -489,14 +823,16 @@ const styles = StyleSheet.create({
   },
   headerBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#0284c7',
+    backgroundColor: '#ede9fe',
+    borderColor: '#c4b5fd',
+    borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
     marginBottom: 4,
   },
   headerBadgeText: {
-    color: '#fff',
+    color: '#6d28d9',
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.5,
@@ -504,17 +840,19 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   headerSub: {
     fontSize: 12,
-    color: '#94a3b8',
+    color: '#64748b',
   },
   refreshBtn: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: '#334155',
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -523,7 +861,7 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f1f5f9',
     borderRadius: 10,
     padding: 3,
   },
@@ -534,12 +872,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   tabBtnActive: {
-    backgroundColor: '#0284c7',
+    backgroundColor: '#5b21b6',
   },
   tabText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#94a3b8',
+    color: '#64748b',
   },
   tabTextActive: {
     color: '#ffffff',
@@ -551,10 +889,11 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   heroPnlCard: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#bae6fd',
+    ...Shadows.sm,
   },
   pnlHeaderRow: {
     flexDirection: 'row',
@@ -564,17 +903,18 @@ const styles = StyleSheet.create({
   pnlCardLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: '#64748b',
     letterSpacing: 0.5,
     marginBottom: 4,
   },
   heroPnlNumber: {
     fontSize: 26,
     fontWeight: '900',
+    color: '#0f172a',
   },
   marginBadge: {
-    backgroundColor: '#16a34a22',
-    borderColor: '#16a34a',
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -583,11 +923,11 @@ const styles = StyleSheet.create({
   marginBadgeText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#4ade80',
+    color: '#16a34a',
   },
   pnlDivider: {
     height: 1,
-    backgroundColor: '#334155',
+    backgroundColor: '#f1f5f9',
     marginVertical: 14,
   },
   pnlRow: {
@@ -597,36 +937,37 @@ const styles = StyleSheet.create({
   },
   pnlRowLabel: {
     fontSize: 13,
-    color: '#cbd5e1',
+    color: '#475569',
     fontWeight: '600',
   },
   pnlRowVal: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   pnlSubtotalRow: {
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
     paddingVertical: 8,
     marginVertical: 4,
   },
   pnlSubtotalLabel: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   pnlSubtotalVal: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   card: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
+    ...Shadows.sm,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -637,7 +978,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#f8fafc',
+    color: '#0f172a',
     marginBottom: 12,
   },
   expenseItemRow: {
@@ -645,7 +986,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    borderBottomColor: '#f1f5f9',
   },
   expenseDot: {
     width: 8,
@@ -658,12 +999,12 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontWeight: '700',
-    color: '#cbd5e1',
+    color: '#334155',
   },
   expenseAmount: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#ef4444',
+    color: '#dc2626',
   },
   compareGrid: {
     flexDirection: 'row',
@@ -671,21 +1012,23 @@ const styles = StyleSheet.create({
   },
   compareBox: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderRadius: 10,
     padding: 12,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   compareLabel: {
     fontSize: 11,
-    color: '#94a3b8',
+    color: '#64748b',
     fontWeight: '700',
     marginBottom: 4,
   },
   compareVal: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   compareSub: {
     fontSize: 10,
@@ -693,21 +1036,22 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   totalCashCard: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#bae6fd',
+    ...Shadows.sm,
   },
   totalCashLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: '#64748b',
     letterSpacing: 0.5,
   },
   totalCashNumber: {
     fontSize: 26,
     fontWeight: '900',
-    color: '#38bdf8',
+    color: '#0284c7',
     marginVertical: 4,
   },
   totalCashSub: {
@@ -727,12 +1071,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   walletHand: {
-    backgroundColor: '#14532d22',
-    borderColor: '#16a34a55',
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
   },
   walletBank: {
-    backgroundColor: '#0c4a6e22',
-    borderColor: '#0284c755',
+    backgroundColor: '#f0f9ff',
+    borderColor: '#bae6fd',
   },
   walletHeader: {
     flexDirection: 'row',
@@ -746,16 +1090,16 @@ const styles = StyleSheet.create({
   walletTitle: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#cbd5e1',
+    color: '#475569',
   },
   walletAmount: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   walletDesc: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: '#64748b',
     marginTop: 2,
   },
   setorBankBtn: {
@@ -765,7 +1109,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   setorBankBtnText: {
-    color: '#fff',
+    color: '#ffffff',
     fontSize: 13,
     fontWeight: '800',
   },
@@ -776,34 +1120,34 @@ const styles = StyleSheet.create({
   },
   denomItem: {
     width: '31%',
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderRadius: 8,
     padding: 8,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
   },
   denomNominal: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   denomCount: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: '#64748b',
     marginVertical: 2,
   },
   denomSubtotal: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   mutationItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    borderBottomColor: '#f1f5f9',
     gap: 10,
   },
   mutationIconBox: {
@@ -814,10 +1158,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconBoxIn: {
-    backgroundColor: '#16a34a22',
+    backgroundColor: '#dcfce7',
   },
   iconBoxOut: {
-    backgroundColor: '#dc262622',
+    backgroundColor: '#fee2e2',
   },
   mutationIcon: {
     fontSize: 16,
@@ -826,15 +1170,15 @@ const styles = StyleSheet.create({
   mutationCategory: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   mutationDesc: {
     fontSize: 11,
-    color: '#94a3b8',
+    color: '#64748b',
   },
   mutationTime: {
     fontSize: 9,
-    color: '#64748b',
+    color: '#94a3b8',
     marginTop: 1,
   },
   mutationAmount: {
@@ -849,81 +1193,251 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 14,
     borderWidth: 1,
+    ...Shadows.sm,
   },
   recSummaryCard: {
-    backgroundColor: '#0c4a6e22',
-    borderColor: '#0284c755',
+    backgroundColor: '#f0f9ff',
+    borderColor: '#bae6fd',
   },
   debtSupplierCard: {
-    backgroundColor: '#451a0322',
-    borderColor: '#ea580c55',
+    backgroundColor: '#fff7ed',
+    borderColor: '#fed7aa',
   },
   debtCardTitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: '#64748b',
     marginBottom: 4,
   },
   recHero: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   debtHero: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#f97316',
+    color: '#ea580c',
   },
   debtCardSub: {
     fontSize: 10,
     color: '#64748b',
     marginTop: 2,
   },
-  debtListItem: {
+  subTabRow: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    padding: 3,
+    gap: 4,
+  },
+  subTabBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  subTabBtnActive: {
+    backgroundColor: '#ffffff',
+    ...Shadows.sm,
+  },
+  subTabText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  subTabTextActive: {
+    color: '#0f172a',
+  },
+  filterSection: {
+    gap: 8,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    ...Shadows.sm,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 12,
+    color: '#0f172a',
+    padding: 0,
+  },
+  filterPillsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  filterPill: {
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  filterPillActive: {
+    backgroundColor: '#ede9fe',
+    borderColor: '#c4b5fd',
+  },
+  filterPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  filterPillTextActive: {
+    color: '#6d28d9',
+  },
+  itemCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 10,
+    ...Shadows.sm,
+  },
+  itemHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  itemName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  itemPhone: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeLunas: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+    borderWidth: 1,
+  },
+  badgePartial: {
+    backgroundColor: '#fef3c7',
+    borderColor: '#fde68a',
+    borderWidth: 1,
+  },
+  badgeUnpaid: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+    borderWidth: 1,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  textLunas: {
+    color: '#16a34a',
+  },
+  textPartial: {
+    color: '#d97706',
+  },
+  textUnpaid: {
+    color: '#dc2626',
+  },
+  progressTrack: {
+    height: 6,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  itemDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8fafc',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  detailCol: {
+    flex: 1,
+  },
+  detailLbl: {
+    fontSize: 9,
+    color: '#64748b',
+    fontWeight: '700',
+  },
+  detailVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginTop: 2,
+  },
+  itemFooterRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155',
   },
-  debtEntityName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#f8fafc',
-  },
-  debtDueDate: {
+  itemFooterText: {
     fontSize: 10,
-    color: '#94a3b8',
-    marginTop: 2,
+    color: '#64748b',
   },
-  debtItemTotal: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#38bdf8',
-  },
-  debtItemStatus: {
+  itemPercentText: {
     fontSize: 10,
-    color: '#f59e0b',
     fontWeight: '700',
+    color: '#0284c7',
   },
-  manageDebtBtn: {
-    backgroundColor: '#334155',
-    paddingVertical: 12,
-    borderRadius: 10,
+  emptyCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     alignItems: 'center',
-    marginTop: 6,
+    ...Shadows.sm,
   },
-  manageDebtBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#38bdf8',
+  emptyCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  emptyCardSub: {
+    fontSize: 11,
+    color: '#64748b',
+    textAlign: 'center',
+    marginTop: 4,
   },
   emptyText: {
     fontSize: 12,
-    color: '#64748b',
+    color: '#94a3b8',
     fontStyle: 'italic',
     textAlign: 'center',
-    paddingVertical: 16,
+    paddingVertical: 12,
+  },
+  syncFooterBanner: {
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginTop: 6,
+  },
+  syncFooterText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#475569',
+    textAlign: 'center',
   },
 });

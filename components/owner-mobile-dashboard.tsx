@@ -15,7 +15,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Card } from '@/components/ui/card';
-import { Colors } from '@/constants/theme';
+import { Colors, Shadows } from '@/constants/theme';
 import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
 import { BankDepositModal } from '@/components/bank-deposit-modal';
 
@@ -212,24 +212,26 @@ export function OwnerMobileDashboard() {
           </View>
         </View>
 
-        {/* Realtime & Connection Status Pill */}
+        {/* Dedicated Realtime Clock Bar - Tidak Bertabrakan */}
+        <View style={styles.clockRow}>
+          <RealtimeClockBadge compact={false} />
+        </View>
+
+        {/* Dedicated Connection Status Pill */}
         <View style={styles.statusBar}>
-          <View style={styles.syncStatusPill}>
-            <View
-              style={[
-                styles.syncDot,
-                isCloudConnected ? styles.syncDotConnected : styles.syncDotOffline,
-              ]}
-            />
-            <ThemedText style={styles.syncText}>
-              {cloudSyncStatus === 'syncing'
-                ? 'Menyinkronkan data...'
-                : isCloudConnected
-                ? `Tersambung (${storePairingCode}) • Update: ${lastSyncTime || 'Baru saja'}`
-                : `Menghubungkan (${storePairingCode})...`}
-            </ThemedText>
-          </View>
-          <RealtimeClockBadge />
+          <View
+            style={[
+              styles.syncDot,
+              isCloudConnected ? styles.syncDotConnected : styles.syncDotOffline,
+            ]}
+          />
+          <ThemedText style={styles.syncText} numberOfLines={1}>
+            {cloudSyncStatus === 'syncing'
+              ? 'Menyinkronkan data toko...'
+              : isCloudConnected
+              ? `Tersambung ke Tablet Toko (${storePairingCode}) • Update: ${lastSyncTime || 'Baru saja'}`
+              : `Menghubungkan (${storePairingCode})...`}
+          </ThemedText>
         </View>
       </View>
 
@@ -614,14 +616,15 @@ export function OwnerMobileDashboard() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
   },
   headerBar: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 16,
     paddingBottom: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    borderBottomColor: '#e2e8f0',
+    gap: 8,
   },
   headerRow: {
     flexDirection: 'row',
@@ -633,8 +636,8 @@ const styles = StyleSheet.create({
   },
   roleBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#38bdf822',
-    borderColor: '#38bdf8',
+    backgroundColor: '#ede9fe',
+    borderColor: '#c4b5fd',
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -644,17 +647,17 @@ const styles = StyleSheet.create({
   roleBadgeText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: '#6d28d9',
     letterSpacing: 0.5,
   },
   headerTitle: {
     fontSize: 19,
     fontWeight: '800',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#94a3b8',
+    color: '#64748b',
     marginTop: 1,
   },
   headerRight: {
@@ -665,8 +668,10 @@ const styles = StyleSheet.create({
   refreshBtn: {
     width: 38,
     height: 38,
-    borderRadius: 19,
-    backgroundColor: '#334155',
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -674,35 +679,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   logoutBtn: {
-    backgroundColor: '#dc262622',
-    borderColor: '#dc2626',
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
   logoutText: {
-    color: '#ef4444',
+    color: '#dc2626',
     fontSize: 11,
     fontWeight: '700',
   },
+  clockRow: {
+    width: '100%',
+    marginTop: 4,
+  },
   statusBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 10,
-    backgroundColor: '#0f172a',
+    gap: 8,
+    backgroundColor: '#f1f5f9',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#334155',
-  },
-  syncStatusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flex: 1,
+    borderColor: '#e2e8f0',
   },
   syncDot: {
     width: 8,
@@ -710,15 +712,16 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   syncDotConnected: {
-    backgroundColor: '#22c55e',
+    backgroundColor: '#16a34a',
   },
   syncDotOffline: {
-    backgroundColor: '#ef4444',
+    backgroundColor: '#dc2626',
   },
   syncText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#cbd5e1',
+    color: '#475569',
+    flex: 1,
   },
   scroll: {
     flex: 1,
@@ -734,19 +737,21 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 13,
-    color: '#94a3b8',
+    color: '#64748b',
   },
   cardHero: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#38bdf855',
+    borderColor: '#bae6fd',
+    ...Shadows.sm,
   },
   card: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
+    ...Shadows.sm,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -758,7 +763,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 10,
-    backgroundColor: '#38bdf822',
+    backgroundColor: '#e0f2fe',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -766,7 +771,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 10,
-    backgroundColor: '#16a34a22',
+    backgroundColor: '#dcfce7',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -774,7 +779,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 10,
-    backgroundColor: '#8b5cf622',
+    backgroundColor: '#ede9fe',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -782,7 +787,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 10,
-    backgroundColor: '#ea580c22',
+    backgroundColor: '#ffedd5',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -790,7 +795,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 10,
-    backgroundColor: '#f59e0b22',
+    backgroundColor: '#fef3c7',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -800,25 +805,25 @@ const styles = StyleSheet.create({
   heroCardLabel: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: '#0284c7',
     letterSpacing: 0.5,
   },
   cardLabel: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: '#475569',
     letterSpacing: 0.5,
   },
   cardHeroNumber: {
     fontSize: 24,
     fontWeight: '900',
-    color: '#f8fafc',
+    color: '#0f172a',
     marginTop: 2,
   },
   cardHeroNumberCash: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#38bdf8',
+    color: '#0284c7',
     marginTop: 2,
   },
   cardHeroNumberPnl: {
@@ -827,13 +832,13 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   yesterdayBox: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     alignItems: 'flex-end',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
   },
   yesterdayLabel: {
     fontSize: 9,
@@ -843,7 +848,7 @@ const styles = StyleSheet.create({
   yesterdayVal: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: '#475569',
   },
   cardSubtitle: {
     fontSize: 11,
@@ -851,7 +856,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   pnlDetailBtn: {
-    backgroundColor: '#334155',
+    backgroundColor: '#ede9fe',
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -859,31 +866,33 @@ const styles = StyleSheet.create({
   pnlDetailBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: '#6d28d9',
   },
   metricsGrid: {
     flexDirection: 'row',
     marginTop: 14,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#334155',
+    borderTopColor: '#f1f5f9',
     gap: 8,
   },
   metricItem: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderRadius: 8,
     padding: 8,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   metricVal: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   metricLbl: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: '#64748b',
     marginTop: 2,
   },
   pnlSummaryGrid: {
@@ -892,23 +901,25 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#334155',
+    borderTopColor: '#f1f5f9',
   },
   pnlGridItem: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderRadius: 8,
     padding: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   pnlGridLabel: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: '#64748b',
     fontWeight: '600',
   },
   pnlGridVal: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#f8fafc',
+    color: '#0f172a',
     marginTop: 2,
   },
   pocketsRow: {
@@ -923,12 +934,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   pocketHand: {
-    backgroundColor: '#14532d22',
-    borderColor: '#16a34a44',
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
   },
   pocketBank: {
-    backgroundColor: '#0c4a6e22',
-    borderColor: '#0284c744',
+    backgroundColor: '#f0f9ff',
+    borderColor: '#bae6fd',
   },
   pocketHeader: {
     flexDirection: 'row',
@@ -942,29 +953,31 @@ const styles = StyleSheet.create({
   pocketTitle: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#cbd5e1',
+    color: '#475569',
   },
   pocketAmount: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   pocketDesc: {
     fontSize: 9,
-    color: '#94a3b8',
+    color: '#64748b',
     marginTop: 2,
   },
   denomChipsContainer: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderRadius: 8,
     padding: 10,
     marginTop: 6,
     marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   denomTitle: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#94a3b8',
+    color: '#64748b',
     marginBottom: 6,
   },
   denomChipRow: {
@@ -973,17 +986,17 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   denomChip: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#cbd5e1',
   },
   denomChipText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   cashActionRow: {
     flexDirection: 'row',
@@ -1002,13 +1015,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#0284c7',
   },
   btnBukuKas: {
-    backgroundColor: '#334155',
+    backgroundColor: '#475569',
   },
   actionBtnIcon: {
     fontSize: 14,
   },
   actionBtnText: {
-    color: '#fff',
+    color: '#ffffff',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1024,28 +1037,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   recBox: {
-    backgroundColor: '#0c4a6e22',
-    borderColor: '#0284c744',
+    backgroundColor: '#f0f9ff',
+    borderColor: '#bae6fd',
   },
   debtBoxCol: {
-    backgroundColor: '#451a0322',
-    borderColor: '#ea580c44',
+    backgroundColor: '#fff7ed',
+    borderColor: '#fed7aa',
   },
   debtBoxLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#94a3b8',
+    color: '#64748b',
   },
   recAmount: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#38bdf8',
+    color: '#0284c7',
     marginTop: 2,
   },
   debtAmount: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#f97316',
+    color: '#ea580c',
     marginTop: 2,
   },
   debtBoxSub: {
@@ -1054,17 +1067,17 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   manageDebtBtn: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     paddingVertical: 10,
     borderRadius: 8,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#cbd5e1',
   },
   manageDebtBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   shiftRow: {
     flexDirection: 'row',
@@ -1075,9 +1088,11 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#334155',
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   shiftIcon: {
     fontSize: 16,
@@ -1085,12 +1100,12 @@ const styles = StyleSheet.create({
   shiftLabel: {
     fontSize: 9,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: '#64748b',
   },
   shiftCashierName: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   shiftTime: {
     fontSize: 10,
@@ -1103,27 +1118,31 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   shiftOpenBadge: {
-    backgroundColor: '#16a34a22',
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+    borderWidth: 1,
   },
   shiftClosedBadge: {
-    backgroundColor: '#334155',
+    backgroundColor: '#f1f5f9',
+    borderColor: '#cbd5e1',
+    borderWidth: 1,
   },
   shiftStatusText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#4ade80',
+    color: '#16a34a',
   },
   viewAllText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   mutationRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    borderBottomColor: '#f1f5f9',
     gap: 8,
   },
   mutationBadge: {
@@ -1132,32 +1151,32 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   badgeIn: {
-    backgroundColor: '#16a34a22',
+    backgroundColor: '#dcfce7',
   },
   badgeOut: {
-    backgroundColor: '#dc262622',
+    backgroundColor: '#fee2e2',
   },
   mutationBadgeText: {
     fontSize: 8,
     fontWeight: '800',
-    color: '#cbd5e1',
+    color: '#475569',
   },
   mutationCatName: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   mutationSubText: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: '#64748b',
   },
   mutationVal: {
     fontSize: 12,
     fontWeight: '800',
   },
   alertCard: {
-    backgroundColor: '#451a0322',
-    borderColor: '#ea580c55',
+    backgroundColor: '#fff7ed',
+    borderColor: '#fed7aa',
   },
   alertHeader: {
     flexDirection: 'row',
@@ -1171,7 +1190,7 @@ const styles = StyleSheet.create({
   alertTitle: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#fb923c',
+    color: '#ea580c',
   },
   alertChipsRow: {
     flexDirection: 'row',
@@ -1184,18 +1203,18 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   chipDanger: {
-    backgroundColor: '#dc262633',
+    backgroundColor: '#fee2e2',
   },
   chipWarning: {
-    backgroundColor: '#d9770633',
+    backgroundColor: '#fef3c7',
   },
   chipExpired: {
-    backgroundColor: '#7c3aed33',
+    backgroundColor: '#ede9fe',
   },
   alertChipText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   topProductsList: {
     gap: 8,
@@ -1207,38 +1226,40 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 6,
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    borderBottomColor: '#f1f5f9',
   },
   rankBadge: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#f59e0b22',
+    backgroundColor: '#fef3c7',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#fde68a',
   },
   rankText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#f59e0b',
+    color: '#d97706',
   },
   topProductName: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#f8fafc',
+    color: '#0f172a',
   },
   topProductSub: {
     fontSize: 10,
-    color: '#94a3b8',
+    color: '#64748b',
   },
   topProductRevenue: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   emptyText: {
     fontSize: 11,
-    color: '#64748b',
+    color: '#94a3b8',
     fontStyle: 'italic',
     textAlign: 'center',
     paddingVertical: 12,
