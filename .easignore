@@ -1,0 +1,11 @@
+*.apk
+*.aab
+kendali-usaha-azizah/
+node_modules/
+.expo/
+dist/
+web-build/
+android/app/build/
+android/build/
+android/.gradle/
+.gradle/
