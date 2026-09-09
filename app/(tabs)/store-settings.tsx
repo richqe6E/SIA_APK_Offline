@@ -1,3 +1,4 @@
+import { DevicePairingModal } from '@/components/device-pairing-modal';
 import { ReceiptPreviewModal } from '@/components/receipt-preview-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -48,6 +49,8 @@ export default function StoreSettingsScreen() {
     setAdminPin,
     setDefaultViewMode,
     setAppOrientation,
+    storePairingCode,
+    isCloudConnected,
   } = useSettingsStore();
 
   const [name, setName] = useState(storeName);
@@ -63,6 +66,7 @@ export default function StoreSettingsScreen() {
   const [qrisPath, setQrisPath] = useState(qrisImagePath);
   const [saving, setSaving] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showPairingModal, setShowPairingModal] = useState(false);
 
   useEffect(() => {
     loadSettings(db);
@@ -381,6 +385,40 @@ export default function StoreSettingsScreen() {
             />
           </View>
 
+          {/* Integrasi Perangkat & Cloud Sync */}
+          <View style={{ gap: 8, padding: 14, backgroundColor: '#f0f9ff', borderRadius: 14, borderWidth: 1, borderColor: '#bae6fd' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ThemedText style={{ fontSize: 20 }}>🔗</ThemedText>
+                <View>
+                  <ThemedText type="defaultSemiBold" style={{ fontSize: 13, color: '#0369a1' }}>
+                    Sambungkan Perangkat (Cloud Sync)
+                  </ThemedText>
+                  <ThemedText style={{ fontSize: 11, color: '#0284c7' }}>
+                    Kode Toko: {storePairingCode} • {isCloudConnected ? '🟢 Terhubung' : '🟡 Siap Disambung'}
+                  </ThemedText>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#0284c7',
+                  paddingHorizontal: 12,
+                  paddingVertical: 7,
+                  borderRadius: 8,
+                }}
+                onPress={() => setShowPairingModal(true)}
+              >
+                <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                  Buka Panel
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+            <ThemedText style={{ fontSize: 10, color: '#475569', lineHeight: 14 }}>
+              Gunakan kode ini untuk menghubungkan aplikasi pemantau usaha di smartphone pemilik dengan tablet kasir secara realtime.
+            </ThemedText>
+          </View>
+
           <Button
             title={saving ? 'Menyimpan...' : 'Simpan Semua Perubahan'}
             onPress={handleSave}
@@ -396,6 +434,11 @@ export default function StoreSettingsScreen() {
         storeAddress={address.trim()}
         storePhone={phone.trim()}
         receiptFooter={footer.trim()}
+      />
+
+      <DevicePairingModal
+        visible={showPairingModal}
+        onClose={() => setShowPairingModal(false)}
       />
     </ThemedView>
   );

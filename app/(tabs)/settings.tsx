@@ -1,4 +1,5 @@
 import { AdminPinModal } from '@/components/admin-pin-modal';
+import { DevicePairingModal } from '@/components/device-pairing-modal';
 import { ReceiptPreviewModal } from '@/components/receipt-preview-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -11,6 +12,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
 import React, { useEffect, useState } from 'react';
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -33,6 +35,10 @@ export default function SettingsScreen() {
     loadSettings,
     appOrientation,
     setAppOrientation,
+    currentUserRole,
+    logoutRole,
+    storePairingCode,
+    isCloudConnected,
   } = useSettingsStore();
 
   const { width } = useWindowDimensions();
@@ -60,13 +66,29 @@ export default function SettingsScreen() {
 
   const [pinModalVisible, setPinModalVisible] = useState(false);
   const [receiptPreviewVisible, setReceiptPreviewVisible] = useState(false);
+  const [pairingModalVisible, setPairingModalVisible] = useState(false);
   const [pendingRoute, setPendingRoute] = useState<string | null>(null);
 
   useEffect(() => {
     loadSettings(db);
   }, [db, loadSettings]);
 
-  const menuItems = [
+  const menuItems: {
+    label: string;
+    icon: string;
+    desc: string;
+    route: any;
+    requiresPin: boolean;
+  }[] = [
+    {
+      label: 'Sambungkan Perangkat (Cloud Sync)',
+      icon: '🔗',
+      desc: isCloudConnected
+        ? `🟢 Terhubung (${storePairingCode}) • Ketuk untuk opsi sync`
+        : 'Hubungkan tablet toko & smartphone pemilik usaha',
+      route: null,
+      requiresPin: false,
+    },
     {
       label: 'Atur Toko',
       icon: '🏪',
@@ -105,6 +127,10 @@ export default function SettingsScreen() {
   ];
 
   const handleMenuPress = (item: (typeof menuItems)[0]) => {
+    if (!item.route) {
+      setPairingModalVisible(true);
+      return;
+    }
     if (item.requiresPin) {
       setPendingRoute(item.route);
       setPinModalVisible(true);
@@ -305,6 +331,55 @@ export default function SettingsScreen() {
                   </Card>
                 </Pressable>
               ))}
+
+              {/* Tombol Ganti Peran / Keluar Akun */}
+              <TouchableOpacity
+                style={{
+                  marginTop: 16,
+                  paddingVertical: 14,
+                  paddingHorizontal: 16,
+                  borderRadius: 14,
+                  backgroundColor: '#fee2e2',
+                  borderWidth: 1,
+                  borderColor: '#fecaca',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+                activeOpacity={0.8}
+                onPress={() => {
+                  Alert.alert(
+                    'Keluar Peran / Ganti Akun',
+                    `Saat ini Anda masuk sebagai ${
+                      currentUserRole === 'pemantau'
+                        ? 'Pemantau Usaha (HP)'
+                        : currentUserRole === 'pemilik'
+                        ? 'Pemilik Toko (Tablet)'
+                        : 'Kasir'
+                    }. Apakah ingin keluar dan memilih peran lain?`,
+                    [
+                      { text: 'Batal', style: 'cancel' },
+                      {
+                        text: 'Keluar Peran',
+                        style: 'destructive',
+                        onPress: () => logoutRole(),
+                      },
+                    ]
+                  );
+                }}
+              >
+                <ThemedText style={{ fontSize: 16 }}>🚪</ThemedText>
+                <ThemedText style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>
+                  Ganti Peran / Keluar Akun (
+                  {currentUserRole === 'pemantau'
+                    ? 'Pemantau Usaha'
+                    : currentUserRole === 'pemilik'
+                    ? 'Pemilik Toko'
+                    : 'Kasir'}
+                  )
+                </ThemedText>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -328,6 +403,12 @@ export default function SettingsScreen() {
         storeAddress={storeAddress}
         storePhone={storePhone}
         receiptFooter={receiptFooter}
+      />
+
+      {/* Device Cloud Pairing Modal */}
+      <DevicePairingModal
+        visible={pairingModalVisible}
+        onClose={() => setPairingModalVisible(false)}
       />
     </ThemedView>
   );

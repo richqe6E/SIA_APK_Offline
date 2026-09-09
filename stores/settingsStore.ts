@@ -4,7 +4,7 @@ import type { SQLiteDatabase } from '@/services/database';
 export type BusinessMode = 'retail' | 'kuliner';
 export type ViewMode = 'list' | 'grid';
 export type AppOrientation = 'portrait' | 'landscape';
-export type UserRole = 'kasir' | 'pemilik';
+export type UserRole = 'kasir' | 'pemilik' | 'pemantau';
 
 interface SettingsState {
   storeName: string;
@@ -20,6 +20,9 @@ interface SettingsState {
   qrisImagePath: string;
   appOrientation: AppOrientation;
   currentUserRole: UserRole | null;
+  storePairingCode: string;
+  isCloudConnected: boolean;
+  cloudSyncStatus: 'idle' | 'syncing' | 'synced' | 'error';
   loading: boolean;
 
   loadSettings: (db: SQLiteDatabase) => Promise<void>;
@@ -47,7 +50,11 @@ interface SettingsState {
   verifyPin: (pin: string) => boolean;
   loginAsKasir: () => void;
   loginAsPemilik: (pin: string) => boolean;
+  loginAsPemantau: (pin: string) => boolean;
   logoutRole: () => void;
+  setPairingCode: (code: string) => void;
+  setCloudConnected: (connected: boolean) => void;
+  setCloudSyncStatus: (status: 'idle' | 'syncing' | 'synced' | 'error') => void;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -64,6 +71,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   qrisImagePath: '',
   appOrientation: 'portrait',
   currentUserRole: null,
+  storePairingCode: 'AZ-7789',
+  isCloudConnected: false,
+  cloudSyncStatus: 'idle',
   loading: false,
 
   loadSettings: async (db) => {
@@ -205,7 +215,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     return false;
   },
 
+  loginAsPemantau: (pin: string) => {
+    if (get().verifyPin(pin)) {
+      set({ currentUserRole: 'pemantau' });
+      return true;
+    }
+    return false;
+  },
+
   logoutRole: () => {
     set({ currentUserRole: null });
   },
+
+  setPairingCode: (code: string) => set({ storePairingCode: code }),
+  setCloudConnected: (connected: boolean) => set({ isCloudConnected: connected }),
+  setCloudSyncStatus: (status) => set({ cloudSyncStatus: status }),
 }));

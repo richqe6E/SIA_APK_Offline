@@ -18,8 +18,9 @@ interface RoleLoginModalProps {
 }
 
 export function RoleLoginModal({ visible }: RoleLoginModalProps) {
-  const { storeName, loginAsKasir, loginAsPemilik } = useSettingsStore();
+  const { storeName, loginAsKasir, loginAsPemilik, loginAsPemantau } = useSettingsStore();
   const [pinMode, setPinMode] = useState(false);
+  const [targetRole, setTargetRole] = useState<'pemilik' | 'pemantau'>('pemilik');
   const [pin, setPin] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -28,6 +29,13 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
     setPin('');
     setPinMode(false);
     loginAsKasir();
+  };
+
+  const handleOpenPin = (role: 'pemilik' | 'pemantau') => {
+    setErrorMsg('');
+    setPin('');
+    setTargetRole(role);
+    setPinMode(true);
   };
 
   const handleNumpad = (val: string) => {
@@ -42,7 +50,7 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
     setPin(nextPin);
 
     if (nextPin.length === 6) {
-      const ok = loginAsPemilik(nextPin);
+      const ok = targetRole === 'pemilik' ? loginAsPemilik(nextPin) : loginAsPemantau(nextPin);
       if (ok) {
         setPin('');
         setPinMode(false);
@@ -68,14 +76,16 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
             <ThemedText style={styles.storeName}>{storeName}</ThemedText>
             <ThemedText style={styles.subtitle}>
               {pinMode
-                ? 'Masukkan PIN Otorisasi Pemilik Toko'
+                ? targetRole === 'pemilik'
+                  ? 'Masukkan PIN Otorisasi Pemilik Toko (Tablet)'
+                  : 'Masukkan PIN Pemantau Usaha (Mode HP)'
                 : 'Pilih peran untuk melanjutkan akses aplikasi'}
             </ThemedText>
           </View>
 
           {!pinMode ? (
             <View style={styles.roleContainer}>
-              {/* Opsi Kasir */}
+              {/* Opsi 1: Kasir */}
               <TouchableOpacity
                 style={[styles.roleCard, styles.kasirCard]}
                 activeOpacity={0.85}
@@ -86,40 +96,59 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <ThemedText style={styles.roleName}>Masuk sebagai Kasir</ThemedText>
+                    <ThemedText style={styles.roleName}>1. Masuk sebagai Kasir</ThemedText>
                     <View style={styles.badgeFree}>
                       <ThemedText style={styles.badgeFreeText}>Langsung</ThemedText>
                     </View>
                   </View>
                   <ThemedText style={styles.roleDesc}>
-                    Akses kasir penjualan, katalog produk, dan riwayat nota transaksi
+                    Mode kasir tablet: transaksi kasir, katalog produk, dan riwayat nota
                   </ThemedText>
                 </View>
                 <ThemedText style={styles.chevron}>›</ThemedText>
               </TouchableOpacity>
 
-              {/* Opsi Pemilik */}
+              {/* Opsi 2: Pemilik Toko (Akses Penuh Tablet) */}
               <TouchableOpacity
                 style={[styles.roleCard, styles.ownerCard]}
                 activeOpacity={0.85}
-                onPress={() => {
-                  setErrorMsg('');
-                  setPin('');
-                  setPinMode(true);
-                }}
+                onPress={() => handleOpenPin('pemilik')}
               >
                 <View style={styles.roleIconBoxOwner}>
                   <ThemedText style={styles.roleIcon}>👑</ThemedText>
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <ThemedText style={styles.roleName}>Masuk sebagai Pemilik</ThemedText>
+                    <ThemedText style={styles.roleName}>2. Masuk Pemilik Toko (Tablet)</ThemedText>
                     <View style={styles.badgePin}>
-                      <ThemedText style={styles.badgePinText}>Kunci PIN</ThemedText>
+                      <ThemedText style={styles.badgePinText}>Akses Penuh</ThemedText>
                     </View>
                   </View>
                   <ThemedText style={styles.roleDesc}>
-                    Akses penuh seluruh fitur: laporan laba rugi, buku kas, dan pengaturan
+                    Akses lengkap: kasir, buku kas, setor bank, utang piutang, dan pengaturan
+                  </ThemedText>
+                </View>
+                <ThemedText style={styles.chevron}>›</ThemedText>
+              </TouchableOpacity>
+
+              {/* Opsi 3: Pemantau Usaha (Mode HP) */}
+              <TouchableOpacity
+                style={[styles.roleCard, styles.pemantauCard]}
+                activeOpacity={0.85}
+                onPress={() => handleOpenPin('pemantau')}
+              >
+                <View style={styles.roleIconBoxPemantau}>
+                  <ThemedText style={styles.roleIcon}>📱</ThemedText>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <ThemedText style={styles.roleName}>3. Masuk Pemantau Usaha (HP)</ThemedText>
+                    <View style={styles.badgeHp}>
+                      <ThemedText style={styles.badgeHpText}>Mode HP</ThemedText>
+                    </View>
+                  </View>
+                  <ThemedText style={styles.roleDesc}>
+                    Tampilan vertikal HP: pantau omset realtime, mutasi kas, setor bank, dan utang piutang
                   </ThemedText>
                 </View>
                 <ThemedText style={styles.chevron}>›</ThemedText>
@@ -272,6 +301,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#faf5ff',
     borderColor: '#e9d5ff',
   },
+  pemantauCard: {
+    backgroundColor: '#f0f9ff',
+    borderColor: '#bae6fd',
+  },
   roleIconBoxKasir: {
     width: 48,
     height: 48,
@@ -285,6 +318,14 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 12,
     backgroundColor: '#f3e8ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  roleIconBoxPemantau: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#e0f2fe',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -321,6 +362,18 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   badgePinText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  badgeHp: {
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeHpText: {
     color: '#ffffff',
     fontSize: 9,
     fontWeight: '800',

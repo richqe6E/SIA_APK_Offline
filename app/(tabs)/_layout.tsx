@@ -17,6 +17,7 @@ export default function TabLayout() {
   }, [db, loadSettings]);
 
   const isKasir = currentUserRole === 'kasir';
+  const isPemantau = currentUserRole === 'pemantau';
 
   return (
     <>
@@ -30,7 +31,7 @@ export default function TabLayout() {
         <Tabs.Screen
           name="index"
           options={{
-            title: 'Dashboard',
+            title: isPemantau ? 'Pantau Toko' : 'Dashboard',
             tabBarIcon: ({ color }) => (
               <IconSymbol size={28} name="square.grid.2x2.fill" color={color} />
             ),
@@ -40,6 +41,7 @@ export default function TabLayout() {
           name="explore"
           options={{
             title: 'Produk',
+            href: isPemantau ? null : undefined,
             tabBarIcon: ({ color }) => (
               <IconSymbol size={28} name="shippingbox.fill" color={color} />
             ),
@@ -49,6 +51,7 @@ export default function TabLayout() {
           name="history"
           options={{
             title: 'Riwayat',
+            href: isPemantau ? null : undefined,
             tabBarIcon: ({ color }) => (
               <IconSymbol size={28} name="clock.fill" color={color} />
             ),
