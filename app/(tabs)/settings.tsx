@@ -352,10 +352,8 @@ export default function SettingsScreen() {
                   Alert.alert(
                     'Keluar Peran / Ganti Akun',
                     `Saat ini Anda masuk sebagai ${
-                      currentUserRole === 'pemantau'
-                        ? 'Pemantau Usaha (HP)'
-                        : currentUserRole === 'pemilik'
-                        ? 'Pemilik Toko (Tablet)'
+                      currentUserRole === 'pemilik'
+                        ? 'Pemilik Toko'
                         : 'Kasir'
                     }. Apakah ingin keluar dan memilih peran lain?`,
                     [
@@ -371,13 +369,7 @@ export default function SettingsScreen() {
               >
                 <ThemedText style={{ fontSize: 16 }}>🚪</ThemedText>
                 <ThemedText style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>
-                  Ganti Peran / Keluar Akun (
-                  {currentUserRole === 'pemantau'
-                    ? 'Pemantau Usaha'
-                    : currentUserRole === 'pemilik'
-                    ? 'Pemilik Toko'
-                    : 'Kasir'}
-                  )
+                  Ganti Peran / Keluar Akun ({currentUserRole === 'pemilik' ? 'Pemilik Toko' : 'Kasir'})
                 </ThemedText>
               </TouchableOpacity>
             </View>

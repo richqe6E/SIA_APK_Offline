@@ -41,7 +41,7 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
     setCloudCredentials,
   } = useSettingsStore();
 
-  const isPemantau = currentUserRole === 'pemantau';
+  const isPemantau = false;
 
   const [inputCode, setInputCode] = useState(storePairingCode);
   const [testing, setTesting] = useState(false);
@@ -208,9 +208,9 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
                 </View>
 
                 <ThemedText style={styles.instructionText}>
-                  1. Buka aplikasi POS AZIZAH di smartphone / HP Pemilik.{'\n'}
-                  2. Masuk dengan peran <ThemedText style={{ fontWeight: '800' }}>3. Pemantau Usaha</ThemedText>.{'\n'}
-                  3. Buka Pengaturan &gt; Sambungkan Perangkat lalu masukkan kode <ThemedText style={{ fontWeight: '800' }}>{storePairingCode}</ThemedText>.
+                  1. Buka aplikasi <ThemedText style={{ fontWeight: '800' }}>KENDALI USAHA AZIZAH</ThemedText> di smartphone / HP Pemilik.{'\n'}
+                  2. Masukkan kode sambung <ThemedText style={{ fontWeight: '800' }}>{storePairingCode}</ThemedText> di aplikasi tersebut.{'\n'}
+                  3. Laporan omset, rincian pembayaran tunai vs non-tunai, dan keuangan toko langsung tersinkronisasi otomatis.
                 </ThemedText>
 
                 <View style={styles.btnRow}>

@@ -41,7 +41,6 @@ import { usePrinterStore } from '@/stores/printerStore';
 import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { useRouter } from 'expo-router';
 import { BankDepositModal } from '@/components/bank-deposit-modal';
-import { OwnerMobileFinance } from '@/components/owner-mobile-finance';
 
 // ─────────────────────────────────────────
 // Types & Constants

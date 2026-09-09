@@ -9,10 +9,6 @@ export function useLockOrientation(
   const currentUserRole = useSettingsStore((s) => s.currentUserRole);
 
   useEffect(() => {
-    if (currentUserRole === 'pemantau') {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-      return;
-    }
     if (appOrientation === 'landscape') {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
     } else if (appOrientation === 'portrait') {

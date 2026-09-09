@@ -415,7 +415,7 @@ export default function StoreSettingsScreen() {
               </TouchableOpacity>
             </View>
             <ThemedText style={{ fontSize: 10, color: '#475569', lineHeight: 14 }}>
-              Gunakan kode ini untuk menghubungkan aplikasi pemantau usaha di smartphone pemilik dengan tablet kasir secara realtime.
+              Gunakan kode ini untuk menghubungkan aplikasi KENDALI USAHA AZIZAH di smartphone pemilik dengan tablet kasir secara realtime.
             </ThemedText>
           </View>
 

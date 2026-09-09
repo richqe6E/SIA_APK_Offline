@@ -109,37 +109,23 @@ export function BankDepositModal({
     try {
       setSubmitting(true);
 
-      if (currentUserRole === 'pemantau') {
-        // Eksekusi dari HP Pemilik: Kirim ke Cloud Bridge & antrekan untuk rekonsiliasi tablet
-        const res = await submitRemoteBankDeposit(
-          storePairingCode,
-          numAmount,
-          targetBank,
-          notes.trim()
-        );
+      // Eksekusi dari Tablet Kasir: Tulis langsung ke database lokal SQLite
+      await depositToBank(db, numAmount, targetBank, notes.trim());
 
-        if (!res.success) {
-          throw new Error(res.error || 'Gagal mengirim data setoran ke cloud');
-        }
-      } else {
-        // Eksekusi dari Tablet Kasir: Tulis langsung ke database lokal SQLite
-        await depositToBank(db, numAmount, targetBank, notes.trim());
-
-        // Cetak tanda terima jika dipilih dan printer terhubung
-        if (autoPrint && printerTarget) {
-          try {
-            await printBankDepositReceipt({
-              storeName,
-              depositAmount: numAmount,
-              remainingCash: currentBalance - numAmount,
-              bankTarget: targetBank,
-              notes: notes.trim(),
-              cashierName: currentUserRole === 'kasir' ? 'Kasir' : 'Pemilik Toko',
-              date: new Date(),
-            });
-          } catch (printErr) {
-            console.warn('Gagal cetak tanda terima setor bank:', printErr);
-          }
+      // Cetak tanda terima jika dipilih dan printer terhubung
+      if (autoPrint && printerTarget) {
+        try {
+          await printBankDepositReceipt({
+            storeName,
+            depositAmount: numAmount,
+            remainingCash: currentBalance - numAmount,
+            bankTarget: targetBank,
+            notes: notes.trim(),
+            cashierName: currentUserRole === 'kasir' ? 'Kasir' : 'Pemilik Toko',
+            date: new Date(),
+          });
+        } catch (printErr) {
+          console.warn('Gagal cetak tanda terima setor bank:', printErr);
         }
       }
 

@@ -1,7 +1,6 @@
 import { CashShiftModal } from '@/components/cash-shift-modal';
 import { CashDenominationModal } from '@/components/cash-denomination-modal';
 import { OnboardingModal } from '@/components/onboarding-modal';
-import { OwnerMobileDashboard } from '@/components/owner-mobile-dashboard';
 import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';

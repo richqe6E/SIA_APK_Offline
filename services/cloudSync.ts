@@ -679,9 +679,7 @@ export async function pushSyncToCloud(
  */
 export async function triggerAutoSync(db: SQLiteDatabase): Promise<void> {
   try {
-    const { currentUserRole, storePairingCode } = useSettingsStore.getState();
-    // Only store tablet (kasir/pemilik) pushes data, not remote pemantau phone
-    if (currentUserRole === 'pemantau') return;
+    const { storePairingCode } = useSettingsStore.getState();
     if (!storePairingCode) return;
 
     // Fire non-blocking push
@@ -742,14 +740,7 @@ export async function fetchSyncFromCloud(
       return { success: true, payload };
     }
 
-    // For Remote Phone Pemantau: do NOT fallback to compile empty phone database!
-    if (currentUserRole === 'pemantau') {
-      useSettingsStore.getState().setCloudSyncStatus('error');
-      return {
-        success: false,
-        error: `Data toko "${pairingCode}" belum ditemukan di server. Pastikan di Tablet Kasir sudah menekan "Sinkronkan Sekarang" atau melakukan transaksi pertama.`,
-      };
-    }
+
 
     // If running on tablet or local single-device testing
     if (localFallbackDb) {

@@ -4,7 +4,7 @@ import type { SQLiteDatabase } from '@/services/database';
 export type BusinessMode = 'retail' | 'kuliner';
 export type ViewMode = 'list' | 'grid';
 export type AppOrientation = 'portrait' | 'landscape';
-export type UserRole = 'kasir' | 'pemilik' | 'pemantau';
+export type UserRole = 'kasir' | 'pemilik';
 
 interface SettingsState {
   storeName: string;
@@ -52,7 +52,6 @@ interface SettingsState {
   verifyPin: (pin: string) => boolean;
   loginAsKasir: () => void;
   loginAsPemilik: (pin: string) => boolean;
-  loginAsPemantau: (pin: string) => boolean;
   logoutRole: () => void;
   setPairingCode: (code: string) => void;
   setCloudConnected: (connected: boolean) => void;
@@ -221,14 +220,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   loginAsPemilik: (pin: string) => {
     if (get().verifyPin(pin)) {
       set({ currentUserRole: 'pemilik' });
-      return true;
-    }
-    return false;
-  },
-
-  loginAsPemantau: (pin: string) => {
-    if (get().verifyPin(pin)) {
-      set({ currentUserRole: 'pemantau' });
       return true;
     }
     return false;
