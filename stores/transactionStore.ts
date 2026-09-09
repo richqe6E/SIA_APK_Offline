@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
 import { useProductStore } from './productStore';
+import { triggerAutoSync } from '@/services/cloudSync';
 
 export interface CartItem {
   product_id: number;
@@ -360,6 +361,10 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     const countResult = await db.getFirstAsync<{ count: number }>(
       "SELECT COUNT(*) as count FROM transactions WHERE date(created_at) = date('now','localtime')"
     );
+
+    // Otomatis sinkronkan snapshot ke cloud bridge di background
+    triggerAutoSync(db);
+
     return countResult?.count ?? 0;
   },
 

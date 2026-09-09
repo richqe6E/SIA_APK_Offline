@@ -41,6 +41,7 @@ import { usePrinterStore } from '@/stores/printerStore';
 import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { useRouter } from 'expo-router';
 import { BankDepositModal } from '@/components/bank-deposit-modal';
+import { OwnerMobileFinance } from '@/components/owner-mobile-finance';
 
 // ─────────────────────────────────────────
 // Types & Constants
@@ -107,17 +108,25 @@ export default function FinancialReportsScreen() {
     storePhone2,
     appOrientation,
     setAppOrientation,
+    currentUserRole,
   } = useSettingsStore();
   const { printerTarget } = usePrinterStore();
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const isTabletOrLandscape = width >= 720 || appOrientation === 'landscape';
+  const isPemantau = currentUserRole === 'pemantau';
+  const isTabletOrLandscape = !isPemantau && (width >= 720 || appOrientation === 'landscape');
 
   useLockOrientation(
-    appOrientation === 'landscape'
-      ? ScreenOrientation.OrientationLock.LANDSCAPE
-      : ScreenOrientation.OrientationLock.PORTRAIT_UP
+    isPemantau
+      ? ScreenOrientation.OrientationLock.PORTRAIT_UP
+      : appOrientation === 'landscape'
+        ? ScreenOrientation.OrientationLock.LANDSCAPE
+        : ScreenOrientation.OrientationLock.PORTRAIT_UP
   );
+
+  if (isPemantau) {
+    return <OwnerMobileFinance />;
+  }
 
   const toggleOrientation = async () => {
     const next = appOrientation === 'landscape' ? 'portrait' : 'landscape';

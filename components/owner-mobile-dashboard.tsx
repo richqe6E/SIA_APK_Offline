@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -24,10 +23,11 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useCashStore } from '@/stores/cashStore';
 import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { useShiftStore } from '@/stores/shiftStore';
-import { fetchSyncFromCloud, pushSyncToCloud, type StoreSyncPayload } from '@/services/cloudSync';
+import { fetchSyncFromCloud, type StoreSyncPayload } from '@/services/cloudSync';
 
 function formatRupiah(n: number) {
-  return 'Rp ' + Math.round(n).toLocaleString('id-ID');
+  const sign = n < 0 ? '- ' : '';
+  return sign + 'Rp ' + Math.abs(Math.round(n)).toLocaleString('id-ID');
 }
 
 export function OwnerMobileDashboard() {
@@ -66,12 +66,10 @@ export function OwnerMobileDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [showBankDepositModal, setShowBankDepositModal] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
-
   const [syncData, setSyncData] = useState<StoreSyncPayload | null>(null);
 
   const loadDashboardData = useCallback(async () => {
     try {
-      // First refresh local stores
       await Promise.all([
         loadLedger(db),
         loadDenominations(db),
@@ -80,7 +78,6 @@ export function OwnerMobileDashboard() {
         loadActiveShift(db),
       ]);
 
-      // Pull synced snapshot
       const res = await fetchSyncFromCloud(storePairingCode, db);
       if (res.success && res.payload) {
         setSyncData(res.payload);
@@ -129,16 +126,29 @@ export function OwnerMobileDashboard() {
     );
   };
 
-  // Helper values from sync data or fallback to live stores
+  // Sales & profit metrics
   const omsetToday = syncData?.todaySummary?.omset ?? 0;
+  const omsetYesterday = syncData?.todaySummary?.omsetYesterday ?? 0;
+  const omsetThisMonth = syncData?.todaySummary?.omsetThisMonth ?? 0;
   const txCount = syncData?.todaySummary?.transactionCount ?? 0;
   const avgTx = syncData?.todaySummary?.avgPerTransaction ?? 0;
-  const estProfit = syncData?.todaySummary?.estimatedGrossProfit ?? 0;
+  const estGrossProfit = syncData?.todaySummary?.estimatedGrossProfit ?? 0;
+  const netProfitToday = syncData?.todaySummary?.netProfitToday ?? estGrossProfit;
+  const operatingExpToday = syncData?.todaySummary?.operatingExpenses ?? 0;
 
+  // Monthly P&L
+  const monthlyPnl = syncData?.monthlyProfitLoss;
+  const monthlySales = monthlyPnl?.penjualan ?? omsetThisMonth;
+  const monthlyGross = monthlyPnl?.labaKotor ?? 0;
+  const monthlyExpenses = monthlyPnl?.totalBeban ?? 0;
+  const monthlyNet = monthlyPnl?.labaBersih ?? (monthlyGross - monthlyExpenses);
+
+  // Cash & Liquidity
   const cashHand = syncData?.cashLiquidity?.cashHand ?? cashHandBalance;
   const cashBank = syncData?.cashLiquidity?.cashBank ?? cashBankBalance;
   const totalCash = syncData?.cashLiquidity?.totalCash ?? totalBalance;
 
+  // Debts & Receivables
   const debtUnpaid = syncData?.debtReceivable?.totalDebtUnpaid ?? totalDebtUnpaid;
   const recUnpaid = syncData?.debtReceivable?.totalReceivableUnpaid ?? totalReceivableUnpaid;
 
@@ -150,14 +160,17 @@ export function OwnerMobileDashboard() {
   const lowStock = syncData?.stockAlerts?.lowStockCount ?? 0;
   const expiredSoon = syncData?.stockAlerts?.expiredSoonCount ?? 0;
 
-  // Top products
+  // Lists
   const topProducts = syncData?.topProducts ?? [];
+  const recentMutations = syncData?.recentLedger ?? [];
+  const debtsList = syncData?.debtsList ?? [];
+  const recList = syncData?.receivablesList ?? [];
 
-  // Denominations text
-  const denomObj = syncData?.cashLiquidity?.denominations || denominations || {};
-  const hasDenom = Object.keys(denomObj).length > 0;
+  // Denominations
+  const denomObj = syncData?.cashLiquidity?.denominations || denominations?.counts || {};
   const denomSorted = Object.entries(denomObj)
     .map(([d, c]) => ({ denom: Number(d), count: Number(c) }))
+    .filter((x) => x.count > 0)
     .sort((a, b) => b.denom - a.denom);
 
   return (
@@ -167,7 +180,7 @@ export function OwnerMobileDashboard() {
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
             <View style={styles.roleBadge}>
-              <ThemedText style={styles.roleBadgeText}>👑 Pemantau Usaha (HP)</ThemedText>
+              <ThemedText style={styles.roleBadgeText}>👑 PEMANTAU USAHA (HP)</ThemedText>
             </View>
             <ThemedText style={styles.headerTitle} numberOfLines={1}>
               {storeName}
@@ -182,7 +195,11 @@ export function OwnerMobileDashboard() {
               disabled={refreshing}
               activeOpacity={0.7}
             >
-              <ThemedText style={styles.refreshIcon}>🔄</ThemedText>
+              {refreshing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <ThemedText style={styles.refreshIcon}>🔄</ThemedText>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -206,9 +223,9 @@ export function OwnerMobileDashboard() {
             />
             <ThemedText style={styles.syncText}>
               {cloudSyncStatus === 'syncing'
-                ? 'Sedang menyinkronkan...'
+                ? 'Menyinkronkan data...'
                 : isCloudConnected
-                ? `Terhubung ke Toko (${storePairingCode}) • ${lastSyncTime || 'Baru saja'}`
+                ? `Tersambung (${storePairingCode}) • Update: ${lastSyncTime || 'Baru saja'}`
                 : `Menghubungkan (${storePairingCode})...`}
             </ThemedText>
           </View>
@@ -219,10 +236,11 @@ export function OwnerMobileDashboard() {
       {/* Main Scroll Content */}
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 80 }]}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.tint} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[Colors.tint]} />
         }
+        showsVerticalScrollIndicator={false}
       >
         {loading ? (
           <View style={styles.loadingContainer}>
@@ -232,14 +250,18 @@ export function OwnerMobileDashboard() {
         ) : (
           <>
             {/* Card 1: Penjualan Realtime Hari Ini */}
-            <Card style={styles.card} padding={18}>
+            <Card style={styles.cardHero} padding={18}>
               <View style={styles.cardHeader}>
                 <View style={styles.cardIconBoxSales}>
                   <ThemedText style={styles.cardIcon}>💰</ThemedText>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <ThemedText style={styles.cardLabel}>PENJUALAN HARI INI</ThemedText>
+                  <ThemedText style={styles.heroCardLabel}>PENJUALAN HARI INI</ThemedText>
                   <ThemedText style={styles.cardHeroNumber}>{formatRupiah(omsetToday)}</ThemedText>
+                </View>
+                <View style={styles.yesterdayBox}>
+                  <ThemedText style={styles.yesterdayLabel}>Kemarin</ThemedText>
+                  <ThemedText style={styles.yesterdayVal}>{formatRupiah(omsetYesterday)}</ThemedText>
                 </View>
               </View>
 
@@ -254,21 +276,21 @@ export function OwnerMobileDashboard() {
                 </View>
                 <View style={styles.metricItem}>
                   <ThemedText style={[styles.metricVal, { color: '#16a34a' }]}>
-                    {formatRupiah(estProfit)}
+                    {formatRupiah(netProfitToday)}
                   </ThemedText>
-                  <ThemedText style={styles.metricLbl}>Est. Laba Kotor</ThemedText>
+                  <ThemedText style={styles.metricLbl}>Est. Laba Bersih</ThemedText>
                 </View>
               </View>
             </Card>
 
-            {/* Card 2: Likuiditas Kas Toko (Dual-Pocket) */}
+            {/* Card 2: Likuiditas Kas Toko (Dual-Pocket Terpadu) */}
             <Card style={styles.card} padding={18}>
               <View style={styles.cardHeader}>
                 <View style={styles.cardIconBoxCash}>
                   <ThemedText style={styles.cardIcon}>🏦</ThemedText>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <ThemedText style={styles.cardLabel}>TOTAL LIKUIDITAS KAS</ThemedText>
+                  <ThemedText style={styles.cardLabel}>TOTAL LIKUIDITAS KAS TOKO</ThemedText>
                   <ThemedText style={styles.cardHeroNumberCash}>
                     {formatRupiah(totalCash)}
                   </ThemedText>
@@ -280,23 +302,10 @@ export function OwnerMobileDashboard() {
                 <View style={[styles.pocketBox, styles.pocketHand]}>
                   <View style={styles.pocketHeader}>
                     <ThemedText style={styles.pocketIcon}>💵</ThemedText>
-                    <ThemedText style={styles.pocketTitle}>Kas Fisik di Tangan</ThemedText>
+                    <ThemedText style={styles.pocketTitle}>Kas Fisik Laci Toko</ThemedText>
                   </View>
                   <ThemedText style={styles.pocketAmount}>{formatRupiah(cashHand)}</ThemedText>
-                  {hasDenom && (
-                    <View style={styles.denomChipsContainer}>
-                      <ThemedText style={styles.denomTitle}>Rincian Pecahan Fisik:</ThemedText>
-                      <View style={styles.denomChipRow}>
-                        {denomSorted.map((item) => (
-                          <View key={item.denom} style={styles.denomChip}>
-                            <ThemedText style={styles.denomChipText}>
-                              {(item.denom >= 1000 ? item.denom / 1000 + 'k' : item.denom)}: {item.count} lbr
-                            </ThemedText>
-                          </View>
-                        ))}
-                      </View>
-                    </View>
-                  )}
+                  <ThemedText style={styles.pocketDesc}>Uang tunai di kasir</ThemedText>
                 </View>
 
                 {/* Saku 2: Kas di Rekening Bank */}
@@ -306,13 +315,27 @@ export function OwnerMobileDashboard() {
                     <ThemedText style={styles.pocketTitle}>Kas di Rekening Bank</ThemedText>
                   </View>
                   <ThemedText style={styles.pocketAmount}>{formatRupiah(cashBank)}</ThemedText>
-                  <ThemedText style={styles.pocketDesc}>
-                    Hasil QRIS, Transfer, dan Setoran Fisik
-                  </ThemedText>
+                  <ThemedText style={styles.pocketDesc}>QRIS, Transfer & Setoran</ThemedText>
                 </View>
               </View>
 
-              {/* Action Buttons for Mobile Owner */}
+              {/* Rincian Pecahan Uang Fisik jika ada */}
+              {denomSorted.length > 0 && (
+                <View style={styles.denomChipsContainer}>
+                  <ThemedText style={styles.denomTitle}>Rincian Pecahan Fisik Kasir:</ThemedText>
+                  <View style={styles.denomChipRow}>
+                    {denomSorted.map((item) => (
+                      <View key={item.denom} style={styles.denomChip}>
+                        <ThemedText style={styles.denomChipText}>
+                          {item.denom >= 1000 ? `${item.denom / 1000}k` : item.denom}: {item.count} lbr
+                        </ThemedText>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Action Buttons */}
               <View style={styles.cashActionRow}>
                 <TouchableOpacity
                   style={[styles.actionBtn, styles.btnSetorBank]}
@@ -329,12 +352,53 @@ export function OwnerMobileDashboard() {
                   onPress={() => router.push('/financial-reports' as any)}
                 >
                   <ThemedText style={styles.actionBtnIcon}>📑</ThemedText>
-                  <ThemedText style={styles.actionBtnText}>Buku Kas Lengkap</ThemedText>
+                  <ThemedText style={styles.actionBtnText}>Laporan Lengkap</ThemedText>
                 </TouchableOpacity>
               </View>
             </Card>
 
-            {/* Card 3: Utang & Piutang Berjalan */}
+            {/* Card 3: Ringkasan Laba / Rugi Bulan Ini (P&L) */}
+            <Card style={styles.card} padding={18}>
+              <View style={styles.cardHeader}>
+                <View style={styles.cardIconBoxPnl}>
+                  <ThemedText style={styles.cardIcon}>📊</ThemedText>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.cardLabel}>
+                    LABA / RUGI ({monthlyPnl?.periodLabel || 'Bulan Ini'})
+                  </ThemedText>
+                  <ThemedText
+                    style={[
+                      styles.cardHeroNumberPnl,
+                      monthlyNet < 0 ? { color: '#ef4444' } : { color: '#16a34a' },
+                    ]}
+                  >
+                    {formatRupiah(monthlyNet)}
+                  </ThemedText>
+                </View>
+                <TouchableOpacity
+                  style={styles.pnlDetailBtn}
+                  onPress={() => router.push('/financial-reports' as any)}
+                >
+                  <ThemedText style={styles.pnlDetailBtnText}>Rincian ›</ThemedText>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.pnlSummaryGrid}>
+                <View style={styles.pnlGridItem}>
+                  <ThemedText style={styles.pnlGridLabel}>Omset Bulan Ini</ThemedText>
+                  <ThemedText style={styles.pnlGridVal}>{formatRupiah(monthlySales)}</ThemedText>
+                </View>
+                <View style={styles.pnlGridItem}>
+                  <ThemedText style={styles.pnlGridLabel}>Beban Operasional</ThemedText>
+                  <ThemedText style={[styles.pnlGridVal, { color: '#ef4444' }]}>
+                    {formatRupiah(monthlyExpenses)}
+                  </ThemedText>
+                </View>
+              </View>
+            </Card>
+
+            {/* Card 4: Utang & Piutang Berjalan */}
             <Card style={styles.card} padding={18}>
               <View style={styles.cardHeader}>
                 <View style={styles.cardIconBoxDebt}>
@@ -353,14 +417,14 @@ export function OwnerMobileDashboard() {
                 <View style={[styles.debtBox, styles.recBox]}>
                   <ThemedText style={styles.debtBoxLabel}>Piutang Pelanggan</ThemedText>
                   <ThemedText style={styles.recAmount}>{formatRupiah(recUnpaid)}</ThemedText>
-                  <ThemedText style={styles.debtBoxSub}>Belum dilunasi customer</ThemedText>
+                  <ThemedText style={styles.debtBoxSub}>Belum lunas di toko</ThemedText>
                 </View>
 
                 {/* Utang Supplier */}
                 <View style={[styles.debtBox, styles.debtBoxCol]}>
                   <ThemedText style={styles.debtBoxLabel}>Utang ke Supplier</ThemedText>
                   <ThemedText style={styles.debtAmount}>{formatRupiah(debtUnpaid)}</ThemedText>
-                  <ThemedText style={styles.debtBoxSub}>Kewajiban kulakan/stok</ThemedText>
+                  <ThemedText style={styles.debtBoxSub}>Kewajiban kulakan stok</ThemedText>
                 </View>
               </View>
 
@@ -370,12 +434,12 @@ export function OwnerMobileDashboard() {
                 onPress={() => router.push('/debt-receivable' as any)}
               >
                 <ThemedText style={styles.manageDebtBtnText}>
-                  👥 Kelola Utang & Pembayaran Piutang ›
+                  👥 Kelola Utang & Tagihan Piutang Lengkap ›
                 </ThemedText>
               </TouchableOpacity>
             </Card>
 
-            {/* Card 4: Status Shift & Kasir di Toko */}
+            {/* Card 5: Status Shift & Kasir di Toko */}
             <Card style={styles.card} padding={16}>
               <View style={styles.shiftRow}>
                 <View style={styles.shiftIconBox}>
@@ -384,11 +448,11 @@ export function OwnerMobileDashboard() {
                 <View style={{ flex: 1 }}>
                   <ThemedText style={styles.shiftLabel}>STATUS KASIR DI TOKO</ThemedText>
                   <ThemedText style={styles.shiftCashierName}>
-                    {activeCashier ? `Kasir Bertugas: ${activeCashier}` : 'Belum Ada Shift Kasir Buka'}
+                    {activeCashier ? `Kasir: ${activeCashier}` : 'Belum Ada Shift Kasir Aktif'}
                   </ThemedText>
                   {syncData?.activeShift && (
                     <ThemedText style={styles.shiftTime}>
-                      Shift ke-{syncData.activeShift.shiftNumber} • Modal Awal:{' '}
+                      Buka: {syncData.activeShift.openedAt} • Modal Kasir:{' '}
                       {formatRupiah(syncData.activeShift.initialCash)}
                     </ThemedText>
                   )}
@@ -406,12 +470,57 @@ export function OwnerMobileDashboard() {
               </View>
             </Card>
 
-            {/* Card 5: Peringatan Stok & Expired */}
+            {/* Card 6: 5 Mutasi Kas Terakhir */}
+            {recentMutations.length > 0 && (
+              <Card style={styles.card} padding={16}>
+                <View style={styles.cardHeader}>
+                  <ThemedText style={styles.cardLabel}>MUTASI KAS TERKINI</ThemedText>
+                  <TouchableOpacity onPress={() => router.push('/financial-reports' as any)}>
+                    <ThemedText style={styles.viewAllText}>Semua ›</ThemedText>
+                  </TouchableOpacity>
+                </View>
+                {recentMutations.slice(0, 5).map((m) => {
+                  const isIn = m.type === 'in';
+                  return (
+                    <View key={m.id} style={styles.mutationRow}>
+                      <View
+                        style={[
+                          styles.mutationBadge,
+                          isIn ? styles.badgeIn : styles.badgeOut,
+                        ]}
+                      >
+                        <ThemedText style={styles.mutationBadgeText}>
+                          {isIn ? 'MASUK' : 'KELUAR'}
+                        </ThemedText>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <ThemedText style={styles.mutationCatName}>
+                          {m.category.replace(/_/g, ' ').toUpperCase()}
+                        </ThemedText>
+                        <ThemedText style={styles.mutationSubText} numberOfLines={1}>
+                          {m.note || (isIn ? 'Kas Masuk' : 'Pengeluaran')}
+                        </ThemedText>
+                      </View>
+                      <ThemedText
+                        style={[
+                          styles.mutationVal,
+                          isIn ? { color: '#16a34a' } : { color: '#dc2626' },
+                        ]}
+                      >
+                        {isIn ? '+' : '-'} {formatRupiah(m.amount)}
+                      </ThemedText>
+                    </View>
+                  );
+                })}
+              </Card>
+            )}
+
+            {/* Card 7: Peringatan Stok & Expired */}
             {(outOfStock > 0 || lowStock > 0 || expiredSoon > 0) && (
               <Card style={[styles.card, styles.alertCard]} padding={16}>
                 <View style={styles.alertHeader}>
                   <ThemedText style={styles.alertIcon}>⚠️</ThemedText>
-                  <ThemedText style={styles.alertTitle}>Pemberitahuan Penting Usaha</ThemedText>
+                  <ThemedText style={styles.alertTitle}>Peringatan Stok & Kedaluwarsa</ThemedText>
                 </View>
 
                 <View style={styles.alertChipsRow}>
@@ -440,7 +549,7 @@ export function OwnerMobileDashboard() {
               </Card>
             )}
 
-            {/* Card 6: Top 5 Produk Terlaris Hari Ini */}
+            {/* Card 8: Top 5 Produk Terlaris Hari Ini */}
             <Card style={styles.card} padding={18}>
               <View style={styles.cardHeader}>
                 <View style={styles.cardIconBoxTop}>
@@ -449,7 +558,7 @@ export function OwnerMobileDashboard() {
                 <View style={{ flex: 1 }}>
                   <ThemedText style={styles.cardLabel}>PRODUK TERLARIS HARI INI</ThemedText>
                   <ThemedText style={styles.cardSubtitle}>
-                    Performa 5 produk paling laris terjual
+                    5 produk paling diminati pembeli
                   </ThemedText>
                 </View>
               </View>
@@ -470,7 +579,7 @@ export function OwnerMobileDashboard() {
                           {p.name}
                         </ThemedText>
                         <ThemedText style={styles.topProductSub}>
-                          {p.qty} terjual
+                          {p.qty} item terjual
                         </ThemedText>
                       </View>
                       <ThemedText style={styles.topProductRevenue}>
@@ -505,14 +614,14 @@ export function OwnerMobileDashboard() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#0f172a',
   },
   headerBar: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#1e293b',
     paddingHorizontal: 16,
     paddingBottom: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: '#334155',
   },
   headerRow: {
     flexDirection: 'row',
@@ -524,8 +633,8 @@ const styles = StyleSheet.create({
   },
   roleBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#f3e8ff',
-    borderColor: '#d8b4fe',
+    backgroundColor: '#38bdf822',
+    borderColor: '#38bdf8',
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -535,17 +644,17 @@ const styles = StyleSheet.create({
   roleBadgeText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#7e22ce',
+    color: '#38bdf8',
     letterSpacing: 0.5,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '800',
-    color: '#0f172a',
+    color: '#f8fafc',
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#64748b',
+    color: '#94a3b8',
     marginTop: 1,
   },
   headerRight: {
@@ -557,41 +666,43 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#f1f5f9',
-    justifyContent: 'center',
+    backgroundColor: '#334155',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   refreshIcon: {
     fontSize: 16,
   },
   logoutBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    backgroundColor: '#dc262622',
+    borderColor: '#dc2626',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     borderRadius: 8,
-    backgroundColor: '#fee2e2',
   },
   logoutText: {
-    color: '#dc2626',
-    fontSize: 12,
+    color: '#ef4444',
+    fontSize: 11,
     fontWeight: '700',
   },
   statusBar: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
+    alignItems: 'center',
+    marginTop: 10,
+    backgroundColor: '#0f172a',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   syncStatusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#f8fafc',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 20,
+    flex: 1,
   },
   syncDot: {
     width: 8,
@@ -602,12 +713,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#22c55e',
   },
   syncDotOffline: {
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#ef4444',
   },
   syncText: {
     fontSize: 11,
-    color: '#475569',
     fontWeight: '600',
+    color: '#cbd5e1',
   },
   scroll: {
     flex: 1,
@@ -623,317 +734,444 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 13,
-    color: '#64748b',
+    color: '#94a3b8',
   },
-  card: {
-    backgroundColor: '#ffffff',
+  cardHero: {
+    backgroundColor: '#1e293b',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#38bdf855',
+  },
+  card: {
+    backgroundColor: '#1e293b',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
+    gap: 10,
+    marginBottom: 10,
   },
   cardIconBoxSales: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#dcfce7',
-    justifyContent: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#38bdf822',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   cardIconBoxCash: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#e0e7ff',
-    justifyContent: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#16a34a22',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardIconBoxPnl: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#8b5cf622',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cardIconBoxDebt: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#fef3c7',
-    justifyContent: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#ea580c22',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   cardIconBoxTop: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#fef9c3',
-    justifyContent: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#f59e0b22',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   cardIcon: {
-    fontSize: 22,
+    fontSize: 18,
+  },
+  heroCardLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#38bdf8',
+    letterSpacing: 0.5,
   },
   cardLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 0.8,
+    color: '#94a3b8',
+    letterSpacing: 0.5,
   },
   cardHeroNumber: {
     fontSize: 24,
     fontWeight: '900',
-    color: '#0f172a',
+    color: '#f8fafc',
     marginTop: 2,
   },
   cardHeroNumberCash: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '900',
-    color: '#1e40af',
+    color: '#38bdf8',
     marginTop: 2,
+  },
+  cardHeroNumberPnl: {
+    fontSize: 22,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  yesterdayBox: {
+    backgroundColor: '#0f172a',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignItems: 'flex-end',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  yesterdayLabel: {
+    fontSize: 9,
+    color: '#64748b',
+    fontWeight: '700',
+  },
+  yesterdayVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#94a3b8',
   },
   cardSubtitle: {
     fontSize: 11,
     color: '#64748b',
     marginTop: 2,
   },
+  pnlDetailBtn: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  pnlDetailBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#38bdf8',
+  },
   metricsGrid: {
     flexDirection: 'row',
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
-    padding: 10,
-    marginTop: 4,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+    gap: 8,
   },
   metricItem: {
     flex: 1,
+    backgroundColor: '#0f172a',
+    borderRadius: 8,
+    padding: 8,
     alignItems: 'center',
   },
   metricVal: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#1e293b',
+    color: '#f8fafc',
   },
   metricLbl: {
     fontSize: 10,
-    color: '#64748b',
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  pnlSummaryGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+  },
+  pnlGridItem: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+    borderRadius: 8,
+    padding: 8,
+  },
+  pnlGridLabel: {
+    fontSize: 10,
+    color: '#94a3b8',
+    fontWeight: '600',
+  },
+  pnlGridVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#f8fafc',
     marginTop: 2,
   },
   pocketsRow: {
+    flexDirection: 'row',
     gap: 10,
-    marginTop: 4,
+    marginVertical: 10,
   },
   pocketBox: {
-    padding: 12,
+    flex: 1,
     borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
   },
   pocketHand: {
-    backgroundColor: '#f0fdf4',
-    borderColor: '#bbf7d0',
+    backgroundColor: '#14532d22',
+    borderColor: '#16a34a44',
   },
   pocketBank: {
-    backgroundColor: '#f8fafc',
-    borderColor: '#e2e8f0',
+    backgroundColor: '#0c4a6e22',
+    borderColor: '#0284c744',
   },
   pocketHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginBottom: 4,
   },
   pocketIcon: {
-    fontSize: 15,
+    fontSize: 14,
   },
   pocketTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    color: '#334155',
+    color: '#cbd5e1',
   },
   pocketAmount: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#0f172a',
-    marginTop: 4,
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#f8fafc',
   },
   pocketDesc: {
-    fontSize: 10,
-    color: '#64748b',
+    fontSize: 9,
+    color: '#94a3b8',
     marginTop: 2,
   },
   denomChipsContainer: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#dcfce7',
+    backgroundColor: '#0f172a',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 6,
+    marginBottom: 10,
   },
   denomTitle: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#166534',
-    marginBottom: 4,
+    color: '#94a3b8',
+    marginBottom: 6,
   },
   denomChipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: 6,
   },
   denomChip: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
+    backgroundColor: '#1e293b',
     borderRadius: 6,
     paddingHorizontal: 6,
     paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   denomChipText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#15803d',
+    color: '#38bdf8',
   },
   cashActionRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
+    gap: 8,
   },
   actionBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
     paddingVertical: 10,
     borderRadius: 10,
+    gap: 6,
   },
   btnSetorBank: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#0284c7',
   },
   btnBukuKas: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#334155',
   },
   actionBtnIcon: {
     fontSize: 14,
   },
   actionBtnText: {
-    color: '#ffffff',
-    fontSize: 11,
+    color: '#fff',
+    fontSize: 12,
     fontWeight: '700',
   },
   debtGrid: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 4,
+    marginVertical: 10,
   },
   debtBox: {
     flex: 1,
-    padding: 12,
     borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
   },
   recBox: {
-    backgroundColor: '#eff6ff',
-    borderColor: '#bfdbfe',
+    backgroundColor: '#0c4a6e22',
+    borderColor: '#0284c744',
   },
   debtBoxCol: {
-    backgroundColor: '#fff7ed',
-    borderColor: '#fed7aa',
+    backgroundColor: '#451a0322',
+    borderColor: '#ea580c44',
   },
   debtBoxLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#475569',
+    color: '#94a3b8',
   },
   recAmount: {
     fontSize: 15,
-    fontWeight: '800',
-    color: '#1d4ed8',
-    marginTop: 4,
+    fontWeight: '900',
+    color: '#38bdf8',
+    marginTop: 2,
   },
   debtAmount: {
     fontSize: 15,
-    fontWeight: '800',
-    color: '#c2410c',
-    marginTop: 4,
+    fontWeight: '900',
+    color: '#f97316',
+    marginTop: 2,
   },
   debtBoxSub: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#64748b',
     marginTop: 2,
   },
   manageDebtBtn: {
-    marginTop: 12,
-    paddingVertical: 8,
+    backgroundColor: '#0f172a',
+    paddingVertical: 10,
+    borderRadius: 8,
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   manageDebtBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    color: '#2563eb',
+    color: '#38bdf8',
   },
   shiftRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   shiftIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#f1f5f9',
-    justifyContent: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#334155',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   shiftIcon: {
-    fontSize: 20,
+    fontSize: 16,
   },
   shiftLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 0.8,
+    color: '#94a3b8',
   },
   shiftCashierName: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#1e293b',
-    marginTop: 1,
+    fontWeight: '800',
+    color: '#f8fafc',
   },
   shiftTime: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#64748b',
     marginTop: 1,
   },
   shiftStatusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 6,
   },
   shiftOpenBadge: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: '#16a34a22',
   },
   shiftClosedBadge: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#334155',
   },
   shiftStatusText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#166534',
+    color: '#4ade80',
+  },
+  viewAllText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#38bdf8',
+  },
+  mutationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+    gap: 8,
+  },
+  mutationBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeIn: {
+    backgroundColor: '#16a34a22',
+  },
+  badgeOut: {
+    backgroundColor: '#dc262622',
+  },
+  mutationBadgeText: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#cbd5e1',
+  },
+  mutationCatName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#f8fafc',
+  },
+  mutationSubText: {
+    fontSize: 10,
+    color: '#94a3b8',
+  },
+  mutationVal: {
+    fontSize: 12,
+    fontWeight: '800',
   },
   alertCard: {
-    backgroundColor: '#fffbeb',
-    borderColor: '#fde68a',
+    backgroundColor: '#451a0322',
+    borderColor: '#ea580c55',
   },
   alertHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     marginBottom: 8,
   },
   alertIcon: {
-    fontSize: 18,
+    fontSize: 16,
   },
   alertTitle: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#92400e',
+    color: '#fb923c',
   },
   alertChipsRow: {
     flexDirection: 'row',
@@ -943,65 +1181,66 @@ const styles = StyleSheet.create({
   alertChip: {
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 6,
   },
   chipDanger: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#dc262633',
   },
   chipWarning: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#d9770633',
   },
   chipExpired: {
-    backgroundColor: '#ffedd5',
+    backgroundColor: '#7c3aed33',
   },
   alertChipText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#78350f',
+    color: '#f8fafc',
   },
   topProductsList: {
-    gap: 10,
-    marginTop: 4,
+    gap: 8,
+    marginTop: 6,
   },
   topProductItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
+    borderBottomColor: '#334155',
   },
   rankBadge: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#f1f5f9',
-    justifyContent: 'center',
+    backgroundColor: '#f59e0b22',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   rankText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#475569',
+    color: '#f59e0b',
   },
   topProductName: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#1e293b',
+    color: '#f8fafc',
   },
   topProductSub: {
-    fontSize: 11,
-    color: '#64748b',
+    fontSize: 10,
+    color: '#94a3b8',
   },
   topProductRevenue: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
-    color: '#0f172a',
+    color: '#38bdf8',
   },
   emptyText: {
-    fontSize: 12,
-    color: '#94a3b8',
+    fontSize: 11,
+    color: '#64748b',
     fontStyle: 'italic',
-    paddingVertical: 8,
+    textAlign: 'center',
+    paddingVertical: 12,
   },
 });

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
+import { triggerAutoSync } from '@/services/cloudSync';
 
 export type CashTransactionType = 'in' | 'out';
 
@@ -307,6 +308,7 @@ export const useCashStore = create<CashState>((set, get) => ({
       account
     );
     await get().loadLedger(db);
+    triggerAutoSync(db);
   },
 
   depositToBank: async (db, amount, bankName, notes, date) => {
@@ -339,6 +341,7 @@ export const useCashStore = create<CashState>((set, get) => ({
     );
 
     await get().loadLedger(db);
+    triggerAutoSync(db);
   },
 
   updateEntry: async (db, id, type, category, description, amount, date, account = 'hand') => {

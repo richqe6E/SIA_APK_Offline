@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
+import { triggerAutoSync } from '@/services/cloudSync';
 
 export interface CashShift {
   id: number;
@@ -79,6 +80,7 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
     }
 
     set({ currentShift: newShift });
+    triggerAutoSync(db);
     return newShift;
   },
 
@@ -157,6 +159,7 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
 
     set({ currentShift: null });
     await get().loadHistoryShifts(db);
+    triggerAutoSync(db);
     return closedShift;
   },
 
