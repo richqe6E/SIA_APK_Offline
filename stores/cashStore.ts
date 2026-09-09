@@ -3,6 +3,8 @@ import type { SQLiteDatabase } from '@/services/database';
 
 export type CashTransactionType = 'in' | 'out';
 
+export type CashAccount = 'hand' | 'bank';
+
 export interface CashEntry {
   id: number;
   type: CashTransactionType;
@@ -11,6 +13,13 @@ export interface CashEntry {
   amount: number;
   date: string;
   created_at: string;
+  account: CashAccount;
+}
+
+export interface CashDenominationData {
+  counts: Record<number, number>;
+  total: number;
+  updatedAt: string;
 }
 
 export const CASH_IN_CATEGORIES = [
@@ -82,18 +91,27 @@ interface CashState {
   salesCashGrossIn: number;
   salesCashChangeOut: number;
   salesCashTotal: number;
+  salesQrisTotal: number;
   totalBankDeposited: number;
-  currentBalance: number;
+  currentBalance: number;     // Saldo Kas Fisik Laci (hand)
+  cashHandBalance: number;    // Saldo Kas Fisik Laci (hand)
+  cashBankBalance: number;    // Saldo Kas di Bank / Rekening (bank)
+  totalBalance: number;       // Total Likuiditas Toko (hand + bank)
+  denominations: CashDenominationData | null;
   loading: boolean;
 
   loadLedger: (db: SQLiteDatabase) => Promise<void>;
+  loadDenominations: (db: SQLiteDatabase) => Promise<void>;
+  saveDenominations: (db: SQLiteDatabase, counts: Record<number, number>) => Promise<void>;
+  clearDenominations: (db: SQLiteDatabase) => Promise<void>;
   addEntry: (
     db: SQLiteDatabase,
     type: CashTransactionType,
     category: string,
     description: string,
     amount: number,
-    date?: string
+    date?: string,
+    account?: CashAccount
   ) => Promise<void>;
   depositToBank: (
     db: SQLiteDatabase,
@@ -109,7 +127,8 @@ interface CashState {
     category: string,
     description: string,
     amount: number,
-    date?: string
+    date?: string,
+    account?: CashAccount
   ) => Promise<void>;
   deleteEntry: (db: SQLiteDatabase, id: number) => Promise<void>;
   getCashBalance: (db: SQLiteDatabase) => Promise<number>;
@@ -122,19 +141,35 @@ export const useCashStore = create<CashState>((set, get) => ({
   salesCashGrossIn: 0,
   salesCashChangeOut: 0,
   salesCashTotal: 0,
+  salesQrisTotal: 0,
   totalBankDeposited: 0,
   currentBalance: 0,
+  cashHandBalance: 0,
+  cashBankBalance: 0,
+  totalBalance: 0,
+  denominations: null,
   loading: false,
 
   loadLedger: async (db) => {
     set({ loading: true });
     try {
-      const rows = await db.getAllAsync<CashEntry>(
+      const rawRows = await db.getAllAsync<any>(
         'SELECT * FROM cash_ledger ORDER BY date DESC, id DESC'
       );
 
-      // Hitung uang diterima dan uang kembalian dari transaksi penjualan tunai
-      const salesRow = await db.getFirstAsync<{ gross_in: number; gross_change: number; total: number }>(
+      const rows: CashEntry[] = rawRows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        category: r.category,
+        description: r.description,
+        amount: r.amount,
+        date: r.date,
+        created_at: r.created_at,
+        account: r.account === 'bank' ? 'bank' : 'hand',
+      }));
+
+      // 1. Transaksi Penjualan Tunai (Kas di Tangan)
+      const salesCashRow = await db.getFirstAsync<{ gross_in: number; gross_change: number; total: number }>(
         `SELECT 
            COALESCE(SUM(payment_amount), 0) as gross_in,
            COALESCE(SUM(change), 0) as gross_change,
@@ -142,28 +177,57 @@ export const useCashStore = create<CashState>((set, get) => ({
          FROM transactions 
          WHERE payment_method = 'tunai'`
       );
-      const salesGrossIn = salesRow?.gross_in ?? 0;
-      const salesChangeOut = salesRow?.gross_change ?? 0;
-      const salesCash = salesRow?.total ?? 0;
+      const salesGrossIn = salesCashRow?.gross_in ?? 0;
+      const salesChangeOut = salesCashRow?.gross_change ?? 0;
+      const salesCash = salesCashRow?.total ?? 0;
 
-      // Hitung manual cash in & out dari buku kas
-      let manualIn = 0;
-      let manualOut = 0;
+      // 2. Transaksi Penjualan QRIS / Transfer (Kas di Bank)
+      const salesQrisRow = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(total), 0) as total
+         FROM transactions 
+         WHERE payment_method = 'qris'`
+      );
+      const salesQris = salesQrisRow?.total ?? 0;
+
+      // 3. Mutasi Buku Kas Manual (Pisahkan Kas Tangan vs Kas Bank)
+      let manualHandIn = 0;
+      let manualHandOut = 0;
+      let manualBankIn = 0;
+      let manualBankOut = 0;
       let bankDeposited = 0;
+
       for (const row of rows) {
         if (row.type === 'in') {
-          manualIn += row.amount;
+          if (row.account === 'bank') {
+            manualBankIn += row.amount;
+          } else {
+            manualHandIn += row.amount;
+          }
         } else {
-          manualOut += row.amount;
-          if (row.category === 'setor_bank') {
-            bankDeposited += row.amount;
+          if (row.account === 'bank') {
+            manualBankOut += row.amount;
+          } else {
+            manualHandOut += row.amount;
+            if (row.category === 'setor_bank') {
+              bankDeposited += row.amount;
+              // Kompatibilitas legacy: jika row setor_bank tidak memiliki pasangan 'in' bank
+              const hasBankInPair = rows.some(
+                (other) => other.type === 'in' && other.account === 'bank' && other.category === 'setor_bank' && other.amount === row.amount && other.date === row.date
+              );
+              if (!hasBankInPair) {
+                manualBankIn += row.amount;
+              }
+            }
           }
         }
       }
 
-      const totalIn = manualIn + salesGrossIn;
-      const totalOut = manualOut + salesChangeOut;
-      const balance = totalIn - totalOut;
+      const totalIn = manualHandIn + manualBankIn + salesGrossIn + salesQris;
+      const totalOut = manualHandOut + manualBankOut + salesChangeOut;
+
+      const handBalance = (salesGrossIn + manualHandIn) - (salesChangeOut + manualHandOut);
+      const bankBalance = (salesQris + manualBankIn) - manualBankOut;
+      const totalBalance = handBalance + bankBalance;
 
       set({
         entries: rows,
@@ -172,25 +236,75 @@ export const useCashStore = create<CashState>((set, get) => ({
         salesCashGrossIn: salesGrossIn,
         salesCashChangeOut: salesChangeOut,
         salesCashTotal: salesCash,
+        salesQrisTotal: salesQris,
         totalBankDeposited: bankDeposited,
-        currentBalance: balance,
+        currentBalance: handBalance,
+        cashHandBalance: handBalance,
+        cashBankBalance: bankBalance,
+        totalBalance: totalBalance,
         loading: false,
       });
+
+      // Muat juga pecahan uang
+      await get().loadDenominations(db);
     } catch (e) {
       console.error('loadLedger error:', e);
       set({ loading: false });
     }
   },
 
-  addEntry: async (db, type, category, description, amount, date) => {
+  loadDenominations: async (db) => {
+    try {
+      const row = await db.getFirstAsync<{ value: string }>(
+        "SELECT value FROM settings WHERE key = 'cash_denominations'"
+      );
+      if (row?.value) {
+        const parsed: CashDenominationData = JSON.parse(row.value);
+        set({ denominations: parsed });
+      } else {
+        set({ denominations: null });
+      }
+    } catch {
+      set({ denominations: null });
+    }
+  },
+
+  saveDenominations: async (db, counts) => {
+    let total = 0;
+    for (const [denomStr, count] of Object.entries(counts)) {
+      const denom = parseInt(denomStr, 10) || 0;
+      const cnt = parseInt(count as any, 10) || 0;
+      if (denom > 0 && cnt > 0) {
+        total += denom * cnt;
+      }
+    }
+    const data: CashDenominationData = {
+      counts,
+      total,
+      updatedAt: new Date().toLocaleString('id-ID'),
+    };
+    await db.runAsync(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('cash_denominations', ?)",
+      JSON.stringify(data)
+    );
+    set({ denominations: data });
+  },
+
+  clearDenominations: async (db) => {
+    await db.runAsync("DELETE FROM settings WHERE key = 'cash_denominations'");
+    set({ denominations: null });
+  },
+
+  addEntry: async (db, type, category, description, amount, date, account = 'hand') => {
     const today = date || new Date().toISOString().split('T')[0];
     await db.runAsync(
-      'INSERT INTO cash_ledger (type, category, description, amount, date) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
       type,
       category,
       description,
       amount,
-      today
+      today,
+      account
     );
     await get().loadLedger(db);
   },
@@ -198,19 +312,45 @@ export const useCashStore = create<CashState>((set, get) => ({
   depositToBank: async (db, amount, bankName, notes, date) => {
     const cleanBank = bankName.trim() || 'Bank';
     const cleanNotes = notes?.trim() ? ` - ${notes.trim()}` : '';
-    const desc = `Setoran Kas Laci ke ${cleanBank}${cleanNotes}`;
-    await get().addEntry(db, 'out', 'setor_bank', desc, amount, date);
+    const descOut = `Setoran Kas Laci ke ${cleanBank}${cleanNotes}`;
+    const descIn = `Penerimaan Setoran Kas Laci (${cleanBank})${cleanNotes}`;
+    const today = date || new Date().toISOString().split('T')[0];
+
+    // 1. Kurangi Kas Tangan (Laci)
+    await db.runAsync(
+      'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
+      'out',
+      'setor_bank',
+      descOut,
+      amount,
+      today,
+      'hand'
+    );
+
+    // 2. Tambah Kas Bank (Rekening)
+    await db.runAsync(
+      'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
+      'in',
+      'setor_bank',
+      descIn,
+      amount,
+      today,
+      'bank'
+    );
+
+    await get().loadLedger(db);
   },
 
-  updateEntry: async (db, id, type, category, description, amount, date) => {
+  updateEntry: async (db, id, type, category, description, amount, date, account = 'hand') => {
     const today = date || new Date().toISOString().split('T')[0];
     await db.runAsync(
-      'UPDATE cash_ledger SET type = ?, category = ?, description = ?, amount = ?, date = ? WHERE id = ?',
+      'UPDATE cash_ledger SET type = ?, category = ?, description = ?, amount = ?, date = ?, account = ? WHERE id = ?',
       type,
       category,
       description,
       amount,
       today,
+      account,
       id
     );
     await get().loadLedger(db);
@@ -228,12 +368,12 @@ export const useCashStore = create<CashState>((set, get) => ({
     const salesCash = salesRow?.total ?? 0;
 
     const inRow = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'in'"
+      "SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'in' AND (account = 'hand' OR account IS NULL)"
     );
     const manualIn = inRow?.total ?? 0;
 
     const outRow = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'out'"
+      "SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'out' AND (account = 'hand' OR account IS NULL)"
     );
     const manualOut = outRow?.total ?? 0;
 

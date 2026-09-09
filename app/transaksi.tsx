@@ -10,7 +10,8 @@ import { useCategoryStore } from '@/stores/categoryStore';
 import { usePrinterStore } from '@/stores/printerStore';
 import { useSettingsStore, BusinessMode, ViewMode } from '@/stores/settingsStore';
 import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
-import { printReceipt } from '@/services/print';
+import { printReceipt, formatInvoice } from '@/services/print';
+import { useShiftStore } from '@/stores/shiftStore';
 import { useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -68,7 +69,10 @@ export default function TransactionScreen() {
     setDefaultViewMode,
     qrisImagePath,
     storeName,
+    storePhone2,
+    currentUserRole,
   } = useSettingsStore();
+  const { currentShift } = useShiftStore();
 
   const { width } = useWindowDimensions();
   // Responsif tablet landscape: lebar >= 1050 (4 kolom), >= 720 (3 kolom), lainnya 2 kolom
@@ -94,6 +98,8 @@ export default function TransactionScreen() {
     customerName?: string;
     subtotalAmount?: number;
     discountAmount?: number;
+    cashierName?: string;
+    shiftId?: number | null;
   } | null>(null);
 
   // Fase 4 Modals: Barcode Scanner, Bulk Qty, QRIS Fullscreen, Diskon
@@ -195,6 +201,9 @@ export default function TransactionScreen() {
       }
     }
 
+    const activeCashierName = currentShift?.cashier_name || (currentUserRole === 'pemilik' ? 'Pemilik' : 'Kasir');
+    const activeShiftId = currentShift?.id ?? null;
+
     setSuccessTotal(total);
     setLastTransaction({
       items: [...cart],
@@ -204,12 +213,16 @@ export default function TransactionScreen() {
       customerName: targetCustomerName,
       subtotalAmount: subtotal,
       discountAmount: discountAmount,
+      cashierName: activeCashierName,
+      shiftId: activeShiftId,
     });
     const dailySeq = await checkout(
       db,
       paymentMethod,
       paymentMethod === 'hutang' ? 0 : (parsedAmount || total),
-      targetCustomerId
+      targetCustomerId,
+      activeCashierName,
+      activeShiftId
     );
     setSuccessDailySeq(dailySeq);
     setPaymentAmount('');
@@ -1266,7 +1279,7 @@ function Step2View({
             onPress={() => onChangeMethod('qris')}
           >
             <ThemedText style={{ fontWeight: '600', color: paymentMethod === 'qris' ? '#fff' : Colors.text }}>
-              📱 QRIS
+              📱 QRIS / Transfer
             </ThemedText>
           </Pressable>
           <Pressable
@@ -1398,7 +1411,11 @@ function Step2View({
             </View>
           </View>
         ) : (
-          <View style={styles.qrisInfo}>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ alignItems: 'center', paddingVertical: 4 }}
+            showsVerticalScrollIndicator={false}
+          >
             {qrisImagePath ? (
               <Image
                 source={{ uri: qrisImagePath }}
@@ -1406,24 +1423,52 @@ function Step2View({
                 resizeMode="contain"
               />
             ) : (
-              <ThemedText style={{ textAlign: 'center', fontSize: 44, marginBottom: 4 }}>📱</ThemedText>
+              <ThemedText style={{ textAlign: 'center', fontSize: 38, marginBottom: 2 }}>📱</ThemedText>
             )}
             <ThemedText style={{ textAlign: 'center', fontWeight: 'bold', fontSize: 15 }}>
-              Scan QRIS Toko
+              Scan QRIS / Transfer Bank
             </ThemedText>
-            <ThemedText style={{ textAlign: 'center', fontSize: 13, color: Colors.tint, fontWeight: '700', marginTop: 2 }}>
-              Rp {total.toLocaleString('id-ID')}
+            <ThemedText style={{ textAlign: 'center', fontSize: 13.5, color: Colors.tint, fontWeight: '800', marginTop: 2 }}>
+              Total Tagihan: Rp {total.toLocaleString('id-ID')}
             </ThemedText>
+
+            {/* Informasi Detail Penerimaan Kas QRIS / Transfer */}
+            <View style={styles.qrisDetailCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                <ThemedText style={{ fontSize: 13 }}>🏛️</ThemedText>
+                <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#1e40af' }}>
+                  Penerimaan Kas: Kas di Bank (Rekening Toko)
+                </ThemedText>
+              </View>
+
+              <View style={{ gap: 3.5 }}>
+                <ThemedText style={{ fontSize: 10.5, color: '#1e3a8a' }}>
+                  • <ThemedText style={{ fontWeight: '700' }}>Metode Pembayaran:</ThemedText> QRIS / Transfer
+                </ThemedText>
+                <ThemedText style={{ fontSize: 10.5, color: '#1e3a8a' }}>
+                  • <ThemedText style={{ fontWeight: '700' }}>Alur Kas Masuk:</ThemedText> Otomatis tercatat ke <ThemedText style={{ fontWeight: '700', color: '#1d4ed8' }}>Kas di Bank</ThemedText>
+                </ThemedText>
+                <ThemedText style={{ fontSize: 10.5, color: '#64748b' }}>
+                  • <ThemedText style={{ fontWeight: '600' }}>Uang Fisik Kasir:</ThemedText> Tidak bertambah (Non-Tunai)
+                </ThemedText>
+              </View>
+
+              <View style={{ marginTop: 6, paddingTop: 5, borderTopWidth: 1, borderColor: '#bfdbfe' }}>
+                <ThemedText style={{ fontSize: 10, color: '#2563eb', fontStyle: 'italic', textAlign: 'center' }}>
+                  💡 Pastikan saldo transfer / QRIS sudah masuk ke rekening toko sebelum konfirmasi.
+                </ThemedText>
+              </View>
+            </View>
 
             <TouchableOpacity
               style={styles.openQrisBtn}
               onPress={onOpenQrisCustomerModal}
             >
               <ThemedText style={styles.openQrisBtnText}>
-                🔍 Layar Penuh QRIS Pelanggan
+                🔍 Layar Penuh QRIS / Transfer Pelanggan
               </ThemedText>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
         )}
 
         <Button
@@ -1432,7 +1477,7 @@ function Step2View({
               ? (canConfirm ? `Konfirmasi Hutang (Rp ${total.toLocaleString('id-ID')})` : 'Pilih Pelanggan Terlebih Dahulu')
               : paymentMethod === 'tunai'
               ? 'Konfirmasi Pembayaran'
-              : 'Sudah Masuk / Lunas'
+              : 'Sudah Masuk / Lunas (QRIS/Transfer)'
           }
           disabled={!canConfirm}
           style={paymentMethod === 'hutang' && canConfirm ? { backgroundColor: '#d97706' } : undefined}
@@ -1486,10 +1531,12 @@ function SuccessView({
     customerName?: string;
     subtotalAmount?: number;
     discountAmount?: number;
+    cashierName?: string;
+    shiftId?: number | null;
   } | null;
   onDone: () => void;
 }) {
-  const { storeName, storeAddress, storePhone, receiptFooter } = useSettingsStore();
+  const { storeName, storeAddress, storePhone, storePhone2, receiptFooter } = useSettingsStore();
   const { printerTarget, printerName } = usePrinterStore();
   const router = useRouter();
   const [showReceiptModal, setShowReceiptModal] = useState(false);
@@ -1519,7 +1566,10 @@ function SuccessView({
         storeName,
         storeAddress,
         storePhone,
+        storePhone2,
         receiptFooter,
+        cashierName: lastTransaction.cashierName,
+        customerName: lastTransaction.customerName,
       });
       Alert.alert('Sukses', 'Struk berhasil dicetak');
     } catch {
@@ -1538,7 +1588,7 @@ function SuccessView({
           Rp {total.toLocaleString('id-ID')}
         </ThemedText>
         <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
-          Metode: {lastTransaction?.paymentMethod === 'tunai' ? 'Tunai' : lastTransaction?.paymentMethod === 'hutang' ? `Hutang (Bon) • ${lastTransaction.customerName || 'Pelanggan'}` : 'QRIS'} • Nota #{transactionId}
+          Metode: {lastTransaction?.paymentMethod === 'tunai' ? 'Tunai (Kas Fisik)' : lastTransaction?.paymentMethod === 'hutang' ? `Hutang (Bon) • ${lastTransaction.customerName || 'Pelanggan'}` : 'QRIS / Transfer (Kas Bank)'} • {formatInvoice(transactionId, new Date().toISOString())} • Kasir: {lastTransaction?.cashierName || 'Kasir'}
         </ThemedText>
 
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, width: '100%' }}>
@@ -1582,16 +1632,28 @@ function SuccessView({
               {/* Header Toko */}
               <ThemedText style={styles.receiptStoreName}>{storeName}</ThemedText>
               {storeAddress ? <ThemedText style={styles.receiptStoreMeta}>{storeAddress}</ThemedText> : null}
-              {storePhone ? <ThemedText style={styles.receiptStoreMeta}>Telp/WA: {storePhone}</ThemedText> : null}
+              {storePhone ? (
+                <ThemedText style={styles.receiptStoreMeta}>
+                  Telp: {storePhone}{storePhone2 ? ` | WA: ${storePhone2}` : ''}
+                </ThemedText>
+              ) : null}
 
               <View style={styles.receiptDashedLine} />
 
               {/* Info Nota */}
               <View style={styles.receiptRowBetween}>
-                <ThemedText style={styles.receiptMetaText}>Nota: #{transactionId}</ThemedText>
+                <ThemedText style={styles.receiptMetaText}>
+                  No: {formatInvoice(transactionId, new Date().toISOString())}
+                </ThemedText>
                 <ThemedText style={styles.receiptMetaText}>
                   {new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                 </ThemedText>
+              </View>
+              <View style={styles.receiptRowBetween}>
+                <ThemedText style={styles.receiptMetaText}>Kasir: {lastTransaction?.cashierName || 'Kasir'}</ThemedText>
+                {lastTransaction?.customerName ? (
+                  <ThemedText style={styles.receiptMetaText}>Pelanggan: {lastTransaction.customerName}</ThemedText>
+                ) : null}
               </View>
 
               <View style={styles.receiptDashedLine} />
@@ -1647,7 +1709,7 @@ function SuccessView({
                     ? 'Tunai (Diterima)'
                     : lastTransaction?.paymentMethod === 'hutang'
                     ? `Hutang / Bon: ${lastTransaction.customerName || 'Pelanggan'}`
-                    : 'QRIS'}
+                    : 'QRIS / Transfer'}
                 </ThemedText>
                 <ThemedText style={styles.receiptMetaText}>
                   Rp {(lastTransaction?.paymentAmount ?? (lastTransaction?.paymentMethod === 'hutang' ? total : 0)).toLocaleString('id-ID')}
@@ -2181,6 +2243,15 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     marginBottom: 6,
     backgroundColor: '#ffffff',
+  },
+  qrisDetailCard: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 6,
+    borderWidth: 1.5,
+    borderColor: '#bfdbfe',
+    width: '100%',
   },
   openQrisBtn: {
     marginTop: 10,

@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  const DATABASE_VERSION = 12;
+  const DATABASE_VERSION = 14;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -22,6 +22,7 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     INSERT OR IGNORE INTO settings (key, value) VALUES ('is_onboarded', '1');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('store_address', 'Jl. Cipto Mangunkusumo, Samarinda');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('store_phone', '0812-3456-7890');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('store_phone2', '');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('receipt_footer', 'Terima kasih atas kunjungan Anda!');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('qris_image_path', '');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('app_orientation', 'portrait');
@@ -343,6 +344,25 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
       ALTER TABLE transactions ADD COLUMN subtotal_amount REAL NOT NULL DEFAULT 0;
     `);
     currentDbVersion = 12;
+  }
+
+  if (currentDbVersion === 12) {
+    // Migrasi v13: Dual-Account Cash (Kas di Tangan vs Kas di Bank)
+    await db.execAsync(`
+      ALTER TABLE cash_ledger ADD COLUMN account TEXT NOT NULL DEFAULT 'hand';
+      ALTER TABLE debt_payments ADD COLUMN payment_source TEXT NOT NULL DEFAULT 'hand';
+      ALTER TABLE receivable_payments ADD COLUMN payment_source TEXT NOT NULL DEFAULT 'hand';
+    `);
+    currentDbVersion = 13;
+  }
+
+  if (currentDbVersion === 13) {
+    // Migrasi v14: Operator Kasir & Shift ID pada Transaksi
+    await db.execAsync(`
+      ALTER TABLE transactions ADD COLUMN cashier_name TEXT NOT NULL DEFAULT 'Kasir';
+      ALTER TABLE transactions ADD COLUMN shift_id INTEGER DEFAULT NULL;
+    `);
+    currentDbVersion = 14;
   }
 
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);

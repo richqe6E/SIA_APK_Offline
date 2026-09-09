@@ -378,10 +378,10 @@ export default function DataManagementScreen() {
               📋 Format Kolom CSV (Urutan Standar):
             </ThemedText>
             <ThemedText style={{ fontSize: 11, color: '#475569' }}>
-              Barcode | Nama Produk | Kategori | Harga Jual | Harga Modal | Stok | Kelola Stok (Ya/Tidak)
+              Barcode Utama | Barcode Tambahan | Nama Produk | Kategori | Harga Jual | Harga Modal | Stok | Kelola Stok (Ya/Tidak) | Tanggal Expired
             </ThemedText>
             <ThemedText style={{ fontSize: 10, color: Colors.muted, fontStyle: 'italic' }}>
-              *Mendukung otomatis pemisah koma (,) atau titik koma (;) dari Excel, serta nilai rupiah titik/koma.
+              *Mendukung otomatis multi-barcode (pemisah titik koma ;), tanggal expired (YYYY-MM-DD), serta kompatibel 100% dengan file CSV format lama.
             </ThemedText>
           </View>
 

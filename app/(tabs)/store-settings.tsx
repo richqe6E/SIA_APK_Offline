@@ -38,6 +38,7 @@ export default function StoreSettingsScreen() {
     defaultViewMode,
     storeAddress,
     storePhone,
+    storePhone2,
     receiptFooter,
     qrisImagePath,
     appOrientation,
@@ -57,6 +58,7 @@ export default function StoreSettingsScreen() {
   const [pin, setPin] = useState(adminPin);
   const [address, setAddress] = useState(storeAddress);
   const [phone, setPhone] = useState(storePhone);
+  const [phone2, setPhone2] = useState(storePhone2);
   const [footer, setFooter] = useState(receiptFooter);
   const [qrisPath, setQrisPath] = useState(qrisImagePath);
   const [saving, setSaving] = useState(false);
@@ -75,9 +77,10 @@ export default function StoreSettingsScreen() {
     setPin(adminPin);
     setAddress(storeAddress);
     setPhone(storePhone);
+    setPhone2(storePhone2);
     setFooter(receiptFooter);
     setQrisPath(qrisImagePath);
-  }, [storeName, businessType, businessMode, defaultViewMode, appOrientation, adminPin, storeAddress, storePhone, receiptFooter, qrisImagePath]);
+  }, [storeName, businessType, businessMode, defaultViewMode, appOrientation, adminPin, storeAddress, storePhone, storePhone2, receiptFooter, qrisImagePath]);
 
   const pickQrisImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -118,7 +121,7 @@ export default function StoreSettingsScreen() {
 
     setSaving(true);
     try {
-      await saveSettings(db, name.trim(), type.trim(), address.trim(), phone.trim(), footer.trim(), qrisPath.trim());
+      await saveSettings(db, name.trim(), type.trim(), address.trim(), phone.trim(), footer.trim(), qrisPath.trim(), phone2.trim());
       await setDefaultViewMode(db, viewMode);
       await setAppOrientation(db, orientation);
       await setAdminPin(db, pin.trim());
@@ -203,7 +206,7 @@ export default function StoreSettingsScreen() {
 
           <View style={{ gap: 6 }}>
             <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
-              No. Telepon / WhatsApp Toko
+              No. Telepon Utama (Kasir / Toko)
             </ThemedText>
             <TextInput
               style={styles.input}
@@ -211,6 +214,20 @@ export default function StoreSettingsScreen() {
               onChangeText={setPhone}
               keyboardType="phone-pad"
               placeholder="Contoh: 0812-3456-7890"
+              placeholderTextColor={Colors.placeholder}
+            />
+          </View>
+
+          <View style={{ gap: 6 }}>
+            <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
+              No. Telepon 2 / WhatsApp Toko (Opsional)
+            </ThemedText>
+            <TextInput
+              style={styles.input}
+              value={phone2}
+              onChangeText={setPhone2}
+              keyboardType="phone-pad"
+              placeholder="Contoh: 0813-9876-5432 (akan dicetak di nota)"
               placeholderTextColor={Colors.placeholder}
             />
           </View>

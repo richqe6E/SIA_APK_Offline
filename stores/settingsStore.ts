@@ -15,6 +15,7 @@ interface SettingsState {
   isOnboarded: boolean;
   storeAddress: string;
   storePhone: string;
+  storePhone2: string;
   receiptFooter: string;
   qrisImagePath: string;
   appOrientation: AppOrientation;
@@ -29,7 +30,8 @@ interface SettingsState {
     storeAddress?: string,
     storePhone?: string,
     receiptFooter?: string,
-    qrisImagePath?: string
+    qrisImagePath?: string,
+    storePhone2?: string
   ) => Promise<void>;
   setBusinessMode: (db: SQLiteDatabase, mode: BusinessMode) => Promise<void>;
   setAdminPin: (db: SQLiteDatabase, pin: string) => Promise<void>;
@@ -57,6 +59,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   isOnboarded: true,
   storeAddress: 'Jl. Cipto Mangunkusumo, Samarinda',
   storePhone: '0812-3456-7890',
+  storePhone2: '',
   receiptFooter: 'Terima kasih atas kunjungan Anda!',
   qrisImagePath: '',
   appOrientation: 'portrait',
@@ -82,6 +85,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         isOnboarded: map.is_onboarded === '1',
         storeAddress: map.store_address ?? 'Jl. Cipto Mangunkusumo, Samarinda',
         storePhone: map.store_phone ?? '0812-3456-7890',
+        storePhone2: map.store_phone2 ?? '',
         receiptFooter: map.receipt_footer ?? 'Terima kasih atas kunjungan Anda!',
         qrisImagePath: map.qris_image_path ?? '',
         appOrientation: (map.app_orientation as AppOrientation) || 'portrait',
@@ -93,9 +97,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  saveSettings: async (db, storeName, businessType, storeAddress, storePhone, receiptFooter, qrisImagePath) => {
+  saveSettings: async (db, storeName, businessType, storeAddress, storePhone, receiptFooter, qrisImagePath, storePhone2) => {
     const address = storeAddress ?? get().storeAddress;
     const phone = storePhone ?? get().storePhone;
+    const phone2 = storePhone2 !== undefined ? storePhone2 : get().storePhone2;
     const footer = receiptFooter ?? get().receiptFooter;
     const qris = qrisImagePath !== undefined ? qrisImagePath : get().qrisImagePath;
 
@@ -104,6 +109,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'business_type', businessType);
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_address', address);
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_phone', phone);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_phone2', phone2);
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'receipt_footer', footer);
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'qris_image_path', qris);
     });
@@ -112,6 +118,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       businessType,
       storeAddress: address,
       storePhone: phone,
+      storePhone2: phone2,
       receiptFooter: footer,
       qrisImagePath: qris,
     });

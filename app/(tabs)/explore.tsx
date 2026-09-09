@@ -2,7 +2,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import {
   Alert,
@@ -35,6 +35,88 @@ import { Colors } from '@/constants/theme';
 import { BarcodeScannerModal } from '@/components/barcode-scanner-modal';
 import { ProductSearchModal } from '@/components/product-search-modal';
 import { CustomDatePickerModal } from '@/components/custom-date-picker-modal';
+
+type SortOption =
+  | 'oldest'
+  | 'newest'
+  | 'name_asc'
+  | 'name_desc'
+  | 'price_desc'
+  | 'price_asc'
+  | 'stock_asc'
+  | 'stock_desc';
+
+interface SortOptionItem {
+  id: SortOption;
+  label: string;
+  icon: string;
+  desc: string;
+  retailOnly?: boolean;
+}
+
+const SORT_OPTIONS: SortOptionItem[] = [
+  {
+    id: 'oldest',
+    label: 'Paling Awal Masuk (Terlama)',
+    icon: '🕒',
+    desc: 'Menampilkan produk lama yang pertama kali diinput ke aplikasi',
+  },
+  {
+    id: 'newest',
+    label: 'Paling Baru Masuk (Terbaru)',
+    icon: '✨',
+    desc: 'Menampilkan produk yang baru saja ditambahkan belakangan ini',
+  },
+  {
+    id: 'name_asc',
+    label: 'Nama Produk (A - Z)',
+    icon: '🔤',
+    desc: 'Urutan abjad nama produk dari A ke Z',
+  },
+  {
+    id: 'name_desc',
+    label: 'Nama Produk (Z - A)',
+    icon: '🔤',
+    desc: 'Urutan abjad nama produk terbalik dari Z ke A',
+  },
+  {
+    id: 'price_desc',
+    label: 'Harga Tertinggi (Termahal)',
+    icon: '💰',
+    desc: 'Urutan harga jual dari yang paling mahal ke termurah',
+  },
+  {
+    id: 'price_asc',
+    label: 'Harga Terendah (Termurah)',
+    icon: '🏷️',
+    desc: 'Urutan harga jual dari yang paling murah ke termahal',
+  },
+  {
+    id: 'stock_asc',
+    label: 'Stok Paling Sedikit (Menipis)',
+    icon: '⚠️',
+    desc: 'Melihat barang yang stoknya habis atau menipis',
+    retailOnly: true,
+  },
+  {
+    id: 'stock_desc',
+    label: 'Stok Terbanyak',
+    icon: '📦',
+    desc: 'Melihat barang dengan jumlah stok fisik terbanyak',
+    retailOnly: true,
+  },
+];
+
+function getExtraBarcodes(product: Product): string[] {
+  if (!product.barcodes) return [];
+  try {
+    const list: string[] = JSON.parse(product.barcodes);
+    if (Array.isArray(list)) {
+      return list.filter((b) => typeof b === 'string' && b.trim().length > 0 && b.trim() !== product.barcode?.trim());
+    }
+  } catch {}
+  return [];
+}
 
 export default function ProductsScreen() {
   useLockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);
@@ -70,6 +152,11 @@ export default function ProductsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [scannerVisible, setScannerVisible] = useState(false);
   const [scannerTarget, setScannerTarget] = useState<string>('form');
+
+  // Filter Kategori & Pengurutan (Sorting)
+  const [activeCategoryFilter, setActiveCategoryFilter] = useState<number | null>(null);
+  const [sortOption, setSortOption] = useState<SortOption>('oldest');
+  const [sortModalVisible, setSortModalVisible] = useState(false);
 
   // Modal Kategori
   const [catModalVisible, setCatModalVisible] = useState(false);
@@ -408,15 +495,66 @@ export default function ProductsScreen() {
 
   const selectedOpnameProd = products.find((p) => p.id === opnameProductId);
 
-  const filteredProducts = products.filter((p) => {
-    if (!searchQuery.trim()) return true;
+  const currentSortMeta = SORT_OPTIONS.find((s) => s.id === sortOption) || SORT_OPTIONS[0];
+
+  const filteredProducts = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    return (
-      p.name.toLowerCase().includes(q) ||
-      (p.barcode && p.barcode.toLowerCase().includes(q)) ||
-      (p.category_name && p.category_name.toLowerCase().includes(q))
-    );
-  });
+    const result = products.filter((p) => {
+      // 1. Filter Kategori
+      if (activeCategoryFilter !== null && p.category_id !== activeCategoryFilter) {
+        return false;
+      }
+
+      // 2. Filter Pencarian Teks & Barcode (Utama & Multi-Barcode)
+      if (q) {
+        const matchName = p.name.toLowerCase().includes(q);
+        const matchCat = p.category_name ? p.category_name.toLowerCase().includes(q) : false;
+        const matchPrimary = p.barcode ? p.barcode.toLowerCase().includes(q) : false;
+
+        let matchMulti = false;
+        if (p.barcodes) {
+          try {
+            const list: string[] = JSON.parse(p.barcodes);
+            if (Array.isArray(list)) {
+              matchMulti = list.some((b) => b.toLowerCase().includes(q));
+            }
+          } catch {
+            matchMulti = p.barcodes.toLowerCase().includes(q);
+          }
+        }
+
+        if (!matchName && !matchCat && !matchPrimary && !matchMulti) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    // 3. Sorting
+    return result.sort((a, b) => {
+      switch (sortOption) {
+        case 'oldest':
+          return a.id - b.id;
+        case 'newest':
+          return b.id - a.id;
+        case 'name_asc':
+          return a.name.localeCompare(b.name, 'id');
+        case 'name_desc':
+          return b.name.localeCompare(a.name, 'id');
+        case 'price_desc':
+          return b.price - a.price;
+        case 'price_asc':
+          return a.price - b.price;
+        case 'stock_asc':
+          return (a.stock ?? 0) - (b.stock ?? 0);
+        case 'stock_desc':
+          return (b.stock ?? 0) - (a.stock ?? 0);
+        default:
+          return a.id - b.id;
+      }
+    });
+  }, [products, activeCategoryFilter, searchQuery, sortOption]);
 
   return (
     <ThemedView
@@ -497,6 +635,109 @@ export default function ProductsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* ───────────────────────────────────────── */}
+      {/* FILTER KATEGORI & URUTKAN (SORTING)       */}
+      {/* ───────────────────────────────────────── */}
+      <View style={styles.filterSortSection}>
+        {/* Baris Kontrol: Tombol Urutkan & Filter Kategori Horizontal */}
+        <View style={styles.filterSortControlsRow}>
+          {/* Tombol Pemilih Urutan */}
+          <TouchableOpacity
+            style={[
+              styles.sortTriggerBtn,
+              sortOption !== 'oldest' && styles.sortTriggerBtnActive,
+            ]}
+            onPress={() => setSortModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <ThemedText style={styles.sortTriggerIcon}>{currentSortMeta.icon}</ThemedText>
+            <ThemedText
+              style={[
+                styles.sortTriggerText,
+                sortOption !== 'oldest' && styles.sortTriggerTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              {currentSortMeta.label}
+            </ThemedText>
+            <ThemedText style={styles.sortTriggerChevron}>▾</ThemedText>
+          </TouchableOpacity>
+
+          {/* Chips Kategori Horizontal */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryChipsScroll}
+          >
+            <TouchableOpacity
+              style={[
+                styles.categoryFilterChip,
+                activeCategoryFilter === null && styles.categoryFilterChipActive,
+              ]}
+              onPress={() => setActiveCategoryFilter(null)}
+              activeOpacity={0.7}
+            >
+              <ThemedText
+                style={[
+                  styles.categoryFilterChipText,
+                  activeCategoryFilter === null && styles.categoryFilterChipTextActive,
+                ]}
+              >
+                🏷️ Semua ({products.length})
+              </ThemedText>
+            </TouchableOpacity>
+
+            {categories.map((cat) => {
+              const count = products.filter((p) => p.category_id === cat.id).length;
+              const isActive = activeCategoryFilter === cat.id;
+              return (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[
+                    styles.categoryFilterChip,
+                    isActive && styles.categoryFilterChipActive,
+                  ]}
+                  onPress={() => setActiveCategoryFilter(isActive ? null : cat.id)}
+                  activeOpacity={0.7}
+                >
+                  <ThemedText
+                    style={[
+                      styles.categoryFilterChipText,
+                      isActive && styles.categoryFilterChipTextActive,
+                    ]}
+                  >
+                    {cat.name} ({count})
+                  </ThemedText>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        {/* Status Filter Aktif & Reset Cepat */}
+        {(activeCategoryFilter !== null || searchQuery.trim().length > 0 || sortOption !== 'oldest') && (
+          <View style={styles.filterActiveBar}>
+            <ThemedText style={styles.filterActiveInfoText} numberOfLines={1}>
+              Hasil: <ThemedText style={{ fontWeight: '800', color: Colors.tint }}>{filteredProducts.length}</ThemedText> dari {products.length} produk
+              {activeCategoryFilter !== null && ` • Kategori: ${categories.find((c) => c.id === activeCategoryFilter)?.name || 'Terpilih'}`}
+              {searchQuery.trim().length > 0 && ` • Kata kunci: "${searchQuery}"`}
+              {sortOption !== 'oldest' && ` • Urutan: ${currentSortMeta.label}`}
+            </ThemedText>
+            <TouchableOpacity
+              style={styles.resetFilterBtn}
+              onPress={() => {
+                setActiveCategoryFilter(null);
+                setSearchQuery('');
+                setSortOption('oldest');
+              }}
+              activeOpacity={0.7}
+            >
+              <ThemedText style={styles.resetFilterBtnText}>✕ Reset</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
       {/* List Products */}
       <FlatList
         data={filteredProducts}
@@ -524,9 +765,31 @@ export default function ProductsScreen() {
                 </ThemedText>
 
                 {item.barcode ? (
-                  <ThemedText style={{ color: '#64748b', fontSize: 11 }}>
-                    Barcode: {item.barcode}
-                  </ThemedText>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <ThemedText style={{ color: '#64748b', fontSize: 11 }}>
+                      Barcode: {item.barcode}
+                    </ThemedText>
+                    {getExtraBarcodes(item).length > 0 && (
+                      <View style={styles.multiBarcodeBadge}>
+                        <ThemedText style={styles.multiBarcodeBadgeText}>
+                          +{getExtraBarcodes(item).length} barcode lain
+                        </ThemedText>
+                      </View>
+                    )}
+                  </View>
+                ) : getExtraBarcodes(item).length > 0 ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <ThemedText style={{ color: '#64748b', fontSize: 11 }}>
+                      Barcode: {getExtraBarcodes(item)[0]}
+                    </ThemedText>
+                    {getExtraBarcodes(item).length > 1 && (
+                      <View style={styles.multiBarcodeBadge}>
+                        <ThemedText style={styles.multiBarcodeBadgeText}>
+                          +{getExtraBarcodes(item).length - 1} barcode lain
+                        </ThemedText>
+                      </View>
+                    )}
+                  </View>
                 ) : null}
 
                 {isRetail && item.cost_price > 0 && (
@@ -1394,6 +1657,84 @@ export default function ProductsScreen() {
         </ThemedView>
       </Modal>
 
+      {/* ───────────────────────────────────────── */}
+      {/* MODAL PILIH URUTAN (SORT MODAL)           */}
+      {/* ───────────────────────────────────────── */}
+      <Modal visible={sortModalVisible} transparent animationType="fade">
+        <ThemedView style={styles.modalOverlay}>
+          <Card style={[styles.modalContent, { maxWidth: 520 }]} padding={20}>
+            <View style={styles.modalHeader}>
+              <View>
+                <ThemedText type="subtitle">Urutkan Daftar Produk</ThemedText>
+                <ThemedText style={{ fontSize: 11, color: Colors.muted, marginTop: 2 }}>
+                  Pilih urutan untuk memudahkan mencari produk lama atau baru
+                </ThemedText>
+              </View>
+              <Pressable onPress={() => setSortModalVisible(false)} style={styles.closeBtn}>
+                <ThemedText style={{ fontSize: 18, color: Colors.muted }}>✕</ThemedText>
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+              <View style={{ gap: 8 }}>
+                {SORT_OPTIONS.filter((opt) => !opt.retailOnly || isRetail).map((opt) => {
+                  const isSelected = sortOption === opt.id;
+                  return (
+                    <TouchableOpacity
+                      key={opt.id}
+                      style={[
+                        styles.sortOptionCard,
+                        isSelected && styles.sortOptionCardSelected,
+                      ]}
+                      onPress={() => {
+                        setSortOption(opt.id);
+                        setSortModalVisible(false);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.sortOptionLeft}>
+                        <ThemedText style={styles.sortOptionIcon}>{opt.icon}</ThemedText>
+                        <View style={{ flex: 1 }}>
+                          <ThemedText
+                            style={[
+                              styles.sortOptionTitle,
+                              isSelected && styles.sortOptionTitleSelected,
+                            ]}
+                          >
+                            {opt.label}
+                          </ThemedText>
+                          <ThemedText style={styles.sortOptionDesc}>
+                            {opt.desc}
+                          </ThemedText>
+                        </View>
+                      </View>
+
+                      <View
+                        style={[
+                          styles.sortOptionRadio,
+                          isSelected && styles.sortOptionRadioSelected,
+                        ]}
+                      >
+                        {isSelected && <View style={styles.sortOptionRadioInner} />}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            <View style={{ marginTop: 16 }}>
+              <Button
+                title="Tutup"
+                variant="outline"
+                size="sm"
+                onPress={() => setSortModalVisible(false)}
+              />
+            </View>
+          </Card>
+        </ThemedView>
+      </Modal>
+
       {/* Modal Scanner Barcode */}
       <BarcodeScannerModal
         visible={scannerVisible}
@@ -1787,5 +2128,177 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#475569',
+  },
+
+  // Filter & Sort Bar Styles
+  filterSortSection: {
+    marginBottom: 10,
+    gap: 6,
+  },
+  filterSortControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sortTriggerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 38,
+    maxWidth: 220,
+  },
+  sortTriggerBtnActive: {
+    backgroundColor: '#f5f3ff',
+    borderColor: Colors.tint,
+  },
+  sortTriggerIcon: {
+    fontSize: 13,
+  },
+  sortTriggerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    flexShrink: 1,
+  },
+  sortTriggerTextActive: {
+    color: Colors.tintDark,
+  },
+  sortTriggerChevron: {
+    fontSize: 11,
+    color: Colors.muted,
+  },
+  categoryChipsScroll: {
+    gap: 6,
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  categoryFilterChip: {
+    paddingHorizontal: 12,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  categoryFilterChipActive: {
+    backgroundColor: Colors.tint,
+    borderColor: Colors.tint,
+  },
+  categoryFilterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  categoryFilterChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  filterActiveBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  filterActiveInfoText: {
+    fontSize: 11,
+    color: '#64748b',
+    flex: 1,
+    marginRight: 8,
+  },
+  resetFilterBtn: {
+    backgroundColor: '#ede9fe',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  resetFilterBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.tintDark,
+  },
+
+  // Multi-Barcode Badge
+  multiBarcodeBadge: {
+    backgroundColor: '#ede9fe',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+  },
+  multiBarcodeBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.tintDark,
+  },
+
+  // Sort Option Modal Styles
+  sortOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 12,
+  },
+  sortOptionCardSelected: {
+    backgroundColor: '#f5f3ff',
+    borderColor: Colors.tint,
+  },
+  sortOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 10,
+  },
+  sortOptionIcon: {
+    fontSize: 18,
+  },
+  sortOptionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  sortOptionTitleSelected: {
+    color: Colors.tintDark,
+    fontWeight: '800',
+  },
+  sortOptionDesc: {
+    fontSize: 11,
+    color: Colors.muted,
+    marginTop: 2,
+  },
+  sortOptionRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#cbd5e1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sortOptionRadioSelected: {
+    borderColor: Colors.tint,
+  },
+  sortOptionRadioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.tint,
   },
 });

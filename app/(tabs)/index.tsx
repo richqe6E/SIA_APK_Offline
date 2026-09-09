@@ -1,4 +1,5 @@
 import { CashShiftModal } from '@/components/cash-shift-modal';
+import { CashDenominationModal } from '@/components/cash-denomination-modal';
 import { OnboardingModal } from '@/components/onboarding-modal';
 import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
 import { ThemedText } from '@/components/themed-text';
@@ -28,11 +29,21 @@ export default function DashboardScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
 
-  const { storeName, businessType, businessMode, isOnboarded, loadSettings, appOrientation, setAppOrientation } = useSettingsStore();
-  const { currentBalance, loadLedger } = useCashStore();
+  const { storeName, businessType, businessMode, isOnboarded, loadSettings, appOrientation, setAppOrientation, currentUserRole, logoutRole } = useSettingsStore();
+  const {
+    currentBalance,
+    cashHandBalance,
+    cashBankBalance,
+    totalBalance,
+    denominations,
+    loadDenominations,
+    saveDenominations,
+    loadLedger,
+  } = useCashStore();
   const { currentShift, loadActiveShift } = useShiftStore();
 
   const [shiftModalVisible, setShiftModalVisible] = useState(false);
+  const [denominationModalVisible, setDenominationModalVisible] = useState(false);
   const [expiredAlerts, setExpiredAlerts] = useState<
     { id: number; name: string; sku: string; expired_date: string; stock: number; diffDays: number }[]
   >([]);
@@ -74,6 +85,7 @@ export default function DashboardScreen() {
     setLoading(true);
     await loadSettings(db);
     await loadLedger(db);
+    await loadDenominations(db);
     await loadActiveShift(db);
 
     const expRows = await db.getAllAsync<{ id: number; name: string; barcode: string; expired_date: string; stock: number }>(
@@ -167,7 +179,197 @@ export default function DashboardScreen() {
   const isUp = percentChange >= 0;
   const { width } = useWindowDimensions();
   const isTabletOrLandscape = width >= 720 || appOrientation === 'landscape';
-  const { currentUserRole, logoutRole } = useSettingsStore();
+
+  const DENOMINATIONS_LIST = [
+    { value: 100000, label: '100rb' },
+    { value: 50000, label: '50rb' },
+    { value: 20000, label: '20rb' },
+    { value: 10000, label: '10rb' },
+    { value: 5000, label: '5rb' },
+    { value: 2000, label: '2rb' },
+    { value: 1000, label: '1rb' },
+    { value: 500, label: '500' },
+    { value: 200, label: '200' },
+    { value: 100, label: '100' },
+  ];
+
+  const counts = denominations?.counts || {};
+  const physicalTotal = denominations?.total ?? 0;
+  const activeDenominations = DENOMINATIONS_LIST.filter((d) => (counts[d.value] || 0) > 0);
+  const denominationDiff = physicalTotal - cashHandBalance;
+  const isDenominationCounted = denominations !== null && Object.keys(counts).length > 0;
+  const isDenominationMatched = isDenominationCounted && Math.abs(denominationDiff) < 1;
+
+  const renderDualCashCard = (isLandscape: boolean) => (
+    <Card padding={isLandscape ? 16 : 14} style={styles.cashBalanceCard}>
+      {/* Header: Total Kas Toko */}
+      <View
+        style={{
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 10,
+          paddingBottom: 8,
+          borderBottomWidth: 1,
+          borderColor: '#f1f5f9',
+        }}
+      >
+        <View>
+          <ThemedText style={{ fontSize: 10, color: '#64748b', fontWeight: '800', letterSpacing: 0.5 }}>
+            TOTAL LIKUIDITAS KAS TOKO
+          </ThemedText>
+          <ThemedText
+            style={{
+              fontSize: isLandscape ? 20 : 18,
+              fontWeight: '900',
+              color: totalBalance >= 0 ? '#0f172a' : Colors.danger,
+              marginTop: 1,
+            }}
+          >
+            {formatRupiah(totalBalance)}
+          </ThemedText>
+        </View>
+        {currentUserRole !== 'kasir' && (
+          <TouchableOpacity
+            style={styles.openLedgerBtn}
+            onPress={() => router.push('/(tabs)/financial-reports')}
+            activeOpacity={0.8}
+          >
+            <ThemedText style={styles.openLedgerText}>Buku Kas ›</ThemedText>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Saku 1: Saldo Kas Fisik di Tangan (Laci Kasir) */}
+      <View style={styles.cashPocketContainer}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View style={{ flex: 1, paddingRight: 6 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <ThemedText style={{ fontSize: 11, color: '#334155', fontWeight: '800' }}>
+                💵 SALDO KAS FISIK DI TANGAN
+              </ThemedText>
+              {isDenominationMatched ? (
+                <View style={[styles.denomBadge, { backgroundColor: '#dcfce7', borderColor: '#bbf7d0' }]}>
+                  <ThemedText style={{ fontSize: 9.5, color: '#16a34a', fontWeight: '800' }}>✓ Fisik Sesuai</ThemedText>
+                </View>
+              ) : isDenominationCounted ? (
+                <View style={[styles.denomBadge, { backgroundColor: '#fef3c7', borderColor: '#fde68a' }]}>
+                  <ThemedText style={{ fontSize: 9.5, color: '#b45309', fontWeight: '800' }}>
+                    ⚠️ Selisih {denominationDiff > 0 ? '+' : ''}{formatRupiah(denominationDiff)}
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={[styles.denomBadge, { backgroundColor: '#f1f5f9', borderColor: '#e2e8f0' }]}>
+                  <ThemedText style={{ fontSize: 9.5, color: '#64748b', fontWeight: '600' }}>Belum Dihitung</ThemedText>
+                </View>
+              )}
+            </View>
+            <ThemedText
+              style={{
+                fontSize: isLandscape ? 24 : 22,
+                fontWeight: '800',
+                color: cashHandBalance >= 0 ? Colors.tintDark : Colors.danger,
+                marginTop: 2,
+              }}
+            >
+              {formatRupiah(cashHandBalance)}
+            </ThemedText>
+          </View>
+
+          {/* Tombol Input / Edit Pecahan Uang (Bisa diakses Kasir & Pemilik) */}
+          <TouchableOpacity
+            style={styles.denomActionBtn}
+            onPress={() => setDenominationModalVisible(true)}
+            activeOpacity={0.8}
+          >
+            <ThemedText style={{ fontSize: 11 }}>💵</ThemedText>
+            <ThemedText style={styles.denomActionText}>
+              {isDenominationCounted ? 'Edit Pecahan' : 'Hitung Pecahan'}
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+
+        {/* Deretan Chips Pecahan Uang Fisik */}
+        {activeDenominations.length > 0 ? (
+          <View style={{ marginTop: 8 }}>
+            <ThemedText style={{ fontSize: 10, color: '#64748b', fontWeight: '600', marginBottom: 4 }}>
+              Rincian Pecahan di Laci (Total: {formatRupiah(physicalTotal)}):
+            </ThemedText>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 5, paddingVertical: 2 }}>
+              {activeDenominations.map((d) => (
+                <TouchableOpacity
+                  key={d.value}
+                  style={styles.denomChip}
+                  onPress={() => setDenominationModalVisible(true)}
+                  activeOpacity={0.7}
+                >
+                  <ThemedText style={styles.denomChipText}>
+                    {d.label} <ThemedText style={{ fontWeight: '800', color: Colors.tintDark }}>×{counts[d.value]}</ThemedText>
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Saku 2: Saldo Kas di Bank (Rekening / QRIS / Transfer) */}
+      <View style={[styles.cashPocketContainer, { marginTop: 8, backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }]}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <ThemedText style={{ fontSize: 11, color: '#0369a1', fontWeight: '800' }}>
+                🏛️ SALDO KAS DI BANK
+              </ThemedText>
+              <View style={[styles.denomBadge, { backgroundColor: '#e0f2fe', borderColor: '#bae6fd' }]}>
+                <ThemedText style={{ fontSize: 9.5, color: '#0284c7', fontWeight: '700' }}>QRIS / Transfer</ThemedText>
+              </View>
+            </View>
+            <ThemedText
+              style={{
+                fontSize: isLandscape ? 20 : 18,
+                fontWeight: '800',
+                color: cashBankBalance >= 0 ? '#0284c7' : Colors.danger,
+                marginTop: 2,
+              }}
+            >
+              {formatRupiah(cashBankBalance)}
+            </ThemedText>
+          </View>
+
+          {currentUserRole !== 'kasir' && (
+            <TouchableOpacity
+              style={styles.bankQuickBtn}
+              onPress={() => router.push('/(tabs)/financial-reports')}
+              activeOpacity={0.8}
+            >
+              <ThemedText style={{ fontSize: 11 }}>🏦</ThemedText>
+              <ThemedText style={styles.bankQuickBtnText}>Setor Kas ›</ThemedText>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {/* Breakdown Kas Hari Ini */}
+      {isLandscape && (
+        <View style={styles.cashBreakdownRow}>
+          <View style={styles.cashSubItem}>
+            <ThemedText style={styles.cashSubLabel}>Uang Masuk Hari Ini</ThemedText>
+            <ThemedText style={[styles.cashSubVal, { color: '#15803d' }]}>
+              + {formatRupiah(summary.today)}
+            </ThemedText>
+          </View>
+          <View style={styles.cashSubDivider} />
+          <View style={styles.cashSubItem}>
+            <ThemedText style={styles.cashSubLabel}>Penjualan Bulan</ThemedText>
+            <ThemedText style={styles.cashSubVal}>
+              {formatRupiah(summary.month)}
+            </ThemedText>
+          </View>
+        </View>
+      )}
+    </Card>
+  );
 
   return (
     <ThemedView
@@ -337,51 +539,8 @@ export default function DashboardScreen() {
               <View style={styles.landscapeGrid}>
                 {/* Kolom Kiri: Kas & Rekap Penjualan */}
                 <View style={styles.landscapeCol}>
-                  {/* Saldo Kas Riil Card */}
-                  <Card padding={16} style={styles.cashBalanceCard}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <View>
-                        <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '700', letterSpacing: 0.5 }}>
-                          SALDO KAS FISIK DI TANGAN
-                        </ThemedText>
-                        <ThemedText
-                          style={{
-                            fontSize: 26,
-                            fontWeight: '800',
-                            color: currentBalance >= 0 ? Colors.tintDark : Colors.danger,
-                            marginTop: 3,
-                          }}
-                        >
-                          {formatRupiah(currentBalance)}
-                        </ThemedText>
-                      </View>
-                      {currentUserRole !== 'kasir' && (
-                        <TouchableOpacity
-                          style={styles.openLedgerBtn}
-                          onPress={() => router.push('/(tabs)/financial-reports')}
-                        >
-                          <ThemedText style={styles.openLedgerText}>Buku Kas ›</ThemedText>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-
-                    {/* Breakdown Kas */}
-                    <View style={styles.cashBreakdownRow}>
-                      <View style={styles.cashSubItem}>
-                        <ThemedText style={styles.cashSubLabel}>Uang Masuk</ThemedText>
-                        <ThemedText style={[styles.cashSubVal, { color: '#15803d' }]}>
-                          + {formatRupiah(summary.today)}
-                        </ThemedText>
-                      </View>
-                      <View style={styles.cashSubDivider} />
-                      <View style={styles.cashSubItem}>
-                        <ThemedText style={styles.cashSubLabel}>Penjualan Bulan</ThemedText>
-                        <ThemedText style={styles.cashSubVal}>
-                          {formatRupiah(summary.month)}
-                        </ThemedText>
-                      </View>
-                    </View>
-                  </Card>
+                  {/* Saldo Kas Dual-Pocket Card (Kas Fisik & Kas Bank) */}
+                  {renderDualCashCard(true)}
 
                   {/* Perbandingan Hari Ini vs Kemarin */}
                   <Card padding={16} style={styles.compCard}>
@@ -566,34 +725,8 @@ export default function DashboardScreen() {
             ) : (
               /* TAMPILAN PORTRAIT / HP */
               <>
-                {/* Saldo Kas Riil Card */}
-                <Card padding={14} style={styles.cashBalanceCard}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View>
-                      <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '700' }}>
-                        SALDO KAS FISIK DI TANGAN
-                      </ThemedText>
-                      <ThemedText
-                        style={{
-                          fontSize: 24,
-                          fontWeight: '800',
-                          color: currentBalance >= 0 ? Colors.tintDark : Colors.danger,
-                          marginTop: 2,
-                        }}
-                      >
-                        {formatRupiah(currentBalance)}
-                      </ThemedText>
-                    </View>
-                    {currentUserRole !== 'kasir' && (
-                      <TouchableOpacity
-                        style={styles.openLedgerBtn}
-                        onPress={() => router.push('/(tabs)/financial-reports')}
-                      >
-                        <ThemedText style={styles.openLedgerText}>Buku Kas ›</ThemedText>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </Card>
+                {/* Saldo Kas Dual-Pocket Card (Kas Fisik & Kas Bank) */}
+                {renderDualCashCard(false)}
 
                 {/* Stat cards row */}
                 <View style={styles.cardsRow}>
@@ -808,6 +941,17 @@ export default function DashboardScreen() {
           loadSummary();
         }}
       />
+
+      {/* Cash Denomination Modal (Hitung Pecahan Uang Kas Fisik) */}
+      <CashDenominationModal
+        visible={denominationModalVisible}
+        onClose={() => setDenominationModalVisible(false)}
+        currentHandBalance={cashHandBalance}
+        initialCounts={denominations?.counts}
+        onSave={async (newCounts) => {
+          await saveDenominations(db, newCounts);
+        }}
+      />
     </ThemedView>
   );
 }
@@ -997,6 +1141,65 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: Colors.tintDark,
+  },
+  cashPocketContainer: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 10,
+    marginBottom: 6,
+  },
+  denomBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  denomActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  denomActionText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.tintDark,
+  },
+  denomChip: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  denomChipText: {
+    fontSize: 10,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  bankQuickBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#e0f2fe',
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  bankQuickBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0284c7',
   },
   cardsRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
   statCard: {

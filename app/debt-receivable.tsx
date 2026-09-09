@@ -32,6 +32,7 @@ import {
   type SupplierDebt,
   type PaymentHistoryItem,
 } from '@/stores/debtReceivableStore';
+import { useCashStore } from '@/stores/cashStore';
 
 type ActiveTab = 'receivable' | 'debt';
 type FilterStatus = 'all' | 'unpaid' | 'paid';
@@ -42,6 +43,7 @@ export default function DebtReceivableScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
 
+  const { cashHandBalance, cashBankBalance, loadLedger } = useCashStore();
   const {
     customers,
     suppliers,
@@ -87,6 +89,7 @@ export default function DebtReceivableScreen() {
     remainingAmount: number;
   } | null>(null);
   const [payAmount, setPayAmount] = useState('');
+  const [payAccount, setPayAccount] = useState<'hand' | 'bank'>('hand');
   const [payNotes, setPayNotes] = useState('');
   const [payDate, setPayDate] = useState(new Date());
   const [showPayDatePicker, setShowPayDatePicker] = useState(false);
@@ -105,7 +108,8 @@ export default function DebtReceivableScreen() {
     loadSuppliers(db);
     loadReceivables(db);
     loadDebts(db);
-  }, [db, loadCustomers, loadSuppliers, loadReceivables, loadDebts]);
+    loadLedger(db);
+  }, [db, loadCustomers, loadSuppliers, loadReceivables, loadDebts, loadLedger]);
 
   useEffect(() => {
     reloadAll();
@@ -151,6 +155,7 @@ export default function DebtReceivableScreen() {
       remainingAmount,
     });
     setPayAmount(remainingAmount.toString());
+    setPayAccount('hand');
     setPayNotes('');
     setPayDate(new Date());
     setShowPayDatePicker(false);
@@ -172,9 +177,9 @@ export default function DebtReceivableScreen() {
     const dateStr = payDate.toISOString().split('T')[0];
     let res: { success: boolean; message?: string };
     if (payTarget.type === 'receivable') {
-      res = await payReceivable(db, payTarget.id, amt, payNotes, dateStr);
+      res = await payReceivable(db, payTarget.id, amt, payNotes, dateStr, payAccount);
     } else {
-      res = await payDebt(db, payTarget.id, amt, payNotes, dateStr);
+      res = await payDebt(db, payTarget.id, amt, payNotes, dateStr, payAccount);
     }
     setPaying(false);
 
@@ -676,6 +681,104 @@ export default function DebtReceivableScreen() {
                     value={payAmount}
                     onChangeText={setPayAmount}
                   />
+                </View>
+
+                {/* Pilihan Akun Kas / Rekening */}
+                <View style={styles.inputGroup}>
+                  <ThemedText style={styles.label}>
+                    {payTarget.type === 'receivable' ? 'Penerimaan Masuk ke Akun Kas' : 'Sumber Kas Pembayaran'}
+                  </ThemedText>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                    <TouchableOpacity
+                      style={[
+                        styles.chipOption,
+                        { flex: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
+                        payAccount === 'hand' && styles.chipOptionActive,
+                      ]}
+                      onPress={() => setPayAccount('hand')}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.chipOptionText,
+                          payAccount === 'hand' && styles.chipOptionTextActive,
+                          { fontWeight: '700' },
+                        ]}
+                      >
+                        💵 Kas di Tangan
+                      </ThemedText>
+                      {payTarget.type === 'debt' && (
+                        <ThemedText
+                          style={{
+                            fontSize: 10,
+                            color: payAccount === 'hand' ? '#ffffff' : Colors.muted,
+                            marginTop: 2,
+                          }}
+                        >
+                          Saldo: Rp {Math.round(cashHandBalance).toLocaleString('id-ID')}
+                        </ThemedText>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.chipOption,
+                        { flex: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
+                        payAccount === 'bank' && styles.chipOptionActive,
+                      ]}
+                      onPress={() => setPayAccount('bank')}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.chipOptionText,
+                          payAccount === 'bank' && styles.chipOptionTextActive,
+                          { fontWeight: '700' },
+                        ]}
+                      >
+                        🏛️ Kas di Bank
+                      </ThemedText>
+                      {payTarget.type === 'debt' && (
+                        <ThemedText
+                          style={{
+                            fontSize: 10,
+                            color: payAccount === 'bank' ? '#ffffff' : Colors.muted,
+                            marginTop: 2,
+                          }}
+                        >
+                          Saldo: Rp {Math.round(cashBankBalance).toLocaleString('id-ID')}
+                        </ThemedText>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Keterangan info atau peringatan defisit */}
+                  {payTarget.type === 'debt' &&
+                    ((payAccount === 'hand' &&
+                      cashHandBalance < (parseFloat(payAmount.replace(/[^0-9]/g, '')) || 0)) ||
+                      (payAccount === 'bank' &&
+                        cashBankBalance < (parseFloat(payAmount.replace(/[^0-9]/g, '')) || 0))) && (
+                      <View
+                        style={{
+                          backgroundColor: '#fef2f2',
+                          padding: 8,
+                          borderRadius: 8,
+                          marginTop: 6,
+                          borderWidth: 1,
+                          borderColor: '#fecaca',
+                        }}
+                      >
+                        <ThemedText style={{ fontSize: 11, color: '#b91c1c', fontWeight: '700' }}>
+                          ⚠️ Saldo {payAccount === 'hand' ? 'Kas di Tangan' : 'Kas di Bank'} tidak mencukupi!
+                        </ThemedText>
+                        <ThemedText style={{ fontSize: 10, color: '#7f1d1d', marginTop: 2 }}>
+                          Tersedia: Rp{' '}
+                          {(payAccount === 'hand' ? cashHandBalance : cashBankBalance).toLocaleString(
+                            'id-ID'
+                          )}
+                          , Dibutuhkan: Rp{' '}
+                          {(parseFloat(payAmount.replace(/[^0-9]/g, '')) || 0).toLocaleString('id-ID')}.
+                        </ThemedText>
+                      </View>
+                    )}
                 </View>
 
                 {/* Tanggal Pembayaran */}

@@ -35,10 +35,10 @@ export function QrisDisplayModal({
         <Card style={styles.modalCard} padding={20}>
           {/* Header */}
           <View style={styles.header}>
-            <ThemedText style={styles.title}>PEMBAYARAN QRIS</ThemedText>
+            <ThemedText style={styles.title}>PEMBAYARAN QRIS / TRANSFER</ThemedText>
             <ThemedText style={styles.storeName}>{storeName.toUpperCase()}</ThemedText>
             <ThemedText style={styles.tagline}>
-              Mendukung Semua Pembayaran Dompet Digital & Mobile Banking
+              Scan QRIS atau Transfer Bank ke Rekening Toko
             </ThemedText>
           </View>
 
@@ -49,6 +49,16 @@ export function QrisDisplayModal({
             </ThemedText>
             <ThemedText style={styles.amountText}>
               Rp {totalAmount.toLocaleString('id-ID')}
+            </ThemedText>
+          </View>
+
+          {/* Info Penerimaan Kas di Bank */}
+          <View style={styles.cashAccountInfoBox}>
+            <ThemedText style={{ fontSize: 11, color: '#1e40af', fontWeight: '700' }}>
+              🏛️ Penerimaan: Kas di Bank (Rekening Toko)
+            </ThemedText>
+            <ThemedText style={{ fontSize: 10, color: '#3b82f6', textAlign: 'center', marginTop: 1 }}>
+              Otomatis tercatat non-tunai di Buku Kas & tidak menambah uang fisik di laci kasir.
             </ThemedText>
           </View>
 
@@ -74,7 +84,7 @@ export function QrisDisplayModal({
           </View>
 
           <ThemedText style={styles.instruction}>
-            Arahkan kamera aplikasi perbankan atau e-wallet (BCA, Mandiri, BRI, BNI, GoPay, OVO, DANA, ShopeePay) untuk memindai kode QRIS di atas.
+            Arahkan kamera aplikasi perbankan atau e-wallet (BCA, Mandiri, BRI, BNI, GoPay, OVO, DANA, ShopeePay) untuk memindai kode QRIS atau transfer ke rekening toko.
           </ThemedText>
 
           {/* Actions */}
@@ -88,7 +98,7 @@ export function QrisDisplayModal({
             />
             {onConfirmPayment && (
               <Button
-                title="✓ QRIS Lunas"
+                title="✓ QRIS / Transfer Diterima"
                 size="sm"
                 style={{ flex: 1.3 }}
                 onPress={() => {
@@ -157,6 +167,17 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#15803d',
     marginTop: 2,
+  },
+  cashAccountInfoBox: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 10,
   },
   imageContainer: {
     width: 250,

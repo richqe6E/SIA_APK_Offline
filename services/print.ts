@@ -18,12 +18,12 @@ function formatDate(date: string): string {
   return `${day} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${hours}:${minutes}`;
 }
 
-function formatInvoice(id: number): string {
-  const d = new Date();
+export function formatInvoice(id: number, date?: Date | string): string {
+  const d = date ? (typeof date === 'string' ? new Date(date) : date) : new Date();
   const dd = d.getDate().toString().padStart(2, '0');
   const mm = (d.getMonth() + 1).toString().padStart(2, '0');
   const yy = d.getFullYear().toString().slice(-2);
-  return `INV-${dd}${mm}${yy}-${id.toString().padStart(3, '0')}`;
+  return `TRX-${dd}${mm}${yy}-${id.toString().padStart(3, '0')}`;
 }
 
 function formatRupiah(n: number): string {
@@ -107,6 +107,10 @@ export interface PrintParams {
   storeName?: string;
   storeAddress?: string;
   storePhone?: string;
+  storePhone2?: string;
+  cashierName?: string;
+  shiftName?: string;
+  customerName?: string;
   receiptFooter?: string;
 }
 
@@ -119,11 +123,21 @@ export async function printReceipt(params: PrintParams): Promise<void> {
     await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
   }
   if (params.storePhone) {
-    await BluetoothEscposPrinter.printText('Telp/WA: ' + params.storePhone + '\n', {});
+    if (params.storePhone2 && params.storePhone2.trim()) {
+      await BluetoothEscposPrinter.printText(`Telp: ${params.storePhone} | WA: ${params.storePhone2}\n`, {});
+    } else {
+      await BluetoothEscposPrinter.printText('Telp/WA: ' + params.storePhone + '\n', {});
+    }
   }
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printText(formatInvoice(params.transactionId) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatInvoice(params.transactionId, new Date(params.createdAt)) + '\n', {});
   await BluetoothEscposPrinter.printText(formatDate(params.createdAt) + '\n', {});
+  if (params.cashierName) {
+    await BluetoothEscposPrinter.printText(`Kasir: ${params.cashierName}\n`, {});
+  }
+  if (params.customerName) {
+    await BluetoothEscposPrinter.printText(`Pelanggan: ${params.customerName}\n`, {});
+  }
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
   await BluetoothEscposPrinter.printText(THIN + '\n', {});
@@ -147,7 +161,7 @@ export async function printReceipt(params: PrintParams): Promise<void> {
     await BluetoothEscposPrinter.printText(formatTotal('Metode', 'HUTANG / BON') + '\n', {});
     await BluetoothEscposPrinter.printText(formatTotal('Status', 'BELUM LUNAS') + '\n', {});
   } else {
-    const payLabel = params.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS';
+    const payLabel = params.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS/Transfer';
     await BluetoothEscposPrinter.printText(formatTotal(payLabel, formatRupiah(params.paymentAmount)) + '\n', {});
     await BluetoothEscposPrinter.printText(formatTotal('Kembalian', formatRupiah(params.change)) + '\n', {});
   }
@@ -164,6 +178,7 @@ export interface PrintZReportParams {
   storeName: string;
   storeAddress?: string;
   storePhone?: string;
+  storePhone2?: string;
   cashierName: string;
   shiftId: number;
   openedAt: string;
@@ -185,7 +200,11 @@ export async function printZReport(params: PrintZReportParams): Promise<void> {
     await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
   }
   if (params.storePhone) {
-    await BluetoothEscposPrinter.printText('Telp: ' + params.storePhone + '\n', {});
+    if (params.storePhone2 && params.storePhone2.trim()) {
+      await BluetoothEscposPrinter.printText(`Telp: ${params.storePhone} | WA: ${params.storePhone2}\n`, {});
+    } else {
+      await BluetoothEscposPrinter.printText('Telp: ' + params.storePhone + '\n', {});
+    }
   }
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
   await BluetoothEscposPrinter.printText('LAPORAN PENUTUPAN SHIFT\n', {});

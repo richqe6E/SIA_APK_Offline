@@ -14,7 +14,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTransactionStore, type PeriodFilter, type Transaction } from '@/stores/transactionStore';
 import { usePrinterStore } from '@/stores/printerStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { printReceipt } from '@/services/print';
+import { printReceipt, formatInvoice } from '@/services/print';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/theme';
 
@@ -25,7 +25,7 @@ export default function HistoryScreen() {
   const db = useSQLiteContext();
   const { transactions, loading, hasMore, loadTransactions } = useTransactionStore();
   const { printerTarget } = usePrinterStore();
-  const { storeName, businessType } = useSettingsStore();
+  const { storeName, storeAddress, storePhone, storePhone2, receiptFooter } = useSettingsStore();
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [items, setItems] = useState<any[]>([]);
   const [period, setPeriod] = useState<PeriodFilter>('all');
@@ -87,8 +87,15 @@ export default function HistoryScreen() {
         paymentMethod: t.payment_method,
         paymentAmount: t.payment_amount,
         change: t.change,
+        subtotalAmount: t.subtotal_amount,
+        discountAmount: t.discount_amount,
         storeName,
-        storeAddress: businessType,
+        storeAddress: storeAddress || '',
+        storePhone,
+        storePhone2,
+        receiptFooter,
+        cashierName: t.cashier_name || 'Kasir',
+        customerName: t.customer_name ?? undefined,
       });
       Alert.alert('Sukses', 'Struk berhasil dicetak');
     } catch {
@@ -99,7 +106,7 @@ export default function HistoryScreen() {
   const handleDelete = (t: Transaction) => {
     Alert.alert(
       'Hapus Transaksi',
-      `Yakin ingin menghapus transaksi #${String(t.id).padStart(3, '0')}?`,
+      `Yakin ingin menghapus transaksi ${formatInvoice(t.id, t.created_at)}?`,
       [
         { text: 'Batal', style: 'cancel' },
         {
@@ -138,13 +145,27 @@ export default function HistoryScreen() {
         <Card style={{ marginBottom: 16 }}>
           <ThemedText type="title" style={{ marginBottom: 12 }}>Detail Transaksi</ThemedText>
           <View style={styles.detailRow}>
+            <ThemedText style={{ color: Colors.placeholder }}>No. Transaksi</ThemedText>
+            <ThemedText type="defaultSemiBold">{formatInvoice(selected.id, selected.created_at)}</ThemedText>
+          </View>
+          <View style={styles.detailRow}>
+            <ThemedText style={{ color: Colors.placeholder }}>Kasir / Operator</ThemedText>
+            <ThemedText type="defaultSemiBold">👤 {selected.cashier_name || 'Kasir'}</ThemedText>
+          </View>
+          {selected.customer_name ? (
+            <View style={styles.detailRow}>
+              <ThemedText style={{ color: Colors.placeholder }}>Pelanggan</ThemedText>
+              <ThemedText type="defaultSemiBold">{selected.customer_name}</ThemedText>
+            </View>
+          ) : null}
+          <View style={styles.detailRow}>
             <ThemedText style={{ color: Colors.placeholder }}>Tanggal</ThemedText>
             <ThemedText type="defaultSemiBold">{formatDate(selected.created_at)}</ThemedText>
           </View>
           <View style={styles.detailRow}>
             <ThemedText style={{ color: Colors.placeholder }}>Pembayaran</ThemedText>
             <Badge
-              label={selected.payment_method.toUpperCase()}
+              label={selected.payment_method === 'qris' ? 'QRIS / TRANSFER' : selected.payment_method.toUpperCase()}
               variant={selected.payment_method === 'qris' ? 'info' : 'success'}
             />
           </View>
@@ -232,16 +253,26 @@ export default function HistoryScreen() {
           <Pressable onPress={() => selectTransaction(item)}>
             <Card style={styles.transactionCard}>
               <View style={{ flex: 1, gap: 4 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <ThemedText type="defaultSemiBold">#{item.id}</ThemedText>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                  <ThemedText type="defaultSemiBold">{formatInvoice(item.id, item.created_at)}</ThemedText>
                   <Badge
-                    label={item.payment_method.toUpperCase()}
+                    label={item.payment_method === 'qris' ? 'QRIS / TRANSFER' : item.payment_method.toUpperCase()}
                     variant={item.payment_method === 'qris' ? 'info' : 'success'}
                   />
                 </View>
-                <ThemedText style={{ color: Colors.placeholder, fontSize: 12 }}>
-                  {formatDate(item.created_at)}
-                </ThemedText>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <ThemedText style={{ color: Colors.placeholder, fontSize: 11.5 }}>
+                    {formatDate(item.created_at)}
+                  </ThemedText>
+                  <ThemedText style={{ color: Colors.tint, fontSize: 11.5, fontWeight: '600' }}>
+                    • 👤 {item.cashier_name || 'Kasir'}
+                  </ThemedText>
+                </View>
+                {item.customer_name ? (
+                  <ThemedText style={{ color: Colors.muted, fontSize: 11 }}>
+                    Pelanggan: {item.customer_name}
+                  </ThemedText>
+                ) : null}
                 <ThemedText type="defaultSemiBold">
                   Rp {item.total.toLocaleString()}
                 </ThemedText>

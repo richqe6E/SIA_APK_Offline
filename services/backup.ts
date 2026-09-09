@@ -35,7 +35,7 @@ export async function exportDatabaseBackup(db: SQLiteDatabase): Promise<string> 
   const fileName = `pos_backup_${dateStr}_${timeStr}.json`;
 
   const backupData = {
-    version: 12,
+    version: 14,
     app: 'POS Offline',
     exported_at: now.toISOString(),
     counts: {
@@ -318,8 +318,8 @@ export async function restoreDatabaseBackup(
         await db.runAsync(
           `INSERT INTO transactions (
             id, total, payment_method, payment_amount, change, customer_id, is_credit,
-            discount_amount, subtotal_amount, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            discount_amount, subtotal_amount, cashier_name, shift_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           row.id,
           row.total,
           row.payment_method || 'tunai',
@@ -329,6 +329,8 @@ export async function restoreDatabaseBackup(
           row.is_credit || 0,
           row.discount_amount || 0,
           row.subtotal_amount || row.total,
+          row.cashier_name || 'Kasir',
+          row.shift_id || null,
           row.created_at || new Date().toISOString()
         );
       }
@@ -385,8 +387,8 @@ export async function restoreDatabaseBackup(
       for (const row of data.cash_ledger) {
         await db.runAsync(
           `INSERT INTO cash_ledger (
-            id, date, type, category, amount, description, ref_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            id, date, type, category, amount, description, ref_id, account, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           row.id,
           row.date,
           row.type,
@@ -394,6 +396,7 @@ export async function restoreDatabaseBackup(
           row.amount,
           row.description || '',
           row.ref_id || null,
+          row.account || 'kas_tangan',
           row.created_at || new Date().toISOString()
         );
       }
@@ -417,7 +420,7 @@ export async function restoreDatabaseBackup(
   });
 
   return {
-    version: parsed.version || 12,
+    version: parsed.version || 14,
     app: parsed.app,
     exported_at: parsed.exported_at || '',
     counts: parsed.counts || {},

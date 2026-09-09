@@ -37,6 +37,7 @@ export function ReceiptPreviewModal({
   const storeName = propStoreName || settings.storeName || 'POS AZIZAH';
   const storeAddress = propStoreAddress !== undefined ? propStoreAddress : settings.storeAddress;
   const storePhone = propStorePhone !== undefined ? propStorePhone : settings.storePhone;
+  const storePhone2 = settings.storePhone2;
   const receiptFooter = propReceiptFooter !== undefined ? propReceiptFooter : settings.receiptFooter;
   const { printerName, connected } = usePrinterStore();
 
@@ -83,6 +84,8 @@ export function ReceiptPreviewModal({
         storeName,
         storeAddress,
         storePhone,
+        storePhone2,
+        cashierName: 'Kasir Utama',
         receiptFooter,
       });
       Alert.alert('Sukses', 'Nota contoh berhasil dicetak ke printer thermal 58mm');
@@ -119,7 +122,9 @@ export function ReceiptPreviewModal({
                 <ThemedText style={styles.paperSubText}>{storeAddress}</ThemedText>
               ) : null}
               {storePhone ? (
-                <ThemedText style={styles.paperSubText}>Telp: {storePhone}</ThemedText>
+                <ThemedText style={styles.paperSubText}>
+                  {storePhone2 ? `Telp: ${storePhone} | WA: ${storePhone2}` : `Telp: ${storePhone}`}
+                </ThemedText>
               ) : null}
 
               <ThemedText style={styles.paperDashed}>--------------------------------</ThemedText>
@@ -130,7 +135,7 @@ export function ReceiptPreviewModal({
                 <ThemedText style={styles.paperSmall}>Kasir: Kasir Utama</ThemedText>
               </View>
               <View style={styles.paperRow}>
-                <ThemedText style={styles.paperSmall}>No: INV-SAMPLE-001</ThemedText>
+                <ThemedText style={styles.paperSmall}>No: TRX-SAMPLE-001</ThemedText>
                 <ThemedText style={styles.paperSmall}>Tunai</ThemedText>
               </View>
 

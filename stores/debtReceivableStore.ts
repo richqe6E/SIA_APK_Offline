@@ -89,7 +89,8 @@ interface DebtReceivableState {
     receivableId: number,
     amount: number,
     notes?: string,
-    paymentDate?: string
+    paymentDate?: string,
+    paymentSource?: 'hand' | 'bank'
   ) => Promise<{ success: boolean; message?: string }>;
   getReceivablePayments: (db: SQLiteDatabase, receivableId: number) => Promise<PaymentHistoryItem[]>;
 
@@ -107,7 +108,8 @@ interface DebtReceivableState {
     debtId: number,
     amount: number,
     notes?: string,
-    paymentDate?: string
+    paymentDate?: string,
+    paymentSource?: 'hand' | 'bank'
   ) => Promise<{ success: boolean; message?: string }>;
   getDebtPayments: (db: SQLiteDatabase, debtId: number) => Promise<PaymentHistoryItem[]>;
 }
@@ -299,7 +301,7 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
     await get().loadReceivables(db);
   },
 
-  payReceivable: async (db, receivableId, amount, notes = '', paymentDate) => {
+  payReceivable: async (db, receivableId, amount, notes = '', paymentDate, paymentSource = 'hand') => {
     if (amount <= 0) {
       return { success: false, message: 'Nominal pembayaran harus lebih besar dari 0' };
     }
@@ -333,15 +335,17 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       const pDate = paymentDate || new Date().toISOString().split('T')[0];
       const newPaid = rec.paid_amount + amount;
       const newStatus = newPaid >= rec.total_amount ? 'paid' : 'partial';
+      const targetAccount = paymentSource === 'bank' ? 'bank' : 'hand';
 
       await db.withExclusiveTransactionAsync(async (txn) => {
         // 1. Simpan riwayat pembayaran cicilan
         await txn.runAsync(
-          'INSERT INTO receivable_payments (receivable_id, payment_date, amount, notes) VALUES (?, ?, ?, ?)',
+          'INSERT INTO receivable_payments (receivable_id, payment_date, amount, notes, payment_source) VALUES (?, ?, ?, ?, ?)',
           receivableId,
           pDate,
           amount,
-          notes.trim()
+          notes.trim(),
+          targetAccount
         );
 
         // 2. Update status piutang customer
@@ -352,18 +356,20 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
           receivableId
         );
 
-        // 3. Catat Kas Masuk (Penerimaan Kas) ke Buku Kas
-        // Kategori 'pelunasan_piutang' memastikan kas fisik masuk tanpa menduplikasi pendapatan penjualan di Laba Rugi
+        // 3. Catat Kas Masuk (Penerimaan Kas) ke Buku Kas sesuai akun kas terpilih
+        const descSuffix = targetAccount === 'bank' ? 'via Transfer/Bank' : 'via Kas Tunai';
         await txn.runAsync(
-          `INSERT INTO cash_ledger (type, category, description, amount, date)
-           VALUES ('in', 'pelunasan_piutang', ?, ?, ?)`,
-          `Pelunasan piutang: ${rec.customer_name || 'Pelanggan'} (${notes ? notes : 'Cicilan'})`,
+          `INSERT INTO cash_ledger (type, category, description, amount, date, account)
+           VALUES ('in', 'pelunasan_piutang', ?, ?, ?, ?)`,
+          `Pelunasan piutang: ${rec.customer_name || 'Pelanggan'} (${notes ? notes : 'Cicilan'}) - ${descSuffix}`,
           amount,
-          pDate
+          pDate,
+          targetAccount
         );
       });
 
       await get().loadReceivables(db);
+      await useCashStore.getState().loadLedger(db);
       return { success: true };
     } catch (e: any) {
       console.error('payReceivable error:', e);
@@ -461,7 +467,7 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
     await get().loadDebts(db);
   },
 
-  payDebt: async (db, debtId, amount, notes = '', paymentDate) => {
+  payDebt: async (db, debtId, amount, notes = '', paymentDate, paymentSource = 'hand') => {
     if (amount <= 0) {
       return { success: false, message: 'Nominal pembayaran harus lebih besar dari 0' };
     }
@@ -492,14 +498,19 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
         };
       }
 
-      // Validasi Saldo Kas Fisik Toko
-      const cashBalance = await useCashStore.getState().getCashBalance(db);
-      if (cashBalance < amount) {
-        const defisit = amount - cashBalance;
+      const targetAccount = paymentSource === 'bank' ? 'bank' : 'hand';
+
+      // Validasi Saldo Kas (Fisik Toko atau Bank)
+      const cashStoreState = useCashStore.getState();
+      const availableBalance = targetAccount === 'bank' ? cashStoreState.cashBankBalance : cashStoreState.cashHandBalance;
+
+      if (availableBalance < amount) {
+        const defisit = amount - availableBalance;
         const fmt = (n: number) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
+        const accountLabel = targetAccount === 'bank' ? 'Kas di Bank (Rekening)' : 'Kas Fisik di Tangan (Laci)';
         return {
           success: false,
-          message: `Saldo kas fisik toko tidak mencukupi untuk bayar hutang!\n\nSaldo Kas Tersedia: ${fmt(cashBalance)}\nNominal Bayar: ${fmt(amount)}\nKekurangan: ${fmt(defisit)}\n\nSilakan lakukan penambahan modal di Penerimaan Kas terlebih dahulu.`,
+          message: `Saldo ${accountLabel} tidak mencukupi untuk bayar hutang!\n\nSaldo Tersedia: ${fmt(availableBalance)}\nNominal Bayar: ${fmt(amount)}\nKekurangan: ${fmt(defisit)}\n\nSilakan pilih akun kas lain atau lakukan penambahan kas terlebih dahulu.`,
         };
       }
 
@@ -510,11 +521,12 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       await db.withExclusiveTransactionAsync(async (txn) => {
         // 1. Simpan riwayat pembayaran cicilan hutang
         await txn.runAsync(
-          'INSERT INTO debt_payments (debt_id, payment_date, amount, notes) VALUES (?, ?, ?, ?)',
+          'INSERT INTO debt_payments (debt_id, payment_date, amount, notes, payment_source) VALUES (?, ?, ?, ?, ?)',
           debtId,
           pDate,
           amount,
-          notes.trim()
+          notes.trim(),
+          targetAccount
         );
 
         // 2. Update status hutang supplier
@@ -525,18 +537,20 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
           debtId
         );
 
-        // 3. Catat Kas Keluar (Pengeluaran Kas) ke Buku Kas
-        // Kategori 'bayar_hutang_supplier' memastikan kas fisik berkurang tanpa menduplikasi beban di Laba Rugi
+        // 3. Catat Kas Keluar (Pengeluaran Kas) ke Buku Kas sesuai akun kas terpilih
+        const descSuffix = targetAccount === 'bank' ? 'via Rekening Bank' : 'via Kas Laci Toko';
         await txn.runAsync(
-          `INSERT INTO cash_ledger (type, category, description, amount, date)
-           VALUES ('out', 'bayar_hutang_supplier', ?, ?, ?)`,
-          `Bayar hutang: ${debt.supplier_name || 'Supplier'} (${notes ? notes : 'Cicilan'})`,
+          `INSERT INTO cash_ledger (type, category, description, amount, date, account)
+           VALUES ('out', 'bayar_hutang_supplier', ?, ?, ?, ?)`,
+          `Bayar hutang: ${debt.supplier_name || 'Supplier'} (${notes ? notes : 'Cicilan'}) - ${descSuffix}`,
           amount,
-          pDate
+          pDate,
+          targetAccount
         );
       });
 
       await get().loadDebts(db);
+      await useCashStore.getState().loadLedger(db);
       return { success: true };
     } catch (e: any) {
       console.error('payDebt error:', e);
