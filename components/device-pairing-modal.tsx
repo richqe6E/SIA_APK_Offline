@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -49,6 +49,11 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
   const [showCloudConfig, setShowCloudConfig] = useState(false);
   const [urlInput, setUrlInput] = useState(supabaseUrl || '');
   const [keyInput, setKeyInput] = useState(supabaseAnonKey || '');
+
+  useEffect(() => {
+    if (supabaseUrl) setUrlInput(supabaseUrl);
+    if (supabaseAnonKey) setKeyInput(supabaseAnonKey);
+  }, [supabaseUrl, supabaseAnonKey]);
 
   const handleGenerateNewCode = () => {
     const newCode = generatePairingCode();

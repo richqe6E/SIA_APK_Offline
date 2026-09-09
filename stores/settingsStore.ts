@@ -77,8 +77,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   storePairingCode: 'AZ-7789',
   isCloudConnected: false,
   cloudSyncStatus: 'idle',
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://vhtualqxbtrmnljzmees.supabase.co',
+  supabaseAnonKey:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZodHVhbHF4YnRybW5sanptZWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MTk4NzAsImV4cCI6MjEwNDQ5NTg3MH0.ZCch1NWey4In2xLiwZht0VbFnNrEScITUCKhHe3EdFE',
   loading: false,
 
   loadSettings: async (db) => {
@@ -104,8 +105,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         receiptFooter: map.receipt_footer ?? 'Terima kasih atas kunjungan Anda!',
         qrisImagePath: map.qris_image_path ?? '',
         appOrientation: (map.app_orientation as AppOrientation) || 'portrait',
-        supabaseUrl: map.supabase_url ?? '',
-        supabaseAnonKey: map.supabase_anon_key ?? '',
+        supabaseUrl:
+          map.supabase_url || 'https://vhtualqxbtrmnljzmees.supabase.co',
+        supabaseAnonKey:
+          map.supabase_anon_key ||
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZodHVhbHF4YnRybW5sanptZWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MTk4NzAsImV4cCI6MjEwNDQ5NTg3MH0.ZCch1NWey4In2xLiwZht0VbFnNrEScITUCKhHe3EdFE',
         loading: false,
       });
     } catch (e) {
