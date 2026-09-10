@@ -24,10 +24,26 @@ export default function ReportsScreen() {
   const insets = useSafeAreaInsets();
   const { syncData, loading, refreshing, fetchData } = useMonitorStore();
   const [debtViewType, setDebtViewType] = useState<'receivable' | 'debt'>('receivable');
+  type StockThreshold = 'all' | '20' | '30' | '40' | '0';
+  const [stockThreshold, setStockThreshold] = useState<StockThreshold>('all');
 
   const onRefresh = () => {
     fetchData(true);
   };
+
+  // Data tambahan sinkronisasi cloud
+  const criticalProducts = syncData?.criticalProducts || [];
+  const expiringProducts = syncData?.expiringProducts || [];
+  const todayExpenses = syncData?.todayExpenses || [];
+  const weeklySalesTrend = syncData?.weeklySalesTrend || [];
+
+  const filteredCriticalProducts = criticalProducts.filter((p) => {
+    if (stockThreshold === '0') return p.stock <= 0;
+    if (stockThreshold === '20') return p.stock < 20;
+    if (stockThreshold === '30') return p.stock < 30;
+    if (stockThreshold === '40') return p.stock < 40;
+    return true;
+  });
 
   // PnL Data
   const pnl = syncData?.monthlyProfitLoss;
@@ -65,7 +81,7 @@ export default function ReportsScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 30 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 90 }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -160,6 +176,60 @@ export default function ReportsScreen() {
               )}
             </Card>
 
+            {/* KARTU TREN PENJUALAN 7 HARI TERAKHIR */}
+            {weeklySalesTrend.length > 0 && (
+              <Card style={styles.card} padding={18}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.cardIconBoxPnl, { backgroundColor: '#e0f2fe' }]}>
+                    <ThemedText style={styles.cardIcon}>📈</ThemedText>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText style={styles.cardSectionLabel}>TREN PENJUALAN 7 HARI TERAKHIR</ThemedText>
+                    <ThemedText style={styles.cardSectionSub}>
+                      Performa omset harian toko seminggu ke belakang
+                    </ThemedText>
+                  </View>
+                </View>
+
+                <View style={styles.trendContainer}>
+                  {weeklySalesTrend.map((item, idx) => {
+                    const isToday = idx === weeklySalesTrend.length - 1;
+                    const maxVal = Math.max(...weeklySalesTrend.map((w) => w.total), 1);
+                    const barHeight = Math.max(8, Math.round((item.total / maxVal) * 72));
+                    return (
+                      <View key={item.date} style={styles.trendBarCol}>
+                        <ThemedText style={styles.trendBarVal}>
+                          {item.total >= 1000000
+                            ? `${(item.total / 1000000).toFixed(1)}jt`
+                            : item.total > 0
+                            ? `${Math.round(item.total / 1000)}rb`
+                            : '0'}
+                        </ThemedText>
+                        <View style={styles.trendBarTrack}>
+                          <View
+                            style={[
+                              styles.trendBarFill,
+                              { height: barHeight },
+                              isToday && styles.trendBarFillToday,
+                            ]}
+                          />
+                        </View>
+                        <ThemedText
+                          style={[
+                            styles.trendBarLabel,
+                            isToday && styles.trendBarLabelToday,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {item.dayName}
+                        </ThemedText>
+                      </View>
+                    );
+                  })}
+                </View>
+              </Card>
+            )}
+
             {/* 2. KARTU ASET STOK & PERINGATAN KADALUARSA (FREEZER) */}
             <Card style={styles.card} padding={18}>
               <View style={styles.cardHeader}>
@@ -242,6 +312,151 @@ export default function ReportsScreen() {
                 )}
               </View>
             </Card>
+
+            {/* KARTU PRODUK STOK KRITIS (PERLU RESTOCK) */}
+            <Card style={styles.card} padding={18}>
+              <View style={styles.cardHeader}>
+                <View style={[styles.cardIconBoxStock, { backgroundColor: '#fee2e2' }]}>
+                  <ThemedText style={styles.cardIcon}>⚠️</ThemedText>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.cardSectionLabel}>PRODUK STOK KRITIS (PERLU RESTOCK)</ThemedText>
+                  <ThemedText style={styles.cardSectionSub}>
+                    {filteredCriticalProducts.length} produk memerlukan kulakan sosis & frozen food
+                  </ThemedText>
+                </View>
+              </View>
+
+              {/* Filter Chips Threshold */}
+              <View style={styles.thresholdChipsRow}>
+                {(
+                  [
+                    { key: 'all', label: 'Semua (≤40)' },
+                    { key: '20', label: '< 20' },
+                    { key: '30', label: '< 30' },
+                    { key: '40', label: '< 40' },
+                    { key: '0', label: 'Habis (0)' },
+                  ] as const
+                ).map((chip) => (
+                  <TouchableOpacity
+                    key={chip.key}
+                    style={[
+                      styles.thresholdChip,
+                      stockThreshold === chip.key && styles.thresholdChipActive,
+                    ]}
+                    onPress={() => setStockThreshold(chip.key)}
+                    activeOpacity={0.8}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.thresholdChipText,
+                        stockThreshold === chip.key && styles.thresholdChipTextActive,
+                      ]}
+                    >
+                      {chip.label}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* List Produk Kritis */}
+              {filteredCriticalProducts.length === 0 ? (
+                <View style={styles.emptyAlertBox}>
+                  <ThemedText style={styles.emptyAlertIcon}>✅</ThemedText>
+                  <ThemedText style={styles.emptyAlertText}>
+                    Semua stok aman! Tidak ada produk dalam kriteria ini.
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={styles.criticalList}>
+                  {filteredCriticalProducts.map((p) => {
+                    const isOutOfStock = p.stock <= 0;
+                    return (
+                      <View key={p.id} style={styles.criticalItemRow}>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <ThemedText style={styles.criticalItemName} numberOfLines={1}>
+                            {p.name}
+                          </ThemedText>
+                          <ThemedText style={styles.criticalItemMeta}>
+                            {p.category} • Modal: {formatRupiah(p.cost_price)}/{p.unit || 'pcs'}
+                          </ThemedText>
+                        </View>
+
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <View
+                            style={[
+                              styles.stockBadge,
+                              isOutOfStock ? styles.stockBadgeOut : styles.stockBadgeLow,
+                            ]}
+                          >
+                            <ThemedText
+                              style={[
+                                styles.stockBadgeText,
+                                isOutOfStock ? styles.stockBadgeTextOut : styles.stockBadgeTextLow,
+                              ]}
+                            >
+                              {isOutOfStock ? 'HABIS (0)' : `${p.stock} ${p.unit || 'pcs'}`}
+                            </ThemedText>
+                          </View>
+                          <ThemedText style={styles.criticalRestockCost}>
+                            Jual: {formatRupiah(p.selling_price)}
+                          </ThemedText>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </Card>
+
+            {/* KARTU PRODUK MENDEKATI KADALUARSA (≤30 HARI) */}
+            {expiringProducts.length > 0 && (
+              <Card style={styles.card} padding={18}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.cardIconBoxStock, { backgroundColor: '#fef3c7' }]}>
+                    <ThemedText style={styles.cardIcon}>⏳</ThemedText>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText style={styles.cardSectionLabel}>
+                      PRODUK MENDEKATI KADALUARSA (≤30 HARI)
+                    </ThemedText>
+                    <ThemedText style={styles.cardSectionSub}>
+                      {expiringProducts.length} item sosis perlu dipromosikan lebih awal
+                    </ThemedText>
+                  </View>
+                </View>
+
+                <View style={styles.expiringList}>
+                  {expiringProducts.map((exp) => (
+                    <View key={exp.id} style={styles.expiringItemRow}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <ThemedText style={styles.expiringName} numberOfLines={1}>
+                          {exp.name}
+                        </ThemedText>
+                        <ThemedText style={styles.expiringMeta}>
+                          Exp: {exp.expired_date} • Sisa: {exp.stock} unit
+                        </ThemedText>
+                      </View>
+                      <View
+                        style={[
+                          styles.daysLeftBadge,
+                          exp.days_left <= 7 ? styles.daysLeftBadgeUrgent : styles.daysLeftBadgeWarning,
+                        ]}
+                      >
+                        <ThemedText
+                          style={[
+                            styles.daysLeftText,
+                            exp.days_left <= 7 ? styles.daysLeftTextUrgent : styles.daysLeftTextWarning,
+                          ]}
+                        >
+                          {exp.days_left <= 0 ? 'HARI INI' : `${exp.days_left} hari lagi`}
+                        </ThemedText>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </Card>
+            )}
 
             {/* 3. KARTU PENGAWASAN UTANG & PIUTANG */}
             <Card style={styles.card} padding={18}>
@@ -385,6 +600,53 @@ export default function ReportsScreen() {
                     ))}
                   </View>
                 )
+              )}
+            </Card>
+
+            {/* KARTU KAS KELUAR / BEBAN OPERASIONAL HARI INI */}
+            <Card style={styles.card} padding={18}>
+              <View style={styles.cardHeader}>
+                <View style={[styles.cardIconBoxDebt, { backgroundColor: '#fef2f2' }]}>
+                  <ThemedText style={styles.cardIcon}>💸</ThemedText>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.cardSectionLabel}>KAS KELUAR OPERASIONAL HARI INI</ThemedText>
+                  <ThemedText style={styles.cardSectionSub}>
+                    Pengeluaran kas fisik toko yang dicatat kasir
+                  </ThemedText>
+                </View>
+                <ThemedText style={styles.totalExpenseAmount}>
+                  {formatRupiah(syncData?.todaySummary?.operatingExpenses || 0)}
+                </ThemedText>
+              </View>
+
+              {todayExpenses.length === 0 ? (
+                <View style={styles.emptyExpenseBox}>
+                  <ThemedText style={styles.emptyExpenseText}>
+                    Belum ada catatan kas keluar operasional hari ini
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={styles.expenseList}>
+                  {todayExpenses.map((ex) => (
+                    <View key={ex.id} style={styles.expenseItemRow}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <ThemedText style={styles.expenseCategory}>
+                            {ex.category.replace(/_/g, ' ')}
+                          </ThemedText>
+                          <ThemedText style={styles.expenseTime}>• {ex.time}</ThemedText>
+                        </View>
+                        <ThemedText style={styles.expenseDesc} numberOfLines={1}>
+                          {ex.description}
+                        </ThemedText>
+                      </View>
+                      <ThemedText style={styles.expenseAmountText}>
+                        - {formatRupiah(ex.amount)}
+                      </ThemedText>
+                    </View>
+                  ))}
+                </View>
               )}
             </Card>
           </>
@@ -821,5 +1083,248 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     paddingVertical: 12,
+  },
+
+  // Trend 7 Hari
+  trendContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    height: 120,
+    paddingTop: 16,
+    paddingHorizontal: 4,
+  },
+  trendBarCol: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    height: '100%',
+  },
+  trendBarVal: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#64748b',
+    marginBottom: 4,
+  },
+  trendBarTrack: {
+    width: 22,
+    height: 80,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 4,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+  },
+  trendBarFill: {
+    width: '100%',
+    backgroundColor: '#93c5fd',
+    borderRadius: 4,
+  },
+  trendBarFillToday: {
+    backgroundColor: '#2563eb',
+  },
+  trendBarLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748b',
+    marginTop: 6,
+  },
+  trendBarLabelToday: {
+    color: '#2563eb',
+    fontWeight: '800',
+  },
+
+  // Critical Stock Chips & List
+  thresholdChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 12,
+  },
+  thresholdChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  thresholdChipActive: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  thresholdChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  thresholdChipTextActive: {
+    color: '#b91c1c',
+    fontWeight: '800',
+  },
+  criticalList: {
+    gap: 8,
+  },
+  criticalItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  criticalItemName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  criticalItemMeta: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  stockBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+  },
+  stockBadgeOut: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  stockBadgeLow: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#fed7aa',
+  },
+  stockBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  stockBadgeTextOut: {
+    color: '#b91c1c',
+  },
+  stockBadgeTextLow: {
+    color: '#c2410c',
+  },
+  criticalRestockCost: {
+    fontSize: 10,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  emptyAlertBox: {
+    padding: 16,
+    backgroundColor: '#f0fdf4',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    alignItems: 'center',
+    gap: 4,
+  },
+  emptyAlertIcon: {
+    fontSize: 20,
+  },
+  emptyAlertText: {
+    fontSize: 12,
+    color: '#15803d',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
+  // Expiring List
+  expiringList: {
+    gap: 8,
+  },
+  expiringItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#fef3c7',
+  },
+  expiringName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#78350f',
+  },
+  expiringMeta: {
+    fontSize: 11,
+    color: '#92400e',
+    marginTop: 2,
+  },
+  daysLeftBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 5,
+    borderWidth: 1,
+  },
+  daysLeftBadgeUrgent: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fca5a5',
+  },
+  daysLeftBadgeWarning: {
+    backgroundColor: '#fef3c7',
+    borderColor: '#fde68a',
+  },
+  daysLeftText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  daysLeftTextUrgent: {
+    color: '#b91c1c',
+  },
+  daysLeftTextWarning: {
+    color: '#92400e',
+  },
+
+  // Expense List
+  totalExpenseAmount: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#dc2626',
+  },
+  emptyExpenseBox: {
+    padding: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    alignItems: 'center',
+  },
+  emptyExpenseText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  expenseList: {
+    gap: 8,
+  },
+  expenseItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  expenseCategory: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a',
+    textTransform: 'capitalize',
+  },
+  expenseTime: {
+    fontSize: 10,
+    color: '#94a3b8',
+  },
+  expenseDesc: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  expenseAmountText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#dc2626',
   },
 });

@@ -126,6 +126,34 @@ export interface StoreSyncPayload {
     note: string;
     created_at: string;
   }[];
+  criticalProducts?: {
+    id: number;
+    name: string;
+    stock: number;
+    category: string;
+    unit: string;
+    cost_price: number;
+    selling_price: number;
+  }[];
+  expiringProducts?: {
+    id: number;
+    name: string;
+    stock: number;
+    expired_date: string;
+    days_left: number;
+  }[];
+  todayExpenses?: {
+    id: number;
+    category: string;
+    description: string;
+    amount: number;
+    time: string;
+  }[];
+  weeklySalesTrend?: {
+    date: string;
+    dayName: string;
+    total: number;
+  }[];
 }
 
 // In-memory persistent mock cloud relay buffer
@@ -507,6 +535,119 @@ export async function compileSyncPayload(
     items: dueSoonList,
   };
 
+  // 14. Produk Kritis (Stok <= 40)
+  const criticalProducts = await db.getAllAsync<{
+    id: number;
+    name: string;
+    stock: number;
+    category: string;
+    unit: string;
+    cost_price: number;
+    selling_price: number;
+  }>(
+    `SELECT 
+       id, 
+       name, 
+       stock, 
+       COALESCE(category, 'Umum') as category, 
+       COALESCE(unit, 'pcs') as unit, 
+       COALESCE(cost_price, 0) as cost_price, 
+       COALESCE(price, 0) as selling_price
+     FROM products 
+     WHERE is_active = 1 AND stock <= 40
+     ORDER BY stock ASC, name ASC
+     LIMIT 50`
+  );
+
+  // 15. Produk Mendekati Kadaluarsa (<= 30 hari)
+  const expiringRaw = await db.getAllAsync<{
+    id: number;
+    name: string;
+    stock: number;
+    expired_date: string;
+  }>(
+    `SELECT id, name, stock, expired_date 
+     FROM products 
+     WHERE is_active = 1 AND expired_date IS NOT NULL AND expired_date != ''`
+  );
+  const expiringProducts: {
+    id: number;
+    name: string;
+    stock: number;
+    expired_date: string;
+    days_left: number;
+  }[] = [];
+  for (const exp of expiringRaw) {
+    const diffDays = Math.ceil(
+      (new Date(exp.expired_date).getTime() - todayMs) / (1000 * 60 * 60 * 24)
+    );
+    if (diffDays <= 30) {
+      expiringProducts.push({
+        id: exp.id,
+        name: exp.name,
+        stock: exp.stock,
+        expired_date: exp.expired_date,
+        days_left: diffDays,
+      });
+    }
+  }
+  expiringProducts.sort((a, b) => a.days_left - b.days_left);
+
+  // 16. Pengeluaran / Beban Operasional Kasir Hari Ini
+  const todayExpensesRaw = await db.getAllAsync<{
+    id: number;
+    category: string;
+    description: string;
+    amount: number;
+    created_at: string;
+  }>(
+    `SELECT id, category, description, amount, created_at 
+     FROM cash_ledger 
+     WHERE type = 'out' AND category != 'setor_bank' AND date(date) = date('now','localtime')
+     ORDER BY id DESC
+     LIMIT 30`
+  );
+  const todayExpenses = todayExpensesRaw.map((ex) => {
+    let timeStr = '-';
+    if (ex.created_at) {
+      const parts = ex.created_at.split(' ');
+      timeStr = parts[1] ? parts[1].slice(0, 5) : ex.created_at.slice(11, 16);
+    }
+    return {
+      id: ex.id,
+      category: ex.category,
+      description: ex.description,
+      amount: ex.amount,
+      time: timeStr,
+    };
+  });
+
+  // 17. Tren Penjualan 7 Hari Terakhir
+  const daysMap = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+  const weeklySalesTrend: {
+    date: string;
+    dayName: string;
+    total: number;
+  }[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const dayName = i === 0 ? 'Hari Ini' : daysMap[d.getDay()];
+
+    const row = await db.getFirstAsync<{ total: number | null }>(
+      `SELECT COALESCE(SUM(total), 0) as total 
+       FROM transactions 
+       WHERE date(created_at) = ?`,
+      [dateStr]
+    );
+    weeklySalesTrend.push({
+      date: dateStr,
+      dayName,
+      total: row?.total || 0,
+    });
+  }
+
   return {
     pairingCode,
     storeName: settingsStore.storeName,
@@ -560,6 +701,10 @@ export async function compileSyncPayload(
     topProducts,
     recentTransactions,
     recentLedger,
+    criticalProducts,
+    expiringProducts,
+    todayExpenses,
+    weeklySalesTrend,
   };
 }
 

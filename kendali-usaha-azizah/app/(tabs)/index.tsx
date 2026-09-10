@@ -70,7 +70,7 @@ export default function DashboardScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 30 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 90 }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

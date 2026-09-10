@@ -116,6 +116,34 @@ export interface StoreSyncPayload {
     note: string;
     created_at: string;
   }[];
+  criticalProducts?: {
+    id: number;
+    name: string;
+    stock: number;
+    category: string;
+    unit: string;
+    cost_price: number;
+    selling_price: number;
+  }[];
+  expiringProducts?: {
+    id: number;
+    name: string;
+    stock: number;
+    expired_date: string;
+    days_left: number;
+  }[];
+  todayExpenses?: {
+    id: number;
+    category: string;
+    description: string;
+    amount: number;
+    time: string;
+  }[];
+  weeklySalesTrend?: {
+    date: string;
+    dayName: string;
+    total: number;
+  }[];
 }
 
 const DEFAULT_SUPABASE_URL = 'https://vhtualqxbtrmnljzmees.supabase.co';

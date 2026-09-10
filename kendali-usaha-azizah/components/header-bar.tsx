@@ -30,9 +30,6 @@ export function HeaderBar() {
       {/* Baris 1: Brand & Toko */}
       <View style={styles.topRow}>
         <View style={styles.titleColumn}>
-          <View style={styles.badgeApp}>
-            <ThemedText style={styles.badgeAppText}>MONITORING EKSEKUTIF</ThemedText>
-          </View>
           <ThemedText style={styles.appTitle}>KENDALI USAHA AZIZAH</ThemedText>
           <ThemedText style={styles.storeName}>{storeName || 'AGEN SOSIS AZIZAH'}</ThemedText>
         </View>
