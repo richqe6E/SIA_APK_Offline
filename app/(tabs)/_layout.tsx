@@ -72,7 +72,7 @@ export default function TabLayout() {
           name="financial-reports"
           options={{
             title: 'Keuangan',
-            href: isKasir ? null : undefined,
+            href: undefined,
             tabBarIcon: ({ color }) => (
               <IconSymbol size={28} name="chart.bar.doc.horizontal.fill" color={color} />
             ),

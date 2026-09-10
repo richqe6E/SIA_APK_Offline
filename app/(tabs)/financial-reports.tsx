@@ -134,13 +134,23 @@ export default function FinancialReportsScreen() {
     }
   };
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('labarugi');
+  const isKasir = currentUserRole === 'kasir';
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(isKasir ? 'bukukas' : 'labarugi');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  const tabs: { key: ActiveTab; label: string; icon: string }[] = [
-    { key: 'labarugi', label: 'Laba / Rugi', icon: '📊' },
-    { key: 'bukukas', label: 'Buku Kas', icon: '📒' },
-  ];
+  useEffect(() => {
+    if (isKasir && activeTab !== 'bukukas') {
+      setActiveTab('bukukas');
+    }
+  }, [isKasir, activeTab]);
+
+  const tabs: { key: ActiveTab; label: string; icon: string }[] = isKasir
+    ? [{ key: 'bukukas', label: 'Buku Kas Operasional', icon: '📒' }]
+    : [
+        { key: 'labarugi', label: 'Laba / Rugi', icon: '📊' },
+        { key: 'bukukas', label: 'Buku Kas', icon: '📒' },
+      ];
 
   const handleTabChange = (tab: ActiveTab) => {
     setActiveTab(tab);
@@ -154,9 +164,13 @@ export default function FinancialReportsScreen() {
       {/* Header Top Row dengan Tombol Cepat Orientasi Layar */}
       <View style={styles.headerTopRow}>
         <View style={{ flex: 1 }}>
-          <ThemedText type="title" style={{ marginBottom: 2 }}>Laporan Keuangan</ThemedText>
+          <ThemedText type="title" style={{ marginBottom: 2 }}>
+            {isKasir ? 'Buku Kas Toko' : 'Laporan Keuangan'}
+          </ThemedText>
           <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
-            Standar Akuntansi POS Mikro ({businessMode === 'kuliner' ? 'Mode Kuliner' : 'Mode Retail'})
+            {isKasir
+              ? 'Buku Kas Operasional & Pelunasan Piutang Pelanggan'
+              : `Standar Akuntansi POS Mikro (${businessMode === 'kuliner' ? 'Mode Kuliner' : 'Mode Retail'})`}
           </ThemedText>
         </View>
 
@@ -182,23 +196,25 @@ export default function FinancialReportsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Tab Bar */}
-      <View style={styles.tabBar}>
-        {tabs.map((t) => (
-          <Pressable
-            key={t.key}
-            style={[styles.tabBtn, activeTab === t.key && styles.tabBtnActive]}
-            onPress={() => handleTabChange(t.key)}
-          >
-            <ThemedText style={{ fontSize: 13, lineHeight: 17 }}>{t.icon}</ThemedText>
-            <ThemedText style={[styles.tabBtnText, activeTab === t.key && styles.tabBtnTextActive]}>
-              {t.label}
-            </ThemedText>
-          </Pressable>
-        ))}
-      </View>
+      {/* Tab Bar (Hanya tampil untuk Pemilik Toko dengan banyak tab) */}
+      {!isKasir && (
+        <View style={styles.tabBar}>
+          {tabs.map((t) => (
+            <Pressable
+              key={t.key}
+              style={[styles.tabBtn, activeTab === t.key && styles.tabBtnActive]}
+              onPress={() => handleTabChange(t.key)}
+            >
+              <ThemedText style={{ fontSize: 13, lineHeight: 17 }}>{t.icon}</ThemedText>
+              <ThemedText style={[styles.tabBtnText, activeTab === t.key && styles.tabBtnTextActive]}>
+                {t.label}
+              </ThemedText>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
-      {activeTab === 'labarugi' && (
+      {activeTab === 'labarugi' && !isKasir && (
         <LabaRugiTab
           db={db}
           storeName={storeName}
@@ -1022,7 +1038,8 @@ function BukuKasTab({
   isTabletOrLandscape?: boolean;
 }) {
   const router = useRouter();
-  const { storeName, storeAddress, storePhone, storePhone2, businessMode } = useSettingsStore();
+  const { storeName, storeAddress, storePhone, storePhone2, businessMode, currentUserRole } = useSettingsStore();
+  const isKasir = currentUserRole === 'kasir';
   const {
     entries,
     totalCashIn,
@@ -1042,6 +1059,30 @@ function BukuKasTab({
   } = useCashStore();
 
   const { totalReceivableUnpaid, totalDebtUnpaid, loadDebts, loadReceivables } = useDebtReceivableStore();
+
+  const [todayStats, setTodayStats] = useState({
+    cashIn: 0,
+    cashOut: 0,
+  });
+
+  const loadTodayStats = useCallback(async () => {
+    try {
+      const sCash = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai' AND date(created_at) = date('now','localtime')`
+      );
+      const lIn = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'in' AND date(date) = date('now','localtime')`
+      );
+      const lOut = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'out' AND category NOT IN ('bayar_hutang_supplier', 'setor_bank') AND date(date) = date('now','localtime')`
+      );
+
+      setTodayStats({
+        cashIn: (sCash?.total ?? 0) + (lIn?.total ?? 0),
+        cashOut: lOut?.total ?? 0,
+      });
+    } catch {}
+  }, [db]);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [showBankDepositModal, setShowBankDepositModal] = useState(false);
@@ -1087,7 +1128,8 @@ function BukuKasTab({
     loadLedger(db);
     loadDebts(db);
     loadReceivables(db);
-  }, [db, loadLedger, loadDebts, loadReceivables]);
+    loadTodayStats();
+  }, [db, loadLedger, loadDebts, loadReceivables, loadTodayStats]);
 
   const openModal = (type: CashTransactionType) => {
     setEditingEntry(null);
@@ -1167,266 +1209,414 @@ function BukuKasTab({
     ]);
   };
 
-  const categoriesToPick: readonly { id: string; label: string }[] =
+  const rawCategoriesToPick: readonly { id: string; label: string }[] =
     entryType === 'in' ? CASH_IN_CATEGORIES : getCashOutCategories(businessMode);
+  const categoriesToPick = isKasir
+    ? rawCategoriesToPick.filter((c) => c.id !== 'bayar_hutang_supplier' && c.id !== 'kulakan_stok')
+    : rawCategoriesToPick;
 
-  // Komponen Kartu Saldo Kas Toko (Dual-Pocket)
-  const renderSaldoCard = () => (
-    <Card
-      padding={14}
-      style={{
-        backgroundColor: '#ffffff',
-        borderColor: Colors.tint + '35',
-        borderWidth: 1.5,
-        marginBottom: 8,
-      }}
-    >
-      {/* Header Total Likuiditas */}
-      <View
+  // Komponen Kartu Saldo Kas Toko (Dual-Pocket untuk Pemilik, Ringkasan Hari Ini untuk Kasir)
+  const renderSaldoCard = () => {
+    if (isKasir) {
+      return (
+        <Card
+          padding={14}
+          style={{
+            backgroundColor: '#ffffff',
+            borderColor: Colors.tint + '35',
+            borderWidth: 1.5,
+            marginBottom: 8,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 10,
+              paddingBottom: 8,
+              borderBottomWidth: 1,
+              borderColor: '#f1f5f9',
+            }}
+          >
+            <View>
+              <ThemedText style={{ fontSize: 10.5, color: '#64748b', fontWeight: '800', letterSpacing: 0.5 }}>
+                ARUS KAS OPERASIONAL HARI INI
+              </ThemedText>
+              <ThemedText style={{ fontSize: 10, color: '#94a3b8', marginTop: 1 }}>
+                Reset otomatis setiap pergantian hari
+              </ThemedText>
+            </View>
+            <View style={{ backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+              <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#475569' }}>
+                📅 Hari Ini
+              </ThemedText>
+            </View>
+          </View>
+
+          {/* 2 Saku Kasir: Kas Masuk Hari Ini vs Kas Keluar Hari Ini */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: '#f0fdf4',
+                borderRadius: 10,
+                padding: 10,
+                borderWidth: 1.5,
+                borderColor: '#bbf7d0',
+              }}
+            >
+              <ThemedText style={{ fontSize: 10, color: '#16a34a', fontWeight: '800' }}>
+                📥 Kas Masuk Hari Ini
+              </ThemedText>
+              <ThemedText
+                style={{
+                  fontSize: 17,
+                  fontWeight: '900',
+                  color: '#15803d',
+                  marginTop: 3,
+                }}
+                numberOfLines={1}
+              >
+                {fmtRp(todayStats.cashIn)}
+              </ThemedText>
+              <ThemedText style={{ fontSize: 8.5, color: '#16a34a', marginTop: 2 }}>
+                Penjualan tunai & kas masuk
+              </ThemedText>
+            </View>
+
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: '#fef2f2',
+                borderRadius: 10,
+                padding: 10,
+                borderWidth: 1.5,
+                borderColor: '#fecaca',
+              }}
+            >
+              <ThemedText style={{ fontSize: 10, color: '#dc2626', fontWeight: '800' }}>
+                📤 Kas Keluar Hari Ini
+              </ThemedText>
+              <ThemedText
+                style={{
+                  fontSize: 17,
+                  fontWeight: '900',
+                  color: '#b91c1c',
+                  marginTop: 3,
+                }}
+                numberOfLines={1}
+              >
+                {fmtRp(todayStats.cashOut)}
+              </ThemedText>
+              <ThemedText style={{ fontSize: 8.5, color: '#dc2626', marginTop: 2 }}>
+                Beban operasional harian
+              </ThemedText>
+            </View>
+          </View>
+        </Card>
+      );
+    }
+
+    return (
+      <Card
+        padding={14}
         style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 10,
-          paddingBottom: 8,
-          borderBottomWidth: 1,
-          borderColor: '#f1f5f9',
+          backgroundColor: '#ffffff',
+          borderColor: Colors.tint + '35',
+          borderWidth: 1.5,
+          marginBottom: 8,
         }}
       >
-        <View>
-          <ThemedText style={{ fontSize: 10.5, color: '#64748b', fontWeight: '800', letterSpacing: 0.5 }}>
-            TOTAL LIKUIDITAS KAS TOKO
-          </ThemedText>
-          <ThemedText
+        {/* Header Total Likuiditas */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 10,
+            paddingBottom: 8,
+            borderBottomWidth: 1,
+            borderColor: '#f1f5f9',
+          }}
+        >
+          <View>
+            <ThemedText style={{ fontSize: 10.5, color: '#64748b', fontWeight: '800', letterSpacing: 0.5 }}>
+              TOTAL LIKUIDITAS KAS TOKO
+            </ThemedText>
+            <ThemedText
+              style={{
+                fontSize: 22,
+                lineHeight: 28,
+                fontWeight: '900',
+                color: totalBalance >= 0 ? '#0f172a' : Colors.danger,
+                marginTop: 2,
+              }}
+            >
+              {fmtRp(totalBalance)}
+            </ThemedText>
+          </View>
+
+          <TouchableOpacity
+            style={styles.bankDepositTriggerBtn}
+            onPress={() => setShowBankDepositModal(true)}
+            activeOpacity={0.8}
+          >
+            <ThemedText style={{ fontSize: 12 }}>🏦</ThemedText>
+            <ThemedText style={styles.bankDepositTriggerText}>Setor Kas ke Bank ›</ThemedText>
+          </TouchableOpacity>
+        </View>
+
+        {/* 2 Saku: Kas di Tangan vs Kas di Bank */}
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+          <View
             style={{
-              fontSize: 22,
-              lineHeight: 28,
-              fontWeight: '900',
-              color: totalBalance >= 0 ? '#0f172a' : Colors.danger,
-              marginTop: 2,
+              flex: 1,
+              backgroundColor: '#f8fafc',
+              borderRadius: 10,
+              padding: 10,
+              borderWidth: 1,
+              borderColor: '#e2e8f0',
             }}
           >
-            {fmtRp(totalBalance)}
-          </ThemedText>
-        </View>
+            <ThemedText style={{ fontSize: 10, color: '#475569', fontWeight: '800' }}>
+              💵 Kas Fisik di Tangan
+            </ThemedText>
+            <ThemedText
+              style={{
+                fontSize: 16,
+                fontWeight: '800',
+                color: cashHandBalance >= 0 ? Colors.tintDark : Colors.danger,
+                marginTop: 3,
+              }}
+              numberOfLines={1}
+            >
+              {fmtRp(cashHandBalance)}
+            </ThemedText>
+            <ThemedText style={{ fontSize: 9, color: '#64748b', marginTop: 2 }}>
+              Uang di laci kasir
+            </ThemedText>
+          </View>
 
-        <TouchableOpacity
-          style={styles.bankDepositTriggerBtn}
-          onPress={() => setShowBankDepositModal(true)}
-          activeOpacity={0.8}
-        >
-          <ThemedText style={{ fontSize: 12 }}>🏦</ThemedText>
-          <ThemedText style={styles.bankDepositTriggerText}>Setor Kas ke Bank ›</ThemedText>
-        </TouchableOpacity>
-      </View>
-
-      {/* 2 Saku: Kas di Tangan vs Kas di Bank */}
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: '#f8fafc',
-            borderRadius: 10,
-            padding: 10,
-            borderWidth: 1,
-            borderColor: '#e2e8f0',
-          }}
-        >
-          <ThemedText style={{ fontSize: 10, color: '#475569', fontWeight: '800' }}>
-            💵 Kas Fisik di Tangan
-          </ThemedText>
-          <ThemedText
-            style={{
-              fontSize: 16,
-              fontWeight: '800',
-              color: cashHandBalance >= 0 ? Colors.tintDark : Colors.danger,
-              marginTop: 3,
-            }}
-            numberOfLines={1}
-          >
-            {fmtRp(cashHandBalance)}
-          </ThemedText>
-          <ThemedText style={{ fontSize: 9, color: '#64748b', marginTop: 2 }}>
-            Uang di laci kasir
-          </ThemedText>
-        </View>
-
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: '#f0f9ff',
-            borderRadius: 10,
-            padding: 10,
-            borderWidth: 1,
-            borderColor: '#bae6fd',
-          }}
-        >
-          <ThemedText style={{ fontSize: 10, color: '#0369a1', fontWeight: '800' }}>
-            🏛️ Kas di Bank (Rekening)
-          </ThemedText>
-          <ThemedText
-            style={{
-              fontSize: 16,
-              fontWeight: '800',
-              color: cashBankBalance >= 0 ? '#0284c7' : Colors.danger,
-              marginTop: 3,
-            }}
-            numberOfLines={1}
-          >
-            {fmtRp(cashBankBalance)}
-          </ThemedText>
-          <ThemedText style={{ fontSize: 9, color: '#0284c7', marginTop: 2 }}>
-            QRIS / Transfer
-          </ThemedText>
-        </View>
-      </View>
-
-      {/* Sub-metrik Kas Masuk, Kas Keluar, dan Setor Bank */}
-      <View
-        style={{
-          flexDirection: 'row',
-          gap: 6,
-          paddingTop: 8,
-          borderTopWidth: 1,
-          borderColor: '#f1f5f9',
-        }}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: '#f0fdf4',
-            borderRadius: 8,
-            padding: 6,
-            borderWidth: 1,
-            borderColor: '#dcfce7',
-          }}
-        >
-          <ThemedText style={{ fontSize: 9.5, color: '#16a34a', fontWeight: '700' }}>📥 Kas Masuk (+)</ThemedText>
-          <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#15803d', marginTop: 1 }} numberOfLines={1}>
-            {fmtRp(salesCashTotal + (salesQrisTotal || 0) + totalCashIn)}
-          </ThemedText>
-          <ThemedText style={{ fontSize: 8.5, color: '#64748b' }} numberOfLines={1}>
-            Penjualan & Modal
-          </ThemedText>
-        </View>
-
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: '#fef2f2',
-            borderRadius: 8,
-            padding: 6,
-            borderWidth: 1,
-            borderColor: '#fee2e2',
-          }}
-        >
-          <ThemedText style={{ fontSize: 9.5, color: '#dc2626', fontWeight: '700' }}>📤 Kas Keluar (-)</ThemedText>
-          <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#b91c1c', marginTop: 1 }} numberOfLines={1}>
-            {fmtRp(totalCashOut)}
-          </ThemedText>
-          <ThemedText style={{ fontSize: 8.5, color: '#64748b' }} numberOfLines={1}>
-            Beban & Kulakan
-          </ThemedText>
-        </View>
-
-        {totalBankDeposited > 0 && (
           <View
             style={{
               flex: 1,
               backgroundColor: '#f0f9ff',
-              borderRadius: 8,
-              padding: 6,
+              borderRadius: 10,
+              padding: 10,
               borderWidth: 1,
               borderColor: '#bae6fd',
             }}
           >
-            <ThemedText style={{ fontSize: 9.5, color: '#0284c7', fontWeight: '700' }}>🏦 Disetor ke Bank</ThemedText>
-            <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#0369a1', marginTop: 1 }} numberOfLines={1}>
-              {fmtRp(totalBankDeposited)}
+            <ThemedText style={{ fontSize: 10, color: '#0369a1', fontWeight: '800' }}>
+              🏛️ Kas di Bank (Rekening)
             </ThemedText>
-            <ThemedText style={{ fontSize: 8.5, color: '#64748b' }} numberOfLines={1}>
-              Aman di Bank
+            <ThemedText
+              style={{
+                fontSize: 16,
+                fontWeight: '800',
+                color: cashBankBalance >= 0 ? '#0284c7' : Colors.danger,
+                marginTop: 3,
+              }}
+              numberOfLines={1}
+            >
+              {fmtRp(cashBankBalance)}
+            </ThemedText>
+            <ThemedText style={{ fontSize: 9, color: '#0284c7', marginTop: 2 }}>
+              QRIS / Transfer
             </ThemedText>
           </View>
-        )}
-      </View>
-    </Card>
-  );
+        </View>
+
+        {/* Sub-metrik Kas Masuk, Kas Keluar, dan Setor Bank */}
+        <View
+          style={{
+            flexDirection: 'row',
+            gap: 6,
+            paddingTop: 8,
+            borderTopWidth: 1,
+            borderColor: '#f1f5f9',
+          }}
+        >
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: '#f0fdf4',
+              borderRadius: 8,
+              padding: 6,
+              borderWidth: 1,
+              borderColor: '#dcfce7',
+            }}
+          >
+            <ThemedText style={{ fontSize: 9.5, color: '#16a34a', fontWeight: '700' }}>📥 Kas Masuk (+)</ThemedText>
+            <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#15803d', marginTop: 1 }} numberOfLines={1}>
+              {fmtRp(salesCashTotal + (salesQrisTotal || 0) + totalCashIn)}
+            </ThemedText>
+            <ThemedText style={{ fontSize: 8.5, color: '#64748b' }} numberOfLines={1}>
+              Penjualan & Modal
+            </ThemedText>
+          </View>
+
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: '#fef2f2',
+              borderRadius: 8,
+              padding: 6,
+              borderWidth: 1,
+              borderColor: '#fee2e2',
+            }}
+          >
+            <ThemedText style={{ fontSize: 9.5, color: '#dc2626', fontWeight: '700' }}>📤 Kas Keluar (-)</ThemedText>
+            <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#b91c1c', marginTop: 1 }} numberOfLines={1}>
+              {fmtRp(totalCashOut)}
+            </ThemedText>
+            <ThemedText style={{ fontSize: 8.5, color: '#64748b' }} numberOfLines={1}>
+              Beban & Kulakan
+            </ThemedText>
+          </View>
+
+          {totalBankDeposited > 0 && (
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: '#f0f9ff',
+                borderRadius: 8,
+                padding: 6,
+                borderWidth: 1,
+                borderColor: '#bae6fd',
+              }}
+            >
+              <ThemedText style={{ fontSize: 9.5, color: '#0284c7', fontWeight: '700' }}>🏦 Disetor ke Bank</ThemedText>
+              <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#0369a1', marginTop: 1 }} numberOfLines={1}>
+                {fmtRp(totalBankDeposited)}
+              </ThemedText>
+              <ThemedText style={{ fontSize: 8.5, color: '#64748b' }} numberOfLines={1}>
+                Aman di Bank
+              </ThemedText>
+            </View>
+          )}
+        </View>
+      </Card>
+    );
+  };
 
   // Komponen Panel Aksi Buku Kas & Ekspor
-  const renderActionsCard = () => (
-    <Card
-      padding={12}
-      style={{
-        backgroundColor: '#ffffff',
-        borderColor: '#e2e8f0',
-        borderWidth: 1.5,
-        marginBottom: 8,
-      }}
-    >
-      <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '800', letterSpacing: 0.5, marginBottom: 6 }}>
-        AKSI BUKU KAS & EKSPOR
-      </ThemedText>
-
-      {/* Tombol Input Mutasi Kas & Setor Bank */}
-      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 6 }}>
-        <Pressable
-          style={[styles.cashCompactActionBtn, { backgroundColor: '#dcfce7', borderColor: '#86efac' }]}
-          onPress={() => openModal('in')}
+  const renderActionsCard = () => {
+    if (isKasir) {
+      return (
+        <Card
+          padding={12}
+          style={{
+            backgroundColor: '#ffffff',
+            borderColor: '#e2e8f0',
+            borderWidth: 1.5,
+            marginBottom: 8,
+          }}
         >
-          <ThemedText style={{ fontSize: 13 }}>💰</ThemedText>
-          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#15803d' }}>
-            + Kas Masuk
+          <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '800', letterSpacing: 0.5, marginBottom: 8 }}>
+            INPUT ARUS KAS
           </ThemedText>
-        </Pressable>
 
-        <Pressable
-          style={[styles.cashCompactActionBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }]}
-          onPress={() => openModal('out')}
-        >
-          <ThemedText style={{ fontSize: 13 }}>💸</ThemedText>
-          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#b91c1c' }}>
-            - Kas Keluar
-          </ThemedText>
-        </Pressable>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pressable
+              style={[styles.cashCompactActionBtn, { backgroundColor: '#dcfce7', borderColor: '#86efac', flex: 1, paddingVertical: 10 }]}
+              onPress={() => openModal('in')}
+            >
+              <ThemedText style={{ fontSize: 14 }}>💰</ThemedText>
+              <ThemedText style={{ fontSize: 11.5, fontWeight: '700', color: '#15803d' }}>
+                + Kas Masuk
+              </ThemedText>
+            </Pressable>
 
-        <Pressable
-          style={[styles.cashCompactActionBtn, { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' }]}
-          onPress={() => setShowBankDepositModal(true)}
-        >
-          <ThemedText style={{ fontSize: 13 }}>🏦</ThemedText>
-          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#1d4ed8' }}>
-            Setor Bank
-          </ThemedText>
-        </Pressable>
-      </View>
+            <Pressable
+              style={[styles.cashCompactActionBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5', flex: 1, paddingVertical: 10 }]}
+              onPress={() => openModal('out')}
+            >
+              <ThemedText style={{ fontSize: 14 }}>💸</ThemedText>
+              <ThemedText style={{ fontSize: 11.5, fontWeight: '700', color: '#b91c1c' }}>
+                - Kas Keluar
+              </ThemedText>
+            </Pressable>
+          </View>
+        </Card>
+      );
+    }
 
-      {/* Tombol PDF */}
-      <View style={{ flexDirection: 'row', gap: 6 }}>
-        <Pressable
-          style={[styles.cashCompactExportBtn, { borderColor: '#86efac' }]}
-          disabled={exportingCashPdf}
-          onPress={() => handleExportCashPDF('in')}
-        >
-          <ThemedText style={{ fontSize: 11 }}>📄</ThemedText>
-          <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>
-            {exportingCashPdf ? 'Ekspor...' : 'PDF Masuk'}
-          </ThemedText>
-        </Pressable>
+    return (
+      <Card
+        padding={12}
+        style={{
+          backgroundColor: '#ffffff',
+          borderColor: '#e2e8f0',
+          borderWidth: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '800', letterSpacing: 0.5, marginBottom: 6 }}>
+          AKSI BUKU KAS & EKSPOR
+        </ThemedText>
 
-        <Pressable
-          style={[styles.cashCompactExportBtn, { borderColor: '#fca5a5' }]}
-          disabled={exportingCashPdf}
-          onPress={() => handleExportCashPDF('out')}
-        >
-          <ThemedText style={{ fontSize: 11 }}>📄</ThemedText>
-          <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#dc2626' }}>
-            {exportingCashPdf ? 'Ekspor...' : 'PDF Keluar'}
-          </ThemedText>
-        </Pressable>
-      </View>
-    </Card>
-  );
+        {/* Tombol Input Mutasi Kas & Setor Bank */}
+        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 6 }}>
+          <Pressable
+            style={[styles.cashCompactActionBtn, { backgroundColor: '#dcfce7', borderColor: '#86efac' }]}
+            onPress={() => openModal('in')}
+          >
+            <ThemedText style={{ fontSize: 13 }}>💰</ThemedText>
+            <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#15803d' }}>
+              + Kas Masuk
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            style={[styles.cashCompactActionBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }]}
+            onPress={() => openModal('out')}
+          >
+            <ThemedText style={{ fontSize: 13 }}>💸</ThemedText>
+            <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#b91c1c' }}>
+              - Kas Keluar
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            style={[styles.cashCompactActionBtn, { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' }]}
+            onPress={() => setShowBankDepositModal(true)}
+          >
+            <ThemedText style={{ fontSize: 13 }}>🏦</ThemedText>
+            <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#1d4ed8' }}>
+              Setor Bank
+            </ThemedText>
+          </Pressable>
+        </View>
+
+        {/* Tombol PDF */}
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <Pressable
+            style={[styles.cashCompactExportBtn, { borderColor: '#86efac' }]}
+            disabled={exportingCashPdf}
+            onPress={() => handleExportCashPDF('in')}
+          >
+            <ThemedText style={{ fontSize: 11 }}>📄</ThemedText>
+            <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>
+              {exportingCashPdf ? 'Ekspor...' : 'PDF Masuk'}
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            style={[styles.cashCompactExportBtn, { borderColor: '#fca5a5' }]}
+            disabled={exportingCashPdf}
+            onPress={() => handleExportCashPDF('out')}
+          >
+            <ThemedText style={{ fontSize: 11 }}>📄</ThemedText>
+            <ThemedText style={{ fontSize: 10, fontWeight: '700', color: '#dc2626' }}>
+              {exportingCashPdf ? 'Ekspor...' : 'PDF Keluar'}
+            </ThemedText>
+          </Pressable>
+        </View>
+      </Card>
+    );
+  };
 
   // Komponen Banner Hutang & Piutang
   const renderDebtBanner = () => (
@@ -1440,10 +1630,10 @@ function BukuKasTab({
         </View>
         <View>
           <ThemedText style={{ fontSize: 11.5, fontWeight: '700', color: '#1e1b4b' }}>
-            Buku Hutang & Piutang Usaha
+            {isKasir ? 'Buku Piutang Pelanggan' : 'Buku Hutang & Piutang Usaha'}
           </ThemedText>
           <ThemedText style={{ fontSize: 9.5, color: '#64748b' }}>
-            Kasbon pelanggan, hutang supplier & pelunasan kas
+            {isKasir ? 'Kasbon & pelunasan piutang pelanggan' : 'Kasbon pelanggan, hutang supplier & pelunasan kas'}
           </ThemedText>
         </View>
       </View>
@@ -1456,7 +1646,7 @@ function BukuKasTab({
             </ThemedText>
           </View>
         )}
-        {totalDebtUnpaid > 0 && (
+        {!isKasir && totalDebtUnpaid > 0 && (
           <View style={{ backgroundColor: '#fee2e2', borderColor: '#fecaca', borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
             <ThemedText style={{ fontSize: 9.5, fontWeight: '700', color: '#991b1b' }}>
               Hutang: {fmtRp(totalDebtUnpaid)}
@@ -1473,52 +1663,61 @@ function BukuKasTab({
   );
 
   const filteredEntries = entries.filter((e) => {
+    if (isKasir) {
+      if (e.category === 'setor_bank' || e.category === 'bayar_hutang_supplier') {
+        return false;
+      }
+      return true;
+    }
     if (accountFilter === 'all') return true;
     return (e.account || 'hand') === accountFilter;
   });
 
-  const renderAccountFilterChips = () => (
-    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-      <TouchableOpacity
-        style={[
-          styles.accountFilterChip,
-          accountFilter === 'all' && styles.accountFilterChipActive,
-        ]}
-        onPress={() => setAccountFilter('all')}
-        activeOpacity={0.8}
-      >
-        <ThemedText style={[styles.accountFilterText, accountFilter === 'all' && styles.accountFilterTextActive]}>
-          Semua ({entries.length})
-        </ThemedText>
-      </TouchableOpacity>
+  const renderAccountFilterChips = () => {
+    if (isKasir) return null;
+    return (
+      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+        <TouchableOpacity
+          style={[
+            styles.accountFilterChip,
+            accountFilter === 'all' && styles.accountFilterChipActive,
+          ]}
+          onPress={() => setAccountFilter('all')}
+          activeOpacity={0.8}
+        >
+          <ThemedText style={[styles.accountFilterText, accountFilter === 'all' && styles.accountFilterTextActive]}>
+            Semua ({entries.length})
+          </ThemedText>
+        </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[
-          styles.accountFilterChip,
-          accountFilter === 'hand' && styles.accountFilterChipActive,
-        ]}
-        onPress={() => setAccountFilter('hand')}
-        activeOpacity={0.8}
-      >
-        <ThemedText style={[styles.accountFilterText, accountFilter === 'hand' && styles.accountFilterTextActive]}>
-          💵 Kas di Tangan
-        </ThemedText>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.accountFilterChip,
+            accountFilter === 'hand' && styles.accountFilterChipActive,
+          ]}
+          onPress={() => setAccountFilter('hand')}
+          activeOpacity={0.8}
+        >
+          <ThemedText style={[styles.accountFilterText, accountFilter === 'hand' && styles.accountFilterTextActive]}>
+            💵 Kas di Tangan
+          </ThemedText>
+        </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[
-          styles.accountFilterChip,
-          accountFilter === 'bank' && styles.accountFilterChipActive,
-        ]}
-        onPress={() => setAccountFilter('bank')}
-        activeOpacity={0.8}
-      >
-        <ThemedText style={[styles.accountFilterText, accountFilter === 'bank' && styles.accountFilterTextActive]}>
-          🏛️ Kas di Bank
-        </ThemedText>
-      </TouchableOpacity>
-    </View>
-  );
+        <TouchableOpacity
+          style={[
+            styles.accountFilterChip,
+            accountFilter === 'bank' && styles.accountFilterChipActive,
+          ]}
+          onPress={() => setAccountFilter('bank')}
+          activeOpacity={0.8}
+        >
+          <ThemedText style={[styles.accountFilterText, accountFilter === 'bank' && styles.accountFilterTextActive]}>
+            🏛️ Kas di Bank
+          </ThemedText>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   return (
     <View style={{ flex: 1 }}>
@@ -1768,49 +1967,51 @@ function BukuKasTab({
                 : (entryType === 'in' ? 'Catat Penerimaan Kas (Masuk)' : 'Catat Pengeluaran Kas/Beban (Keluar)')}
             </ThemedText>
 
-            {/* Pilihan Akun Kas / Rekening */}
-            <View style={{ marginBottom: 12 }}>
-              <ThemedText style={styles.formLabel}>
-                {entryType === 'in' ? 'Penerimaan Masuk ke Akun:' : 'Sumber Kas Pengeluaran:'}
-              </ThemedText>
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                <TouchableOpacity
-                  style={[
-                    styles.formAccountChip,
-                    entryAccount === 'hand' && styles.formAccountChipActive,
-                  ]}
-                  onPress={() => setEntryAccount('hand')}
-                  activeOpacity={0.8}
-                >
-                  <ThemedText
+            {/* Pilihan Akun Kas / Rekening (Khusus Pemilik Toko) */}
+            {!isKasir && (
+              <View style={{ marginBottom: 12 }}>
+                <ThemedText style={styles.formLabel}>
+                  {entryType === 'in' ? 'Penerimaan Masuk ke Akun:' : 'Sumber Kas Pengeluaran:'}
+                </ThemedText>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                  <TouchableOpacity
                     style={[
-                      styles.formAccountChipText,
-                      entryAccount === 'hand' && styles.formAccountChipTextActive,
+                      styles.formAccountChip,
+                      entryAccount === 'hand' && styles.formAccountChipActive,
                     ]}
+                    onPress={() => setEntryAccount('hand')}
+                    activeOpacity={0.8}
                   >
-                    💵 Kas di Tangan (Laci)
-                  </ThemedText>
-                </TouchableOpacity>
+                    <ThemedText
+                      style={[
+                        styles.formAccountChipText,
+                        entryAccount === 'hand' && styles.formAccountChipTextActive,
+                      ]}
+                    >
+                      💵 Kas di Tangan (Laci)
+                    </ThemedText>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[
-                    styles.formAccountChip,
-                    entryAccount === 'bank' && styles.formAccountChipActive,
-                  ]}
-                  onPress={() => setEntryAccount('bank')}
-                  activeOpacity={0.8}
-                >
-                  <ThemedText
+                  <TouchableOpacity
                     style={[
-                      styles.formAccountChipText,
-                      entryAccount === 'bank' && styles.formAccountChipTextActive,
+                      styles.formAccountChip,
+                      entryAccount === 'bank' && styles.formAccountChipActive,
                     ]}
+                    onPress={() => setEntryAccount('bank')}
+                    activeOpacity={0.8}
                   >
-                    🏛️ Kas di Bank (Rekening)
-                  </ThemedText>
-                </TouchableOpacity>
+                    <ThemedText
+                      style={[
+                        styles.formAccountChipText,
+                        entryAccount === 'bank' && styles.formAccountChipTextActive,
+                      ]}
+                    >
+                      🏛️ Kas di Bank (Rekening)
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
+            )}
 
             <View style={{ marginBottom: 10 }}>
               <ThemedText style={styles.formLabel}>Kategori</ThemedText>
