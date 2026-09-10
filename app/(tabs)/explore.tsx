@@ -162,6 +162,12 @@ export default function ProductsScreen() {
   const [catModalVisible, setCatModalVisible] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
 
+  // Modal Stok Kritis (Retail)
+  const [criticalModalVisible, setCriticalModalVisible] = useState(false);
+  const [criticalThreshold, setCriticalThreshold] = useState<number>(10);
+  const [criticalCategoryFilter, setCriticalCategoryFilter] = useState<number | null>(null);
+  const [criticalSearchQuery, setCriticalSearchQuery] = useState('');
+
   // Modal Kulakan (Khusus Retail)
   const [purchaseModalVisible, setPurchaseModalVisible] = useState(false);
   const [purchasePaymentType, setPurchasePaymentType] = useState<'tunai' | 'kredit'>('tunai');
@@ -375,7 +381,7 @@ export default function ProductsScreen() {
   // ─────────────────────────────────────────
   // Handle Kulakan (Pembelian Stok)
   // ─────────────────────────────────────────
-  const openKulakanModal = () => {
+  const openKulakanModal = (presetProductId?: number) => {
     loadLedger(db);
     loadSuppliers(db);
     setPurchasePaymentType('tunai');
@@ -383,10 +389,15 @@ export default function ProductsScreen() {
     setPurchaseDueDate('');
     setSelectedSupplierId(null);
     setPurchaseSupplier('');
-    setPurchaseProductId(products.length > 0 ? products[0].id : null);
+    const targetProd = presetProductId
+      ? products.find((p) => p.id === presetProductId)
+      : products.length > 0
+      ? products[0]
+      : null;
+    setPurchaseProductId(targetProd ? targetProd.id : null);
     setPurchaseQty('10');
     setPurchaseCost(
-      products.length > 0 && products[0].cost_price > 0 ? products[0].cost_price.toString() : ''
+      targetProd && targetProd.cost_price > 0 ? targetProd.cost_price.toString() : ''
     );
     setPurchaseModalVisible(true);
   };
@@ -497,33 +508,79 @@ export default function ProductsScreen() {
 
   const currentSortMeta = SORT_OPTIONS.find((s) => s.id === sortOption) || SORT_OPTIONS[0];
 
+  // Jumlah Produk Stok Kritis (< 10)
+  const criticalProductsCount = useMemo(() => {
+    if (!isRetail) return 0;
+    return products.filter((p) => p.has_stock === 1 && (p.stock ?? 0) < 10).length;
+  }, [isRetail, products]);
+
+  // Daftar Produk Stok Kritis untuk Modal Peringatan
+  const criticalProducts = useMemo(() => {
+    if (!isRetail) return [];
+    const q = criticalSearchQuery.toLowerCase().trim();
+    const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+
+    return products
+      .filter((p) => {
+        // 1. Wajib memiliki tracking stok dan di bawah ambang batas
+        if (p.has_stock !== 1 || (p.stock ?? 0) >= criticalThreshold) {
+          return false;
+        }
+
+        // 2. Filter Kategori
+        if (criticalCategoryFilter !== null && p.category_id !== criticalCategoryFilter) {
+          return false;
+        }
+
+        // 3. Filter Tokenized Search
+        if (tokens.length > 0) {
+          let extraBarcodesStr = '';
+          if (p.barcodes) {
+            try {
+              const list: string[] = JSON.parse(p.barcodes);
+              if (Array.isArray(list)) {
+                extraBarcodesStr = list.join(' ');
+              }
+            } catch {
+              extraBarcodesStr = p.barcodes;
+            }
+          }
+          const searchTarget = `${p.name} ${p.category_name || ''} ${p.barcode || ''} ${extraBarcodesStr}`.toLowerCase();
+          const matchesAllTokens = tokens.every((token) => searchTarget.includes(token));
+          if (!matchesAllTokens) return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => (a.stock ?? 0) - (b.stock ?? 0));
+  }, [isRetail, products, criticalThreshold, criticalCategoryFilter, criticalSearchQuery]);
+
   const filteredProducts = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
+    const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+
     const result = products.filter((p) => {
       // 1. Filter Kategori
       if (activeCategoryFilter !== null && p.category_id !== activeCategoryFilter) {
         return false;
       }
 
-      // 2. Filter Pencarian Teks & Barcode (Utama & Multi-Barcode)
-      if (q) {
-        const matchName = p.name.toLowerCase().includes(q);
-        const matchCat = p.category_name ? p.category_name.toLowerCase().includes(q) : false;
-        const matchPrimary = p.barcode ? p.barcode.toLowerCase().includes(q) : false;
-
-        let matchMulti = false;
+      // 2. Filter Pencarian Fleksibel (Tokenized Multi-Word: Nama, Kategori, Barcode Utama & Barcode Tambahan)
+      if (tokens.length > 0) {
+        let extraBarcodesStr = '';
         if (p.barcodes) {
           try {
             const list: string[] = JSON.parse(p.barcodes);
             if (Array.isArray(list)) {
-              matchMulti = list.some((b) => b.toLowerCase().includes(q));
+              extraBarcodesStr = list.join(' ');
             }
           } catch {
-            matchMulti = p.barcodes.toLowerCase().includes(q);
+            extraBarcodesStr = p.barcodes;
           }
         }
-
-        if (!matchName && !matchCat && !matchPrimary && !matchMulti) {
+        const searchTarget = `${p.name} ${p.category_name || ''} ${p.barcode || ''} ${extraBarcodesStr}`.toLowerCase();
+        const matchesAllTokens = tokens.every((token) => searchTarget.includes(token));
+        if (!matchesAllTokens) {
           return false;
         }
       }
@@ -580,7 +637,25 @@ export default function ProductsScreen() {
           {/* Tombol Khusus Mode Retail */}
           {isRetail && (
             <>
-              <TouchableOpacity style={styles.retailActionBtn} onPress={openKulakanModal}>
+              <TouchableOpacity
+                style={[
+                  styles.retailActionBtn,
+                  {
+                    backgroundColor: criticalProductsCount > 0 ? '#fee2e2' : '#fef2f2',
+                    borderColor: criticalProductsCount > 0 ? '#ef4444' : '#fca5a5',
+                  },
+                ]}
+                onPress={() => {
+                  setCriticalSearchQuery('');
+                  setCriticalCategoryFilter(null);
+                  setCriticalModalVisible(true);
+                }}
+              >
+                <ThemedText style={[styles.retailActionBtnText, { color: '#b91c1c' }]}>
+                  ⚠️ Stok Kritis {criticalProductsCount > 0 ? `(${criticalProductsCount})` : ''}
+                </ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.retailActionBtn} onPress={() => openKulakanModal()}>
                 <ThemedText style={styles.retailActionBtnText}>📦 Beli Stok</ThemedText>
               </TouchableOpacity>
               <TouchableOpacity
@@ -616,7 +691,12 @@ export default function ProductsScreen() {
             placeholder="Cari nama barang / barcode..."
             placeholderTextColor={Colors.placeholder}
             value={searchQuery}
-            onChangeText={setSearchQuery}
+            onChangeText={(text) => {
+              setSearchQuery(text);
+              if (text.trim().length > 0) {
+                setActiveCategoryFilter(null);
+              }
+            }}
           />
           {searchQuery ? (
             <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8}>
@@ -1735,13 +1815,283 @@ export default function ProductsScreen() {
         </ThemedView>
       </Modal>
 
+      {/* Modal Stok Kritis & Restock */}
+      <Modal
+        visible={criticalModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCriticalModalVisible(false)}
+      >
+        <ThemedView style={styles.modalOverlay}>
+          <Card style={[styles.modalContent, { maxWidth: 640, maxHeight: '88%' }]} padding={18}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <ThemedText style={{ fontSize: 18 }}>⚠️</ThemedText>
+                  <ThemedText type="subtitle" style={{ fontSize: 16, fontWeight: '800', color: '#991b1b' }}>
+                    Peringatan Stok Kritis
+                  </ThemedText>
+                </View>
+                <ThemedText style={{ fontSize: 11, color: Colors.muted, marginTop: 2 }}>
+                  Daftar produk dengan jumlah stok di bawah batas aman. Lakukan pembelian stok secara langsung.
+                </ThemedText>
+              </View>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setCriticalModalVisible(false)}
+              >
+                <ThemedText style={{ fontSize: 16, color: Colors.muted }}>✕</ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            {/* Filter Ambang Batas (Thresholds) */}
+            <View style={{ marginBottom: 10 }}>
+              <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 5 }}>
+                Ambang Batas Stok Menipis:
+              </ThemedText>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {[5, 10, 20, 30].map((th) => {
+                  const isSelected = criticalThreshold === th;
+                  return (
+                    <TouchableOpacity
+                      key={th}
+                      style={[
+                        styles.thresholdBtn,
+                        isSelected && styles.thresholdBtnActive,
+                      ]}
+                      onPress={() => setCriticalThreshold(th)}
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.thresholdBtnText,
+                          isSelected && styles.thresholdBtnTextActive,
+                        ]}
+                      >
+                        {'< '}{th} Pcs
+                      </ThemedText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Pencarian & Scan di Modal Kritis */}
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+              <View style={[styles.searchBox, { height: 38, flex: 1 }]}>
+                <ThemedText style={{ fontSize: 12, color: Colors.muted }}>🔍</ThemedText>
+                <TextInput
+                  style={[styles.searchInput, { fontSize: 12 }]}
+                  placeholder="Cari produk kritis / barcode..."
+                  placeholderTextColor={Colors.placeholder}
+                  value={criticalSearchQuery}
+                  onChangeText={(text) => {
+                    setCriticalSearchQuery(text);
+                    if (text.trim().length > 0) {
+                      setCriticalCategoryFilter(null);
+                    }
+                  }}
+                />
+                {criticalSearchQuery ? (
+                  <TouchableOpacity onPress={() => setCriticalSearchQuery('')} hitSlop={8}>
+                    <ThemedText style={{ color: Colors.muted, fontSize: 12, paddingHorizontal: 4 }}>✕</ThemedText>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              <TouchableOpacity
+                style={[styles.scanBarcodeBtn, { height: 38, paddingHorizontal: 10 }]}
+                onPress={() => {
+                  setScannerTarget('critical_filter');
+                  setScannerVisible(true);
+                }}
+              >
+                <ThemedText style={{ color: '#ffffff', fontWeight: '700', fontSize: 11 }}>📷 Scan</ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            {/* Filter Kategori Horizontal */}
+            <View style={{ marginBottom: 10 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                <TouchableOpacity
+                  style={[
+                    styles.categoryFilterChip,
+                    { height: 30, paddingHorizontal: 10 },
+                    criticalCategoryFilter === null && styles.categoryFilterChipActive,
+                  ]}
+                  onPress={() => setCriticalCategoryFilter(null)}
+                >
+                  <ThemedText
+                    style={[
+                      styles.categoryFilterChipText,
+                      { fontSize: 11 },
+                      criticalCategoryFilter === null && styles.categoryFilterChipTextActive,
+                    ]}
+                  >
+                    Semua ({products.filter((p) => p.has_stock === 1 && (p.stock ?? 0) < criticalThreshold).length})
+                  </ThemedText>
+                </TouchableOpacity>
+                {categories.map((cat) => {
+                  const catCount = products.filter(
+                    (p) => p.has_stock === 1 && p.category_id === cat.id && (p.stock ?? 0) < criticalThreshold
+                  ).length;
+                  if (catCount === 0) return null;
+                  const isActive = criticalCategoryFilter === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[
+                        styles.categoryFilterChip,
+                        { height: 30, paddingHorizontal: 10 },
+                        isActive && styles.categoryFilterChipActive,
+                      ]}
+                      onPress={() => setCriticalCategoryFilter(isActive ? null : cat.id)}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.categoryFilterChipText,
+                          { fontSize: 11 },
+                          isActive && styles.categoryFilterChipTextActive,
+                        ]}
+                      >
+                        {cat.name} ({catCount})
+                      </ThemedText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* Info Hasil */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingHorizontal: 2 }}>
+              <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+                Ditemukan <ThemedText style={{ fontWeight: '800', color: '#b91c1c' }}>{criticalProducts.length}</ThemedText> produk dengan stok &lt; {criticalThreshold}
+              </ThemedText>
+            </View>
+
+            {/* Daftar Produk Kritis */}
+            {criticalProducts.length === 0 ? (
+              <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 32 }}>
+                <ThemedText style={{ fontSize: 32, marginBottom: 8 }}>✅</ThemedText>
+                <ThemedText style={{ fontSize: 14, fontWeight: '700', color: '#10b981' }}>
+                  Stok Dalam Kondisi Aman
+                </ThemedText>
+                <ThemedText style={{ fontSize: 12, color: Colors.muted, textAlign: 'center', marginTop: 4 }}>
+                  Tidak ada produk dengan stok fisik di bawah {criticalThreshold} unit pada filter saat ini.
+                </ThemedText>
+              </View>
+            ) : (
+              <FlatList
+                data={criticalProducts}
+                keyExtractor={(item) => item.id.toString()}
+                contentContainerStyle={{ gap: 8, paddingBottom: 12 }}
+                renderItem={({ item }) => {
+                  const isOutOfStock = (item.stock ?? 0) <= 0;
+                  const unit = item.is_weighted === 1 ? 'kg' : 'pcs';
+                  return (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: 10,
+                        backgroundColor: isOutOfStock ? '#fef2f2' : '#fffbeb',
+                        borderWidth: 1,
+                        borderColor: isOutOfStock ? '#fecaca' : '#fde68a',
+                        borderRadius: 10,
+                        gap: 10,
+                      }}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <ThemedText style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }}>
+                          {item.name}
+                        </ThemedText>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
+                          {item.category_name ? (
+                            <ThemedText style={{ fontSize: 10, color: '#64748b' }}>
+                              📁 {item.category_name}
+                            </ThemedText>
+                          ) : null}
+                          {item.barcode ? (
+                            <ThemedText style={{ fontSize: 10, color: '#64748b' }}>
+                              🏷️ {item.barcode}
+                            </ThemedText>
+                          ) : null}
+                          {item.cost_price > 0 ? (
+                            <ThemedText style={{ fontSize: 10, color: '#64748b' }}>
+                              Modal: Rp {item.cost_price.toLocaleString('id-ID')}
+                            </ThemedText>
+                          ) : null}
+                        </View>
+                      </View>
+
+                      {/* Status Stok Badge */}
+                      <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                        <View
+                          style={{
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: 6,
+                            backgroundColor: isOutOfStock ? '#dc2626' : '#d97706',
+                          }}
+                        >
+                          <ThemedText style={{ color: '#ffffff', fontSize: 11, fontWeight: '800' }}>
+                            {isOutOfStock ? `HABIS (0 ${unit})` : `Sisa ${item.stock} ${unit}`}
+                          </ThemedText>
+                        </View>
+
+                        {/* Tombol Langsung Beli Stok */}
+                        <TouchableOpacity
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            backgroundColor: '#2563eb',
+                            paddingHorizontal: 10,
+                            paddingVertical: 5,
+                            borderRadius: 6,
+                          }}
+                          onPress={() => {
+                            setCriticalModalVisible(false);
+                            openKulakanModal(item.id);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <ThemedText style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>
+                            📦 Beli Stok
+                          </ThemedText>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                }}
+              />
+            )}
+
+            {/* Footer Modal */}
+            <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+              <Button
+                title="Tutup"
+                variant="outline"
+                size="sm"
+                onPress={() => setCriticalModalVisible(false)}
+              />
+            </View>
+          </Card>
+        </ThemedView>
+      </Modal>
+
       {/* Modal Scanner Barcode */}
       <BarcodeScannerModal
         visible={scannerVisible}
         onClose={() => setScannerVisible(false)}
         onScanned={(code) => {
           if (scannerTarget === 'filter') {
+            setActiveCategoryFilter(null);
             setSearchQuery(code);
+          } else if (scannerTarget === 'critical_filter') {
+            setCriticalCategoryFilter(null);
+            setCriticalSearchQuery(code);
           } else if (scannerTarget.startsWith('barcode_')) {
             const idx = parseInt(scannerTarget.replace('barcode_', ''), 10);
             setBarcodesList((prev) => {
@@ -1760,7 +2110,13 @@ export default function ProductsScreen() {
           }
           setScannerVisible(false);
         }}
-        title={scannerTarget === 'filter' ? 'Cari Produk via Barcode' : 'Pindai Barcode Produk'}
+        title={
+          scannerTarget === 'critical_filter'
+            ? 'Cari Produk Kritis via Barcode'
+            : scannerTarget === 'filter'
+            ? 'Cari Produk via Barcode'
+            : 'Pindai Barcode Produk'
+        }
       />
 
       {/* Modal Pencarian Cepat Produk (Pembaruan Stok & Pembelian) */}
@@ -2300,5 +2656,27 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: 5,
     backgroundColor: Colors.tint,
+  },
+  thresholdBtn: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    alignItems: 'center',
+  },
+  thresholdBtnActive: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#ef4444',
+  },
+  thresholdBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  thresholdBtnTextActive: {
+    color: '#dc2626',
+    fontWeight: '800',
   },
 });

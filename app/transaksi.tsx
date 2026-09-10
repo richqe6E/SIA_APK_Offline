@@ -159,9 +159,21 @@ export default function TransactionScreen() {
 
   const filteredProducts = products.filter((p) => {
     const matchCat = selectedCategoryId ? p.category_id === selectedCategoryId : true;
-    const matchSearch = searchQuery.trim()
-      ? p.name.toLowerCase().includes(searchQuery.toLowerCase())
-      : true;
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return matchCat;
+
+    const tokens = q.split(/\s+/).filter(Boolean);
+    let barcodesStr = p.barcode || '';
+    if (p.barcodes) {
+      try {
+        const list: string[] = JSON.parse(p.barcodes);
+        if (Array.isArray(list)) barcodesStr += ' ' + list.join(' ');
+      } catch {
+        barcodesStr += ' ' + p.barcodes;
+      }
+    }
+    const searchTarget = `${p.name} ${barcodesStr}`.toLowerCase();
+    const matchSearch = tokens.every((token) => searchTarget.includes(token));
     return matchCat && matchSearch;
   });
 
@@ -370,17 +382,28 @@ export default function TransactionScreen() {
     setEditPriceTarget(null);
   };
 
+  const handleSearchChange = (q: string) => {
+    setSearchQuery(q);
+    if (q.trim().length > 0 && selectedCategoryId !== null) {
+      setSelectedCategoryId(null);
+    }
+  };
+
   const handleBarcodeScanned = (code: string) => {
     const trimmed = code.trim();
+    if (selectedCategoryId !== null) {
+      setSelectedCategoryId(null);
+    }
     const matched =
       useProductStore.getState().findProductByBarcode(trimmed) ||
       products.find((p) => p.name.toLowerCase() === trimmed.toLowerCase());
     if (matched) {
       handleAddToCartWithValidation(matched);
     } else {
+      setSearchQuery(trimmed);
       Alert.alert(
-        'Produk Tidak Ditemukan',
-        `Barcode "${code}" tidak ditemukan pada katalog produk.`
+        'Produk Tidak Ditemukan Langsung',
+        `Barcode "${code}" tidak cocok persis dan dimasukkan ke pencarian.`
       );
     }
   };
@@ -410,7 +433,7 @@ export default function TransactionScreen() {
           selectedCategoryId={selectedCategoryId}
           onChangeCategory={setSelectedCategoryId}
           searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
+          onSearchChange={handleSearchChange}
           viewMode={viewMode}
           onToggleViewMode={handleToggleViewMode}
           businessMode={businessMode}
@@ -1808,11 +1831,18 @@ function ProductCard({
       <ThemedText
         type="defaultSemiBold"
         numberOfLines={2}
-        style={{ textAlign: 'center', fontSize: 12 }}
+        style={{
+          textAlign: 'center',
+          fontSize: 13.5,
+          fontWeight: '700',
+          lineHeight: 18,
+          color: '#0f172a',
+          paddingHorizontal: 2,
+        }}
       >
         {product.name}
       </ThemedText>
-      <ThemedText style={{ textAlign: 'center', fontSize: 12, color: Colors.tint, fontWeight: '700' }}>
+      <ThemedText style={{ textAlign: 'center', fontSize: 12.5, color: Colors.tint, fontWeight: '800', marginTop: 1 }}>
         Rp {product.price.toLocaleString('id-ID')} {isWeighted ? '/ kg' : ''}
       </ThemedText>
 

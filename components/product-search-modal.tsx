@@ -36,22 +36,26 @@ export function ProductSearchModal({
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
+    if (!q) {
+      return hasStockOnly ? products.filter((p) => p.has_stock === 1) : products;
+    }
+    const tokens = q.split(/\s+/).filter(Boolean);
+
     return products.filter((p) => {
       if (hasStockOnly && p.has_stock !== 1) return false;
-      if (!q) return true;
-      const matchName = p.name.toLowerCase().includes(q);
-      const matchBarcode = p.barcode ? p.barcode.toLowerCase().includes(q) : false;
-      const matchCat = p.category_name ? p.category_name.toLowerCase().includes(q) : false;
-      let matchMulti = false;
+
+      let barcodesStr = p.barcode || '';
       if (p.barcodes) {
         try {
           const list: string[] = JSON.parse(p.barcodes);
-          matchMulti = list.some((b) => b.toLowerCase().includes(q));
+          if (Array.isArray(list)) barcodesStr += ' ' + list.join(' ');
         } catch {
-          matchMulti = p.barcodes.toLowerCase().includes(q);
+          barcodesStr += ' ' + p.barcodes;
         }
       }
-      return matchName || matchBarcode || matchCat || matchMulti;
+
+      const searchTarget = `${p.name} ${p.category_name || ''} ${barcodesStr}`.toLowerCase();
+      return tokens.every((token) => searchTarget.includes(token));
     });
   }, [products, searchQuery, hasStockOnly]);
 
