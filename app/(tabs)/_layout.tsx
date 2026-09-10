@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import React, { useEffect } from 'react';
+import { AppState } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -19,15 +20,30 @@ export default function TabLayout() {
 
   useEffect(() => {
     if (!isOnboarded) return;
-    // Initial sync on startup
-    triggerAutoSync(db);
-
-    // Periodic check every 30s to keep cloud & tablet reconciled
-    const timer = setInterval(() => {
+    
+    // Initial sync on startup if active
+    if (AppState.currentState === 'active') {
       triggerAutoSync(db);
+    }
+
+    // Periodic check every 30s only while app is active in foreground
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') {
+        triggerAutoSync(db);
+      }
     }, 30000);
 
-    return () => clearInterval(timer);
+    // Sync on return from background
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        triggerAutoSync(db);
+      }
+    });
+
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
   }, [db, isOnboarded]);
 
   const isKasir = currentUserRole === 'kasir';

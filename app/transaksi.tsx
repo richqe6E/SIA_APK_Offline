@@ -95,11 +95,14 @@ export default function TransactionScreen() {
   const [successTotal, setSuccessTotal] = useState(0);
   const [successDailySeq, setSuccessDailySeq] = useState(0);
 
-  // Pajak / Biaya Tambahan Kasir
-  const [isTaxActive, setIsTaxActive] = useState(taxEnabled);
+  // Pajak / Biaya Tambahan Kasir (Fleksibel: 0%, Debit 1%, PB1 10%, atau Kustom)
+  type SurchargePreset = 'none' | 'debit1' | 'tax10' | 'custom';
+  const [surchargePreset, setSurchargePreset] = useState<SurchargePreset>(
+    taxEnabled ? 'custom' : 'none'
+  );
 
   useEffect(() => {
-    setIsTaxActive(taxEnabled);
+    setSurchargePreset(taxEnabled ? 'custom' : 'none');
   }, [taxEnabled]);
 
   const [lastTransaction, setLastTransaction] = useState<{
@@ -195,10 +198,33 @@ export default function TransactionScreen() {
 
   const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
   const discountAmount = getDiscountAmount();
+
+  let activeTaxRate = 0;
+  let activeTaxName = '';
+  let activeTaxType: 'percent' | 'nominal' = 'percent';
+  let isTaxActive = false;
+
+  if (surchargePreset === 'debit1') {
+    isTaxActive = true;
+    activeTaxRate = 1;
+    activeTaxName = 'Biaya Kartu Debit (1%)';
+    activeTaxType = 'percent';
+  } else if (surchargePreset === 'tax10') {
+    isTaxActive = true;
+    activeTaxRate = 10;
+    activeTaxName = 'Pajak PB1 (10%)';
+    activeTaxType = 'percent';
+  } else if (surchargePreset === 'custom' && taxEnabled) {
+    isTaxActive = true;
+    activeTaxRate = taxRate;
+    activeTaxName = taxName || 'Pajak / Biaya';
+    activeTaxType = taxType;
+  }
+
   const taxAmount = isTaxActive
-    ? taxType === 'percent'
-      ? Math.round(((subtotal - discountAmount) * taxRate) / 100)
-      : taxRate
+    ? activeTaxType === 'percent'
+      ? Math.round(((subtotal - discountAmount) * activeTaxRate) / 100)
+      : activeTaxRate
     : 0;
   const total = Math.max(0, subtotal - discountAmount + taxAmount);
   const parsedAmount = parseInt(paymentAmount.replace(/\./g, ''), 10) || 0;
@@ -257,9 +283,9 @@ export default function TransactionScreen() {
       subtotalAmount: subtotal,
       discountAmount: discountAmount,
       taxAmount: isTaxActive ? taxAmount : 0,
-      taxName: isTaxActive ? taxName : '',
-      taxRate: isTaxActive ? taxRate : 0,
-      taxType: isTaxActive ? taxType : 'none',
+      taxName: isTaxActive ? activeTaxName : '',
+      taxRate: isTaxActive ? activeTaxRate : 0,
+      taxType: isTaxActive ? activeTaxType : 'none',
       cashierName: activeCashierName,
       shiftId: activeShiftId,
     });
@@ -272,9 +298,9 @@ export default function TransactionScreen() {
       activeShiftId,
       {
         enabled: isTaxActive,
-        name: taxName,
-        type: taxType,
-        rate: taxRate,
+        name: activeTaxName,
+        type: activeTaxType,
+        rate: activeTaxRate,
         amount: taxAmount,
       }
     );
@@ -487,11 +513,11 @@ export default function TransactionScreen() {
           total={total}
           totalCartPcs={totalCartPcs}
           isTaxActive={isTaxActive}
-          taxName={taxName}
-          taxType={taxType}
-          taxRate={taxRate}
+          taxName={activeTaxName}
+          taxType={activeTaxType}
+          taxRate={activeTaxRate}
           taxAmount={taxAmount}
-          onToggleTax={() => setIsTaxActive(!isTaxActive)}
+          onToggleTax={() => setSurchargePreset(surchargePreset === 'none' ? (taxEnabled ? 'custom' : 'debit1') : 'none')}
           gridColumns={gridColumns}
           pendingCount={pendingOrders.length}
           onAddToCart={handleAddToCartWithValidation}
@@ -522,10 +548,16 @@ export default function TransactionScreen() {
           total={total}
           totalCartPcs={totalCartPcs}
           isTaxActive={isTaxActive}
-          taxName={taxName}
-          taxType={taxType}
-          taxRate={taxRate}
+          taxName={activeTaxName}
+          taxType={activeTaxType}
+          taxRate={activeTaxRate}
           taxAmount={taxAmount}
+          surchargePreset={surchargePreset}
+          onChangeSurchargePreset={setSurchargePreset}
+          taxEnabled={taxEnabled}
+          storeTaxRate={taxRate}
+          storeTaxName={taxName}
+          storeTaxType={taxType}
           paymentMethod={paymentMethod}
           paymentAmount={paymentAmount}
           parsedAmount={parsedAmount}
@@ -1243,6 +1275,12 @@ function Step2View({
   taxType,
   taxRate,
   taxAmount,
+  surchargePreset,
+  onChangeSurchargePreset,
+  taxEnabled,
+  storeTaxRate,
+  storeTaxName,
+  storeTaxType,
   paymentMethod,
   paymentAmount,
   parsedAmount,
@@ -1271,6 +1309,12 @@ function Step2View({
   taxType: 'percent' | 'nominal';
   taxRate: number;
   taxAmount: number;
+  surchargePreset: 'none' | 'debit1' | 'tax10' | 'custom';
+  onChangeSurchargePreset: (p: 'none' | 'debit1' | 'tax10' | 'custom') => void;
+  taxEnabled: boolean;
+  storeTaxRate: number;
+  storeTaxName: string;
+  storeTaxType: 'percent' | 'nominal';
   paymentMethod: 'tunai' | 'qris' | 'hutang';
   paymentAmount: string;
   parsedAmount: number;
@@ -1404,7 +1448,82 @@ function Step2View({
           )}
           ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
         />
-        <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1.5, borderColor: '#e2e8f0', gap: 4 }}>
+        {/* Pilihan Cepat Pajak / Biaya Tambahan (Debit, Pajak PB1, atau Kustom) */}
+        <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1.5, borderColor: '#e2e8f0', gap: 5 }}>
+          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>
+            Biaya Tambahan / Pajak:
+          </ThemedText>
+          <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+            <Pressable
+              style={[
+                styles.surchargeChip,
+                surchargePreset === 'none' && styles.surchargeChipActive,
+              ]}
+              onPress={() => onChangeSurchargePreset('none')}
+            >
+              <ThemedText
+                style={[
+                  styles.surchargeChipText,
+                  surchargePreset === 'none' && styles.surchargeChipTextActive,
+                ]}
+              >
+                0% (Off)
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.surchargeChip,
+                surchargePreset === 'debit1' && styles.surchargeChipActive,
+              ]}
+              onPress={() => onChangeSurchargePreset('debit1')}
+            >
+              <ThemedText
+                style={[
+                  styles.surchargeChipText,
+                  surchargePreset === 'debit1' && styles.surchargeChipTextActive,
+                ]}
+              >
+                💳 Debit 1%
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.surchargeChip,
+                surchargePreset === 'tax10' && styles.surchargeChipActive,
+              ]}
+              onPress={() => onChangeSurchargePreset('tax10')}
+            >
+              <ThemedText
+                style={[
+                  styles.surchargeChipText,
+                  surchargePreset === 'tax10' && styles.surchargeChipTextActive,
+                ]}
+              >
+                🏛️ PB1 10%
+              </ThemedText>
+            </Pressable>
+            {taxEnabled && (
+              <Pressable
+                style={[
+                  styles.surchargeChip,
+                  surchargePreset === 'custom' && styles.surchargeChipActive,
+                ]}
+                onPress={() => onChangeSurchargePreset('custom')}
+              >
+                <ThemedText
+                  style={[
+                    styles.surchargeChipText,
+                    surchargePreset === 'custom' && styles.surchargeChipTextActive,
+                  ]}
+                >
+                  ⚙️ {storeTaxName || 'Kustom'} ({storeTaxRate}{storeTaxType === 'percent' ? '%' : ''})
+                </ThemedText>
+              </Pressable>
+            )}
+          </View>
+        </View>
+
+        <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderColor: '#f1f5f9', gap: 4 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <ThemedText style={{ fontSize: 12.5, color: '#64748b' }}>Subtotal</ThemedText>
             <ThemedText style={{ fontSize: 12.5, color: '#334155', fontWeight: '600' }}>
@@ -2933,5 +3052,26 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '700',
     color: '#1d4ed8',
+  },
+  surchargeChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+  },
+  surchargeChipActive: {
+    borderColor: Colors.tint,
+    backgroundColor: Colors.tint,
+  },
+  surchargeChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  surchargeChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
   },
 });

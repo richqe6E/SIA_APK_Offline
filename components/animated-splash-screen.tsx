@@ -70,14 +70,19 @@ export function AnimatedSplashScreen({ onFinish }: AnimatedSplashScreenProps) {
         ]}
       >
         <Image
-          source={require('@/assets/images/app-logo-p.png')}
+          source={require('@/assets/images/app-logo-full.png')}
           style={styles.logoImage}
           resizeMode="contain"
         />
-        <ThemedText style={styles.brandTitle}>POS AZIZAH</ThemedText>
+        <ThemedText style={styles.storeNameTag}>AGEN SOSIS AZIZAH</ThemedText>
         <ThemedText style={styles.brandSubtitle}>Sistem Kasir & Pembukuan Usaha</ThemedText>
         <View style={styles.badgePill}>
           <ThemedText style={styles.badgeText}>OFFLINE • CEPAT • AKURAT</ThemedText>
+        </View>
+        <View style={styles.footerCopyrightBox}>
+          <ThemedText style={styles.copyrightText}>
+            Hak Cipta © 2026 POS Karya Riki Rivaldi
+          </ThemedText>
         </View>
       </Animated.View>
     </Animated.View>
@@ -99,26 +104,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   logoImage: {
-    width: 90,
-    height: 90,
-    marginBottom: 16,
+    width: 240,
+    height: 96,
+    marginBottom: 12,
   },
-  brandTitle: {
-    fontSize: 28,
+  storeNameTag: {
+    fontSize: 22,
     fontWeight: '900',
     color: '#1e1b4b',
-    letterSpacing: 1.2,
+    letterSpacing: 1,
     textAlign: 'center',
   },
   brandSubtitle: {
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
     color: '#64748b',
     marginTop: 4,
     textAlign: 'center',
   },
   badgePill: {
-    marginTop: 18,
+    marginTop: 16,
     paddingHorizontal: 14,
     paddingVertical: 5,
     borderRadius: 20,
@@ -131,5 +136,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#6d28d9',
     letterSpacing: 0.8,
+  },
+  footerCopyrightBox: {
+    marginTop: 28,
+  },
+  copyrightText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '500',
+    textAlign: 'center',
   },
 });

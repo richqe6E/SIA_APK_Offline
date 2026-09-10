@@ -19,6 +19,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Ionicons } from '@expo/vector-icons';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -1972,8 +1973,21 @@ export default function ProductsScreen() {
             {/* Daftar Produk Kritis */}
             {criticalProducts.length === 0 ? (
               <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 32 }}>
-                <ThemedText style={{ fontSize: 32, marginBottom: 8 }}>✅</ThemedText>
-                <ThemedText style={{ fontSize: 14, fontWeight: '700', color: '#10b981' }}>
+                <View
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: 32,
+                    backgroundColor: '#ecfdf5',
+                    borderWidth: 1.5,
+                    borderColor: '#a7f3d0',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: 12,
+                  }}>
+                  <Ionicons name="checkmark-circle" size={38} color="#10b981" />
+                </View>
+                <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#059669' }}>
                   Stok Dalam Kondisi Aman
                 </ThemedText>
                 <ThemedText style={{ fontSize: 12, color: Colors.muted, textAlign: 'center', marginTop: 4 }}>

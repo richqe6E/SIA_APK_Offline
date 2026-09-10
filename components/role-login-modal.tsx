@@ -100,10 +100,10 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
 
           {/* Header Toko */}
           <View style={styles.header}>
-            <View style={styles.logoContainer}>
+            <View style={styles.bannerLogoBox}>
               <Image
-                source={require('@/assets/images/app-logo-p.png')}
-                style={styles.logo}
+                source={require('@/assets/images/app-logo-full.png')}
+                style={styles.bannerLogo}
                 resizeMode="contain"
               />
             </View>
@@ -264,7 +264,7 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
           {/* Footer Card */}
           <View style={styles.cardFooter}>
             <ThemedText style={styles.footerNote}>
-              Aplikasi Kasir POS • Offline-First Database • Cloud Reconciled
+              POS Karya Riki Rivaldi • Hak Cipta Terlindungi • Offline-First Database
             </ThemedText>
           </View>
         </View>
@@ -341,6 +341,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: '#f1f5f9',
     marginBottom: 18,
+  },
+  bannerLogoBox: {
+    width: 170,
+    height: 68,
+    marginBottom: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bannerLogo: {
+    width: '100%',
+    height: '100%',
   },
   logoContainer: {
     width: 50,

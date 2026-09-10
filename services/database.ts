@@ -409,3 +409,39 @@ export async function resetEntireDatabase(db: SQLiteDatabase): Promise<void> {
   });
 }
 
+/**
+ * Reset data transaksi, buku kas, shift kasir, dan hutang/piutang ke nol (Buku Baru).
+ * Mempertahankan 100% data master produk, kategori, kontak pelanggan/supplier, dan pengaturan toko.
+ */
+export async function resetFinancialAndCashFlowData(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      DELETE FROM cash_shifts;
+      DELETE FROM pending_orders;
+      DELETE FROM transaction_items;
+      DELETE FROM transactions;
+      DELETE FROM cash_ledger;
+      DELETE FROM expenses;
+      DELETE FROM balance_sheet_items;
+      DELETE FROM receivable_payments;
+      DELETE FROM customer_receivables;
+      DELETE FROM debt_payments;
+      DELETE FROM supplier_debts;
+      DELETE FROM sqlite_sequence WHERE name IN (
+        'cash_shifts',
+        'pending_orders',
+        'transaction_items',
+        'transactions',
+        'cash_ledger',
+        'expenses',
+        'balance_sheet_items',
+        'receivable_payments',
+        'customer_receivables',
+        'debt_payments',
+        'supplier_debts'
+      );
+    `);
+  });
+}
+
+

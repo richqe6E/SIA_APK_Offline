@@ -386,6 +386,63 @@ export default function StoreSettingsScreen() {
 
             {taxIsActive ? (
               <View style={{ gap: 10, marginTop: 6, paddingTop: 10, borderTopWidth: 1, borderColor: '#e2e8f0' }}>
+                {/* Preset Cepat Pajak / Biaya */}
+                <View style={{ gap: 4 }}>
+                  <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>
+                    Pilihan Preset Cepat:
+                  </ThemedText>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    <TouchableOpacity
+                      style={styles.presetChip}
+                      onPress={() => {
+                        setTaxLabel('Biaya Kartu Debit');
+                        setTaxCalcType('percent');
+                        setTaxRateVal('1');
+                      }}
+                    >
+                      <ThemedText style={{ fontSize: 11, fontWeight: '600', color: Colors.tintDark }}>
+                        💳 Debit (1%)
+                      </ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.presetChip}
+                      onPress={() => {
+                        setTaxLabel('Pajak PB1');
+                        setTaxCalcType('percent');
+                        setTaxRateVal('10');
+                      }}
+                    >
+                      <ThemedText style={{ fontSize: 11, fontWeight: '600', color: Colors.tintDark }}>
+                        🏛️ PB1 (10%)
+                      </ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.presetChip}
+                      onPress={() => {
+                        setTaxLabel('PPN');
+                        setTaxCalcType('percent');
+                        setTaxRateVal('11');
+                      }}
+                    >
+                      <ThemedText style={{ fontSize: 11, fontWeight: '600', color: Colors.tintDark }}>
+                        📋 PPN (11%)
+                      </ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.presetChip}
+                      onPress={() => {
+                        setTaxLabel('Biaya Layanan');
+                        setTaxCalcType('percent');
+                        setTaxRateVal('5');
+                      }}
+                    >
+                      <ThemedText style={{ fontSize: 11, fontWeight: '600', color: Colors.tintDark }}>
+                        🛎️ Layanan (5%)
+                      </ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
                 <View style={{ gap: 4 }}>
                   <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>
                     Nama Biaya / Label Pajak:
@@ -716,5 +773,13 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#e2e8f0',
     borderStyle: 'dashed',
+  },
+  presetChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
   },
 });

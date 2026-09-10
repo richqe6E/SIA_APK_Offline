@@ -13,7 +13,7 @@ import { useShiftStore } from '@/stores/shiftStore';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -227,6 +227,11 @@ export default function DashboardScreen() {
   );
 
   const maxTrend = Math.max(...summary.weekTrend.map((d) => d.total), 1);
+  const bestTrendDay = useMemo(() => {
+    if (!summary.weekTrend || summary.weekTrend.length === 0) return null;
+    return summary.weekTrend.reduce((max, cur) => (cur.total > max.total ? cur : max), summary.weekTrend[0]);
+  }, [summary.weekTrend]);
+  const dailyAverage = Math.round(summary.week / 7);
   const percentChange =
     summary.yesterday > 0
       ? ((summary.today - summary.yesterday) / summary.yesterday) * 100
@@ -479,7 +484,7 @@ export default function DashboardScreen() {
       <View style={[styles.topHeaderCard, !isTabletOrLandscape && styles.topHeaderCardPortrait]}>
         <View style={styles.headerLeft}>
           <ThemedText style={styles.karyaPolnesText}>
-            POS AZIZAH
+            POS Karya Riki Rivaldi
           </ThemedText>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
             <View style={styles.storeLogoBox}>
@@ -792,37 +797,69 @@ export default function DashboardScreen() {
                   </View>
 
                   {/* Grafik 7 Hari (Landscape) */}
-                  <Card padding={16} style={{ flex: 1, backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                      <ThemedText style={styles.sectionTitle}>Tren Penjualan (7 Hari)</ThemedText>
-                      <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
-                        Total: {formatRupiah(summary.week)}
-                      </ThemedText>
-                    </View>
-                    <View style={styles.chartRow}>
-                      {summary.weekTrend.map((d, i) => (
-                        <View key={i} style={styles.chartCol}>
-                          {d.total > 0 && (
-                            <ThemedText style={styles.barAmount} numberOfLines={1}>
-                              {formatShortRupiah(d.total)}
-                            </ThemedText>
-                          )}
-                          <View style={styles.barWrapper}>
-                            <View
-                              style={[
-                                styles.bar,
-                                {
-                                  height: `${Math.max(8, (d.total / maxTrend) * 100)}%`,
-                                  backgroundColor: d.label === HARI_INI ? Colors.tintDark : '#cbd5e1',
-                                },
-                              ]}
-                            />
-                          </View>
-                          <ThemedText style={[styles.barLabel, d.label === HARI_INI && { fontWeight: '800', color: Colors.tintDark }]}>
-                            {d.label === HARI_INI ? 'Hari Ini' : d.label}
+                  <Card padding={16} style={{ flex: 1, backgroundColor: '#ffffff', borderColor: '#e2e8f0', justifyContent: 'space-between' }}>
+                    <View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <View>
+                          <ThemedText style={styles.sectionTitle}>Tren Penjualan (7 Hari Terakhir)</ThemedText>
+                          <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+                            Grafik omzet harian toko secara realtime
                           </ThemedText>
                         </View>
-                      ))}
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <ThemedText style={{ fontSize: 10, color: '#64748b', fontWeight: '600' }}>Total 7 Hari</ThemedText>
+                          <ThemedText style={{ fontSize: 15, fontWeight: '800', color: Colors.tintDark }}>
+                            {formatRupiah(summary.week)}
+                          </ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.chartRow}>
+                        {summary.weekTrend.map((d, i) => (
+                          <View key={i} style={styles.chartCol}>
+                            {d.total > 0 && (
+                              <ThemedText style={styles.barAmount} numberOfLines={1}>
+                                {formatShortRupiah(d.total)}
+                              </ThemedText>
+                            )}
+                            <View style={styles.barWrapper}>
+                              <View
+                                style={[
+                                  styles.bar,
+                                  {
+                                    height: `${Math.max(8, (d.total / maxTrend) * 100)}%`,
+                                    backgroundColor: d.label === HARI_INI ? Colors.tintDark : '#94a3b8',
+                                  },
+                                ]}
+                              />
+                            </View>
+                            <ThemedText style={[styles.barLabel, d.label === HARI_INI && { fontWeight: '800', color: Colors.tintDark }]}>
+                              {d.label === HARI_INI ? 'Hari Ini' : d.label}
+                            </ThemedText>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+
+                    {/* Ringkasan Analisis Mingguan (Mengisi Ruang Bawah Kartu) */}
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+                      <View style={{ flex: 1, backgroundColor: '#f8fafc', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                        <ThemedText style={{ fontSize: 9.5, color: '#64748b', fontWeight: '600' }}>Puncak Omzet</ThemedText>
+                        <ThemedText style={{ fontSize: 12, fontWeight: '800', color: '#0f172a', marginTop: 2 }} numberOfLines={1}>
+                          {bestTrendDay && bestTrendDay.total > 0 ? `${bestTrendDay.label === HARI_INI ? 'Hari Ini' : bestTrendDay.label} (${formatShortRupiah(bestTrendDay.total)})` : '-'}
+                        </ThemedText>
+                      </View>
+                      <View style={{ flex: 1, backgroundColor: '#f8fafc', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                        <ThemedText style={{ fontSize: 9.5, color: '#64748b', fontWeight: '600' }}>Rata-rata Harian</ThemedText>
+                        <ThemedText style={{ fontSize: 12, fontWeight: '800', color: '#0f172a', marginTop: 2 }} numberOfLines={1}>
+                          {formatRupiah(dailyAverage)}
+                        </ThemedText>
+                      </View>
+                      <View style={{ flex: 1, backgroundColor: '#f0fdf4', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0' }}>
+                        <ThemedText style={{ fontSize: 9.5, color: '#15803d', fontWeight: '700' }}>Omzet Minggu Ini</ThemedText>
+                        <ThemedText style={{ fontSize: 12, fontWeight: '800', color: '#166534', marginTop: 2 }} numberOfLines={1}>
+                          {formatRupiah(summary.week)}
+                        </ThemedText>
+                      </View>
                     </View>
                   </Card>
                 </View>
@@ -1359,12 +1396,12 @@ const styles = StyleSheet.create({
   chartRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    height: 128,
+    height: 180,
     gap: 8,
     paddingTop: 16,
     borderBottomWidth: 1.5,
     borderBottomColor: '#f1f5f9',
-    paddingBottom: 4,
+    paddingBottom: 6,
   },
   chartCol: { flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' },
   barWrapper: {
@@ -1374,18 +1411,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   barAmount: {
-    fontSize: 9,
+    fontSize: 9.5,
     fontWeight: '700',
     color: '#64748b',
-    marginBottom: 3,
+    marginBottom: 4,
   },
   bar: {
-    width: 18,
+    width: 24,
     borderTopLeftRadius: 6,
     borderTopRightRadius: 6,
     minHeight: 6,
   },
-  barLabel: { fontSize: 10, color: '#64748b', marginTop: 5, fontWeight: '600' },
+  barLabel: { fontSize: 10, color: '#64748b', marginTop: 6, fontWeight: '600' },
   cashMetricsRow: {
     flexDirection: 'row',
     gap: 6,

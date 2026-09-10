@@ -6,7 +6,8 @@ import { Card } from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useLockOrientation } from '@/hooks/use-orientation';
-import { resetEntireDatabase } from '@/services/database';
+import { resetEntireDatabase, resetFinancialAndCashFlowData } from '@/services/database';
+import { pushSyncToCloud } from '@/services/cloudSync';
 import {
   deleteTransactions,
   exportProductCSVTemplate,
@@ -21,6 +22,10 @@ import { exportDatabaseBackup, restoreDatabaseBackup } from '@/services/backup';
 import { useCategoryStore } from '@/stores/categoryStore';
 import { useProductStore } from '@/stores/productStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useCashStore } from '@/stores/cashStore';
+import { useShiftStore } from '@/stores/shiftStore';
+import { useTransactionStore } from '@/stores/transactionStore';
+import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
@@ -49,11 +54,13 @@ export default function DataManagementScreen() {
   const [deleting, setDeleting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [resettingFinancial, setResettingFinancial] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
-  // Admin PIN Modal for Factory Reset
+  // Admin PIN Modal for Factory Reset & Financial Reset
   const [showAdminPin, setShowAdminPin] = useState(false);
+  const [showFinancialResetPin, setShowFinancialResetPin] = useState(false);
 
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
@@ -271,57 +278,51 @@ export default function DataManagementScreen() {
   };
 
   // ─────────────────────────────────────────
-  // Hapus Data Transaksi
+  // Reset Data Keuangan & Arus Kas (Buka Buku Baru)
   // ─────────────────────────────────────────
-  const handleDeleteAll = () => {
-    Alert.alert(
-      'Hapus Semua Transaksi',
-      'Yakin ingin menghapus SEMUA riwayat transaksi?\nData yang dihapus tidak dapat dikembalikan.',
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Hapus Semua',
-          style: 'destructive',
-          onPress: async () => {
-            setDeleting(true);
-            try {
-              const count = await deleteTransactions(db);
-              Alert.alert('Berhasil', `${count} transaksi berhasil dihapus`);
-            } catch {
-              Alert.alert('Gagal', 'Gagal menghapus transaksi');
-            } finally {
-              setDeleting(false);
-            }
-          },
-        },
-      ]
-    );
+  const executeFinancialReset = async () => {
+    setResettingFinancial(true);
+    try {
+      await resetFinancialAndCashFlowData(db);
+
+      // Refresh stores lokal
+      await Promise.allSettled([
+        useCashStore.getState().loadLedger(db),
+        useCashStore.getState().loadDenominations(db),
+        useShiftStore.getState().loadActiveShift(db),
+        useShiftStore.getState().loadHistoryShifts(db),
+        useTransactionStore.getState().loadPendingOrders(db),
+        useDebtReceivableStore.getState().loadDebts(db),
+        useDebtReceivableStore.getState().loadReceivables(db),
+      ]);
+
+      // Push payload bersih (nilai 0) langsung ke Supabase Cloud
+      const pairingCode = useSettingsStore.getState().storePairingCode;
+      if (pairingCode) {
+        await pushSyncToCloud(db, pairingCode);
+      }
+
+      Alert.alert(
+        'Buku Baru Berhasil Dibuat!',
+        'Seluruh riwayat transaksi penjualan, buku kas, dan shift kasir telah dibersihkan ke kondisi awal (0).\n\nKatalog produk & pengaturan toko tetap utuh 100%, serta data di cloud Supabase telah otomatis disinkronkan.'
+      );
+    } catch (e: any) {
+      Alert.alert('Gagal Reset Keuangan', e?.message || 'Terjadi kesalahan saat mereset data keuangan.');
+    } finally {
+      setResettingFinancial(false);
+    }
   };
 
-  const handleDeleteByPeriod = () => {
+  const confirmFinancialReset = () => {
     Alert.alert(
-      'Hapus Transaksi per Periode',
-      `Hapus semua transaksi dari ${formatDateLabel(startDate)} hingga ${formatDateLabel(endDate)}?`,
+      'Konfirmasi Buka Buku Baru',
+      'Apakah Anda yakin ingin mereset seluruh data penjualan, kas laci/bank, dan shift kasir kembali ke 0?\n\n• Katalog produk & stok freezer: AMAN (TIDAK DIHAPUS).\n• Format toko & PIN: AMAN.\n• Data pemantau Supabase: Otomatis bersih 0.',
       [
         { text: 'Batal', style: 'cancel' },
         {
-          text: 'Hapus',
+          text: 'YA, BUKA BUKU BARU',
           style: 'destructive',
-          onPress: async () => {
-            setDeleting(true);
-            try {
-              const count = await deleteTransactions(
-                db,
-                formatDateInput(startDate),
-                formatDateInput(endDate)
-              );
-              Alert.alert('Berhasil', `${count} transaksi berhasil dihapus`);
-            } catch {
-              Alert.alert('Gagal', 'Gagal menghapus transaksi');
-            } finally {
-              setDeleting(false);
-            }
-          },
+          onPress: executeFinancialReset,
         },
       ]
     );
@@ -548,41 +549,43 @@ export default function DataManagementScreen() {
           )}
         </Card>
 
-        {/* SECTION 4: HAPUS TRANSAKSI */}
-        <Card padding={16} style={{ gap: 12 }}>
+        {/* SECTION 4: RESET KEUANGAN & ARUS KAS (BUKA BUKU BARU) */}
+        <Card padding={16} style={{ gap: 12, borderColor: '#fed7aa', borderWidth: 1, backgroundColor: '#ffffff' }}>
           <View style={styles.sectionHeader}>
-            <ThemedText style={{ fontSize: 20, lineHeight: 24 }}>⚠️</ThemedText>
+            <ThemedText style={{ fontSize: 22, lineHeight: 26 }}>🔄</ThemedText>
             <View style={{ flex: 1 }}>
-              <ThemedText type="defaultSemiBold" style={{ fontSize: 15, color: Colors.danger }}>
-                Hapus Data Transaksi
+              <ThemedText type="defaultSemiBold" style={{ fontSize: 15, color: '#c2410c' }}>
+                Reset Keuangan & Arus Kas (Buka Buku Baru)
               </ThemedText>
-              <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
-                Hapus transaksi sesuai tanggal yang dipilih di atas atau semua
+              <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+                Reset seluruh riwayat penjualan, buku kas, shift kasir, dan hutang/piutang kembali ke 0.
               </ThemedText>
             </View>
           </View>
 
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <Button
-              title="Hapus Periode Ini"
-              variant="outline"
-              size="sm"
-              style={{ flex: 1, borderColor: Colors.danger }}
-              onPress={handleDeleteByPeriod}
-              disabled={deleting}
-            />
-            <Button
-              title="Hapus Semua"
-              size="sm"
-              style={{ flex: 1, backgroundColor: Colors.danger }}
-              onPress={handleDeleteAll}
-              disabled={deleting}
-            />
+          <View style={{ backgroundColor: '#fff7ed', padding: 10, borderRadius: 8, gap: 4, borderWidth: 1, borderColor: '#ffedd5' }}>
+            <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#9a3412' }}>
+              ℹ️ Informasi Buka Buku Baru:
+            </ThemedText>
+            <ThemedText style={{ fontSize: 11, color: '#7c2d12', lineHeight: 16 }}>
+              • <ThemedText style={{ fontWeight: '700' }}>Produk & Stok Freezer:</ThemedText> Aman 100% (tidak terhapus).{'\n'}
+              • <ThemedText style={{ fontWeight: '700' }}>Format Toko & PIN Admin:</ThemedText> Aman 100% (tidak berubah).{'\n'}
+              • <ThemedText style={{ fontWeight: '700' }}>Omzet & Arus Kas:</ThemedText> Kembali ke 0 (Buku Baru).{'\n'}
+              • <ThemedText style={{ fontWeight: '700' }}>Sinkronisasi Cloud:</ThemedText> Otomatis memperbarui data di Supabase ke nilai 0 secara instan.
+            </ThemedText>
           </View>
-          {deleting && <ActivityIndicator size="small" color={Colors.danger} />}
+
+          <Button
+            title={resettingFinancial ? 'Mereset Keuangan & Sinkronisasi...' : '🔄 Reset Keuangan & Buka Buku Baru'}
+            size="sm"
+            style={{ backgroundColor: '#ea580c' }}
+            onPress={() => setShowFinancialResetPin(true)}
+            disabled={resettingFinancial || resetting}
+          />
+          {resettingFinancial && <ActivityIndicator size="small" color="#ea580c" style={{ marginTop: 4 }} />}
         </Card>
 
-        {/* SECTION 4: RESET TOTAL / PABRIK */}
+        {/* SECTION 5: RESET TOTAL / PABRIK */}
         <Card padding={16} style={{ marginTop: 16, gap: 12, borderColor: '#ffcdd2', borderWidth: 1 }}>
           <View style={styles.sectionHeader}>
             <ThemedText style={{ fontSize: 20, lineHeight: 24 }}>🚨</ThemedText>
@@ -601,11 +604,23 @@ export default function DataManagementScreen() {
             size="sm"
             style={{ backgroundColor: Colors.danger }}
             onPress={handleRequestFactoryReset}
-            disabled={resetting || deleting}
+            disabled={resetting || resettingFinancial}
           />
           {resetting && <ActivityIndicator size="small" color={Colors.danger} style={{ marginTop: 4 }} />}
         </Card>
       </ScrollView>
+
+      {/* Modal Verifikasi PIN Admin untuk Buka Buku Baru */}
+      <AdminPinModal
+        visible={showFinancialResetPin}
+        onClose={() => setShowFinancialResetPin(false)}
+        onSuccess={() => {
+          setShowFinancialResetPin(false);
+          confirmFinancialReset();
+        }}
+        title="Otorisasi Buka Buku Baru"
+        description="Masukkan 6 digit PIN Admin untuk mereset seluruh data penjualan dan buku kas ke awal (0)."
+      />
 
       {/* Modal Verifikasi PIN Admin untuk Reset Pabrik */}
       <AdminPinModal
