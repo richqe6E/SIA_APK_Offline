@@ -49,20 +49,87 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
   const [showCloudConfig, setShowCloudConfig] = useState(false);
   const [urlInput, setUrlInput] = useState(supabaseUrl || '');
   const [keyInput, setKeyInput] = useState(supabaseAnonKey || '');
+  const [isEditingCode, setIsEditingCode] = useState(false);
+  const [customCodeInput, setCustomCodeInput] = useState(storePairingCode);
 
   useEffect(() => {
     if (supabaseUrl) setUrlInput(supabaseUrl);
     if (supabaseAnonKey) setKeyInput(supabaseAnonKey);
   }, [supabaseUrl, supabaseAnonKey]);
 
-  const handleGenerateNewCode = () => {
-    const newCode = generatePairingCode();
-    setPairingCode(newCode);
-    setInputCode(newCode);
-    setMsg({
-      type: 'success',
-      text: `Kode baru ${newCode} berhasil dibuat. Masukkan kode ini di HP Pemilik.`,
-    });
+  useEffect(() => {
+    setInputCode(storePairingCode);
+    setCustomCodeInput(storePairingCode);
+  }, [storePairingCode]);
+
+  const handleGenerateNewCode = async () => {
+    setTesting(true);
+    setMsg(null);
+    try {
+      const newCode = generatePairingCode();
+      await setPairingCode(newCode, db);
+      setInputCode(newCode);
+      setCustomCodeInput(newCode);
+
+      // Auto-push directly to Supabase so HP Pemilik can instantly connect
+      const res = await pushSyncToCloud(db, newCode);
+      setTesting(false);
+
+      if (res.success) {
+        setCloudConnected(true);
+        setMsg({
+          type: 'success',
+          text: `Kode baru ${newCode} berhasil dibuat dan langsung terdaftar di server Cloud! Masukkan kode ini di HP Pemilik.`,
+        });
+      } else {
+        setMsg({
+          type: 'success',
+          text: `Kode baru ${newCode} dibuat di tablet. Tekan "Sinkronkan Sekarang" jika internet sempat terputus.`,
+        });
+      }
+    } catch (err: any) {
+      setTesting(false);
+      setMsg({
+        type: 'error',
+        text: 'Gagal membuat kode: ' + (err?.message || 'Kesalahan sistem'),
+      });
+    }
+  };
+
+  const handleSaveCustomCode = async () => {
+    const formatted = customCodeInput.trim().toUpperCase();
+    if (formatted.length < 3) {
+      setMsg({ type: 'error', text: 'Kode sambungan minimal 3 karakter (contoh: AZ-7789).' });
+      return;
+    }
+    setTesting(true);
+    setMsg(null);
+    try {
+      await setPairingCode(formatted, db);
+      setInputCode(formatted);
+      const res = await pushSyncToCloud(db, formatted);
+      setTesting(false);
+      setIsEditingCode(false);
+
+      if (res.success) {
+        setCloudConnected(true);
+        setMsg({
+          type: 'success',
+          text: `Kode "${formatted}" berhasil disimpan dan didaftarkan ke Cloud! Masukkan kode ini di HP Pemilik.`,
+        });
+      } else {
+        setMsg({
+          type: 'error',
+          text: `Kode disimpan di tablet, tapi gagal terdaftar ke cloud: ${res.error || 'Periksa koneksi internet'}.`,
+        });
+      }
+    } catch (err: any) {
+      setTesting(false);
+      setMsg({
+        type: 'error',
+        text: 'Gagal menyimpan kode: ' + (err?.message || 'Kesalahan sistem'),
+      });
+    }
   };
 
   const handleConnectPhone = async () => {
@@ -182,16 +249,63 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
             {/* Section A: Tablet View (Pemilik / Kasir) */}
             {!isPemantau ? (
               <View style={styles.body}>
-                <View style={styles.qrCodeSimulation}>
-                  <ThemedText style={styles.qrIcon}>📱 ⇄ 💻</ThemedText>
-                  <ThemedText style={styles.qrStoreName}>{storeName}</ThemedText>
-                  <View style={styles.pairingCodeBox}>
-                    <ThemedText style={styles.pairingCodeText}>{storePairingCode}</ThemedText>
+                {isEditingCode ? (
+                  <View style={styles.customCodeBox}>
+                    <ThemedText style={styles.customCodeLabel}>✏️ Masukkan Kode Sambungan Baru:</ThemedText>
+                    <TextInput
+                      style={styles.customCodeInput}
+                      value={customCodeInput}
+                      onChangeText={(t) => setCustomCodeInput(t.toUpperCase())}
+                      placeholder="Contoh: AZ-7789"
+                      placeholderTextColor="#94a3b8"
+                      autoCapitalize="characters"
+                      maxLength={12}
+                    />
+                    <View style={styles.customCodeBtnRow}>
+                      <TouchableOpacity
+                        style={[styles.btnSmall, styles.btnOutline]}
+                        onPress={() => {
+                          setCustomCodeInput(storePairingCode);
+                          setIsEditingCode(false);
+                        }}
+                        disabled={testing}
+                      >
+                        <ThemedText style={styles.btnOutlineText}>Batal</ThemedText>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.btnSmall, styles.btnPrimary]}
+                        onPress={handleSaveCustomCode}
+                        disabled={testing}
+                      >
+                        {testing ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <ThemedText style={styles.btnPrimaryText}>💾 Simpan & Daftarkan</ThemedText>
+                        )}
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  <ThemedText style={styles.qrHint}>
-                    Kode Otorisasi Cloud Perangkat Toko
-                  </ThemedText>
-                </View>
+                ) : (
+                  <View style={styles.qrCodeSimulation}>
+                    <ThemedText style={styles.qrIcon}>📱 ⇄ 💻</ThemedText>
+                    <ThemedText style={styles.qrStoreName}>{storeName}</ThemedText>
+                    <View style={styles.pairingCodeBox}>
+                      <ThemedText style={styles.pairingCodeText}>{storePairingCode}</ThemedText>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setCustomCodeInput(storePairingCode);
+                        setIsEditingCode(true);
+                      }}
+                      style={styles.editCodeLink}
+                    >
+                      <ThemedText style={styles.editCodeLinkText}>✏️ Ubah Kode Manual</ThemedText>
+                    </TouchableOpacity>
+                    <ThemedText style={styles.qrHint}>
+                      Kode Otorisasi Cloud Perangkat Toko
+                    </ThemedText>
+                  </View>
+                )}
 
                 <View style={styles.statusIndicatorRow}>
                   <View
@@ -217,8 +331,13 @@ export function DevicePairingModal({ visible, onClose }: DevicePairingModalProps
                   <TouchableOpacity
                     style={[styles.btn, styles.btnOutline]}
                     onPress={handleGenerateNewCode}
+                    disabled={testing}
                   >
-                    <ThemedText style={styles.btnOutlineText}>🎲 Acak Kode Baru</ThemedText>
+                    {testing ? (
+                      <ActivityIndicator size="small" color={Colors.tint} />
+                    ) : (
+                      <ThemedText style={styles.btnOutlineText}>🎲 Acak Kode Baru</ThemedText>
+                    )}
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -469,6 +588,57 @@ const styles = StyleSheet.create({
   qrHint: {
     fontSize: 11,
     color: '#64748b',
+  },
+  editCodeLink: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#e0f2fe',
+    marginBottom: 8,
+  },
+  editCodeLinkText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0284c7',
+  },
+  customCodeBox: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1.5,
+    borderColor: '#38bdf8',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    gap: 12,
+  },
+  customCodeLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  customCodeInput: {
+    width: '100%',
+    height: 48,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    textAlign: 'center',
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#0f172a',
+    letterSpacing: 3,
+  },
+  customCodeBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+  },
+  btnSmall: {
+    flex: 1,
+    height: 40,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   statusIndicatorRow: {
     flexDirection: 'row',

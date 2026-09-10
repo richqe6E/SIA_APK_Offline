@@ -53,7 +53,7 @@ interface SettingsState {
   loginAsKasir: () => void;
   loginAsPemilik: (pin: string) => boolean;
   logoutRole: () => void;
-  setPairingCode: (code: string) => void;
+  setPairingCode: (code: string, db?: SQLiteDatabase) => Promise<void> | void;
   setCloudConnected: (connected: boolean) => void;
   setCloudSyncStatus: (status: 'idle' | 'syncing' | 'synced' | 'error') => void;
   setCloudCredentials: (db: SQLiteDatabase, url: string, key: string) => Promise<void>;
@@ -104,6 +104,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         receiptFooter: map.receipt_footer ?? 'Terima kasih atas kunjungan Anda!',
         qrisImagePath: map.qris_image_path ?? '',
         appOrientation: (map.app_orientation as AppOrientation) || 'portrait',
+        storePairingCode: map.store_pairing_code || 'AZ-7789',
         supabaseUrl:
           map.supabase_url || 'https://vhtualqxbtrmnljzmees.supabase.co',
         supabaseAnonKey:
@@ -229,7 +230,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ currentUserRole: null });
   },
 
-  setPairingCode: (code: string) => set({ storePairingCode: code }),
+  setPairingCode: async (code: string, db?: SQLiteDatabase) => {
+    if (db) {
+      try {
+        await db.runAsync(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES ('store_pairing_code', ?)",
+          code
+        );
+      } catch (e) {
+        console.warn('Failed to save store_pairing_code:', e);
+      }
+    }
+    set({ storePairingCode: code });
+  },
   setCloudConnected: (connected: boolean) => set({ isCloudConnected: connected }),
   setCloudSyncStatus: (status) => set({ cloudSyncStatus: status }),
   setCloudCredentials: async (db, url, key) => {

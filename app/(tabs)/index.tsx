@@ -40,7 +40,7 @@ export default function DashboardScreen() {
     saveDenominations,
     loadLedger,
   } = useCashStore();
-  const { currentShift, loadActiveShift } = useShiftStore();
+  const { currentShift, loadShiftData } = useShiftStore();
 
   const [shiftModalVisible, setShiftModalVisible] = useState(false);
   const [denominationModalVisible, setDenominationModalVisible] = useState(false);
@@ -86,7 +86,7 @@ export default function DashboardScreen() {
     await loadSettings(db);
     await loadLedger(db);
     await loadDenominations(db);
-    await loadActiveShift(db);
+    await loadShiftData(db);
 
     const expRows = await db.getAllAsync<{ id: number; name: string; barcode: string; expired_date: string; stock: number }>(
       "SELECT id, name, barcode, expired_date, stock FROM products WHERE expired_date IS NOT NULL AND expired_date != ''"
@@ -406,14 +406,11 @@ export default function DashboardScreen() {
 
         {isTabletOrLandscape ? (
           <>
-            {/* Jam & Tanggal Realtime (Landscape: Format Lengkap) */}
-            <View style={{ marginHorizontal: 8 }}>
+            {/* Jam, Tanggal Realtime & Kasir Bertugas (Landscape: Format Berdampingan) */}
+            <View style={{ marginHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <RealtimeClockBadge />
-            </View>
 
-            {/* Action Header: Role Switcher & Orientation */}
-            <View style={styles.headerRightActions}>
-              {/* Tombol Shift Kasir */}
+              {/* Tombol Kasir Bertugas Tepat di Samping Tanggal */}
               <TouchableOpacity
                 style={[
                   styles.shiftBadgeBtn,
@@ -424,15 +421,16 @@ export default function DashboardScreen() {
               >
                 <View style={[styles.shiftDot, currentShift ? styles.shiftDotActive : styles.shiftDotInactive]} />
                 <View>
-                  <ThemedText style={styles.shiftBadgeRole}>
-                    {currentShift ? 'Shift Aktif' : 'Shift Kasir'}
-                  </ThemedText>
+                  <ThemedText style={styles.shiftBadgeRole}>Kasir Bertugas</ThemedText>
                   <ThemedText style={styles.shiftBadgeAction} numberOfLines={1}>
-                    {currentShift ? currentShift.cashier_name : 'Buka Shift ›'}
+                    {currentShift ? `👤 ${currentShift.cashier_name}` : 'Pilih Kasir ›'}
                   </ThemedText>
                 </View>
               </TouchableOpacity>
+            </View>
 
+            {/* Action Header: Role Switcher & Orientation */}
+            <View style={styles.headerRightActions}>
               {/* Tombol Peran Kasir / Pemilik */}
               <TouchableOpacity
                 style={styles.roleBadgeBtn}
@@ -488,11 +486,9 @@ export default function DashboardScreen() {
               >
                 <View style={[styles.shiftDot, currentShift ? styles.shiftDotActive : styles.shiftDotInactive]} />
                 <View>
-                  <ThemedText style={styles.shiftBadgeRole}>
-                    {currentShift ? 'Shift Aktif' : 'Shift Kasir'}
-                  </ThemedText>
+                  <ThemedText style={styles.shiftBadgeRole}>Kasir Bertugas</ThemedText>
                   <ThemedText style={styles.shiftBadgeAction} numberOfLines={1}>
-                    {currentShift ? currentShift.cashier_name : 'Buka Shift ›'}
+                    {currentShift ? `👤 ${currentShift.cashier_name}` : 'Pilih Kasir ›'}
                   </ThemedText>
                 </View>
               </TouchableOpacity>

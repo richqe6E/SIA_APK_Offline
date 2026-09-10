@@ -26,11 +26,28 @@ export interface ShiftSummary {
   expectedCash: number;
 }
 
+function getTodayDateStr(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 interface ShiftState {
   currentShift: CashShift | null;
   historyShifts: CashShift[];
   isLoading: boolean;
+  todayDrawerDate: string | null;
+  todayDrawerAmount: number;
+  isDrawerSetToday: boolean;
+  cashierList: string[];
   loadActiveShift: (db: SQLiteDatabase) => Promise<CashShift | null>;
+  loadShiftData: (db: SQLiteDatabase) => Promise<void>;
+  saveDailyDrawerAmount: (db: SQLiteDatabase, amount: number) => Promise<void>;
+  switchCashier: (db: SQLiteDatabase, cashierName: string) => Promise<void>;
+  addCashierEmployee: (db: SQLiteDatabase, name: string) => Promise<void>;
+  removeCashierEmployee: (db: SQLiteDatabase, name: string) => Promise<void>;
   openShift: (db: SQLiteDatabase, cashierName: string, startingCash: number) => Promise<CashShift>;
   getShiftSummary: (db: SQLiteDatabase, shift: CashShift) => Promise<ShiftSummary>;
   closeShift: (
@@ -46,6 +63,132 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
   currentShift: null,
   historyShifts: [],
   isLoading: false,
+  todayDrawerDate: null,
+  todayDrawerAmount: 100000,
+  isDrawerSetToday: false,
+  cashierList: ['Kasir 1', 'Kasir 2'],
+
+  loadShiftData: async (db) => {
+    try {
+      set({ isLoading: true });
+      const today = getTodayDateStr();
+
+      const rows = await db.getAllAsync<{ key: string; value: string }>(
+        `SELECT key, value FROM settings WHERE key IN ('daily_drawer_date', 'daily_drawer_amount', 'cashier_employees')`
+      );
+      const map = new Map(rows.map((r) => [r.key, r.value]));
+
+      const savedDate = map.get('daily_drawer_date') || '';
+      const savedAmount = Number(map.get('daily_drawer_amount')) || 0;
+      const isSet = savedDate === today && savedAmount > 0;
+
+      let cashiers = ['Kasir 1', 'Kasir 2'];
+      const rawCashiers = map.get('cashier_employees');
+      if (rawCashiers) {
+        try {
+          const parsed = JSON.parse(rawCashiers);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            cashiers = parsed;
+          }
+        } catch {}
+      }
+
+      const activeShift = await get().loadActiveShift(db);
+
+      set({
+        todayDrawerDate: savedDate,
+        todayDrawerAmount: savedAmount > 0 ? savedAmount : 100000,
+        isDrawerSetToday: isSet,
+        cashierList: cashiers,
+        currentShift: activeShift,
+        isLoading: false,
+      });
+    } catch {
+      set({ isLoading: false });
+    }
+  },
+
+  saveDailyDrawerAmount: async (db, amount) => {
+    const today = getTodayDateStr();
+    await db.runAsync(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('daily_drawer_date', ?)",
+      today
+    );
+    await db.runAsync(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('daily_drawer_amount', ?)",
+      String(amount)
+    );
+
+    const current = get().currentShift;
+    if (current) {
+      await db.runAsync(
+        "UPDATE cash_shifts SET starting_cash = ?, expected_cash = starting_cash + total_sales_cash WHERE id = ?",
+        amount,
+        current.id
+      );
+      set({
+        currentShift: { ...current, starting_cash: amount },
+      });
+    }
+
+    set({
+      todayDrawerDate: today,
+      todayDrawerAmount: amount,
+      isDrawerSetToday: true,
+    });
+    triggerAutoSync(db);
+  },
+
+  switchCashier: async (db, cashierName) => {
+    const trimmed = cashierName.trim() || 'Kasir';
+    const list = get().cashierList;
+    if (!list.includes(trimmed)) {
+      const updated = [...list, trimmed];
+      await db.runAsync(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('cashier_employees', ?)",
+        JSON.stringify(updated)
+      );
+      set({ cashierList: updated });
+    }
+
+    const active = get().currentShift;
+    if (active) {
+      await db.runAsync(
+        "UPDATE cash_shifts SET cashier_name = ? WHERE id = ?",
+        trimmed,
+        active.id
+      );
+      set({
+        currentShift: { ...active, cashier_name: trimmed },
+      });
+    } else {
+      await get().openShift(db, trimmed, get().todayDrawerAmount);
+    }
+    triggerAutoSync(db);
+  },
+
+  addCashierEmployee: async (db, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const list = get().cashierList;
+    if (list.includes(trimmed)) return;
+    const updated = [...list, trimmed];
+    await db.runAsync(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('cashier_employees', ?)",
+      JSON.stringify(updated)
+    );
+    set({ cashierList: updated });
+  },
+
+  removeCashierEmployee: async (db, name) => {
+    const list = get().cashierList.filter((item) => item !== name);
+    const updated = list.length > 0 ? list : ['Kasir'];
+    await db.runAsync(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('cashier_employees', ?)",
+      JSON.stringify(updated)
+    );
+    set({ cashierList: updated });
+  },
 
   loadActiveShift: async (db) => {
     try {
