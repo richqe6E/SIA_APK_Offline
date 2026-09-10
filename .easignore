@@ -1,6 +1,5 @@
 *.apk
 *.aab
-kendali-usaha-azizah/
 node_modules/
 .expo/
 dist/
