@@ -143,6 +143,10 @@ export default function HistoryScreen() {
         change: t.change,
         subtotalAmount: t.subtotal_amount,
         discountAmount: t.discount_amount,
+        taxAmount: t.tax_amount,
+        taxName: t.tax_name,
+        taxRate: t.tax_rate,
+        taxType: t.tax_type,
         storeName,
         storeAddress: storeAddress || '',
         storePhone,
@@ -371,6 +375,16 @@ export default function HistoryScreen() {
                 <ThemedText style={{ fontSize: 11.5, color: '#dc2626' }}>Diskon Transaksi</ThemedText>
                 <ThemedText style={{ fontSize: 11.5, fontWeight: '700', color: '#dc2626' }}>
                   - Rp {selected.discount_amount.toLocaleString('id-ID')}
+                </ThemedText>
+              </View>
+            ) : null}
+            {selected.tax_amount ? selected.tax_amount > 0 && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <ThemedText style={{ fontSize: 11.5, color: '#2563eb' }}>
+                  {selected.tax_name || 'Pajak'} {selected.tax_type === 'percent' ? `(${selected.tax_rate}%)` : ''}
+                </ThemedText>
+                <ThemedText style={{ fontSize: 11.5, fontWeight: '700', color: '#2563eb' }}>
+                  + Rp {selected.tax_amount.toLocaleString('id-ID')}
                 </ThemedText>
               </View>
             ) : null}

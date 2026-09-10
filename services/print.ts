@@ -104,6 +104,10 @@ export interface PrintParams {
   change: number;
   discountAmount?: number;
   subtotalAmount?: number;
+  taxAmount?: number;
+  taxName?: string;
+  taxRate?: number;
+  taxType?: string;
   storeName?: string;
   storeAddress?: string;
   storePhone?: string;
@@ -152,9 +156,13 @@ export async function printReceipt(params: PrintParams): Promise<void> {
 
   await BluetoothEscposPrinter.printText(THIN + '\n', {});
   if (params.discountAmount && params.discountAmount > 0) {
-    const subtotalCalc = params.subtotalAmount || (params.total + params.discountAmount);
+    const subtotalCalc = params.subtotalAmount || (params.total + params.discountAmount - (params.taxAmount || 0));
     await BluetoothEscposPrinter.printText(formatTotal('Subtotal', formatRupiah(subtotalCalc)) + '\n', {});
     await BluetoothEscposPrinter.printText(formatTotal('Diskon', '-' + formatRupiah(params.discountAmount)) + '\n', {});
+  }
+  if (params.taxAmount && params.taxAmount > 0) {
+    const taxLabel = params.taxName || 'Pajak / PB1';
+    await BluetoothEscposPrinter.printText(formatTotal(taxLabel, '+' + formatRupiah(params.taxAmount)) + '\n', {});
   }
   await BluetoothEscposPrinter.printText(formatTotal('Total', formatRupiah(params.total)) + '\n', {});
   if (params.paymentMethod === 'hutang') {

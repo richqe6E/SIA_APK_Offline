@@ -23,11 +23,23 @@ export interface Transaction {
   is_credit?: number;
   discount_amount?: number;
   subtotal_amount?: number;
+  tax_amount?: number;
+  tax_rate?: number;
+  tax_type?: string;
+  tax_name?: string;
   payment_amount: number;
   change: number;
   cashier_name?: string;
   shift_id?: number | null;
   created_at: string;
+}
+
+export interface TaxOptions {
+  enabled: boolean;
+  name?: string;
+  type?: 'percent' | 'nominal';
+  rate?: number;
+  amount?: number;
 }
 
 export interface TransactionDiscount {
@@ -85,7 +97,8 @@ interface TransactionState {
     paymentAmount: number,
     customerId?: number | null,
     cashierName?: string,
-    shiftId?: number | null
+    shiftId?: number | null,
+    taxOptions?: TaxOptions
   ) => Promise<number>;
   loadTransactions: (db: SQLiteDatabase, period?: PeriodFilter, page?: number, pageSize?: number) => Promise<void>;
   loadPendingOrders: (db: SQLiteDatabase) => Promise<void>;
@@ -270,13 +283,25 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
 
   clearCart: () => set({ cart: [] }),
 
-  checkout: async (db, paymentMethod, paymentAmount, customerId = null, cashierName = 'Kasir', shiftId = null) => {
+  checkout: async (
+    db,
+    paymentMethod,
+    paymentAmount,
+    customerId = null,
+    cashierName = 'Kasir',
+    shiftId = null,
+    taxOptions
+  ) => {
     const { cart } = get();
     if (cart.length === 0) return 0;
 
     const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
     const discountAmount = get().getDiscountAmount();
-    const total = Math.max(0, subtotal - discountAmount);
+    const taxAmount = taxOptions?.enabled ? (taxOptions.amount || 0) : 0;
+    const taxRate = taxOptions?.enabled ? (taxOptions.rate || 0) : 0;
+    const taxType = taxOptions?.enabled ? (taxOptions.type || 'none') : 'none';
+    const taxName = taxOptions?.enabled ? (taxOptions.name || 'Pajak / PB1') : '';
+    const total = Math.max(0, subtotal - discountAmount + taxAmount);
     const isCredit = paymentMethod === 'hutang' ? 1 : 0;
     const finalPaymentAmount = isCredit ? 0 : paymentAmount;
     const change = isCredit ? 0 : paymentAmount - total;
@@ -284,7 +309,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     let transactionId = 0;
     await db.withExclusiveTransactionAsync(async (txn) => {
       const result = await txn.runAsync(
-        'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit, discount_amount, subtotal_amount, cashier_name, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit, discount_amount, subtotal_amount, cashier_name, shift_id, tax_amount, tax_rate, tax_type, tax_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         total,
         paymentMethod,
         finalPaymentAmount,
@@ -294,7 +319,11 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
         discountAmount,
         subtotal,
         cashierName,
-        shiftId
+        shiftId,
+        taxAmount,
+        taxRate,
+        taxType,
+        taxName
       );
       transactionId = result.lastInsertRowId as number;
 

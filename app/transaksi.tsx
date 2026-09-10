@@ -71,6 +71,10 @@ export default function TransactionScreen() {
     storeName,
     storePhone2,
     currentUserRole,
+    taxEnabled,
+    taxName,
+    taxType,
+    taxRate,
   } = useSettingsStore();
   const { currentShift } = useShiftStore();
 
@@ -90,6 +94,14 @@ export default function TransactionScreen() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [successTotal, setSuccessTotal] = useState(0);
   const [successDailySeq, setSuccessDailySeq] = useState(0);
+
+  // Pajak / Biaya Tambahan Kasir
+  const [isTaxActive, setIsTaxActive] = useState(taxEnabled);
+
+  useEffect(() => {
+    setIsTaxActive(taxEnabled);
+  }, [taxEnabled]);
+
   const [lastTransaction, setLastTransaction] = useState<{
     items: CartItem[];
     paymentMethod: 'tunai' | 'qris' | 'hutang';
@@ -98,6 +110,10 @@ export default function TransactionScreen() {
     customerName?: string;
     subtotalAmount?: number;
     discountAmount?: number;
+    taxAmount?: number;
+    taxName?: string;
+    taxRate?: number;
+    taxType?: 'percent' | 'nominal' | 'none';
     cashierName?: string;
     shiftId?: number | null;
   } | null>(null);
@@ -179,9 +195,24 @@ export default function TransactionScreen() {
 
   const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
   const discountAmount = getDiscountAmount();
-  const total = Math.max(0, subtotal - discountAmount);
+  const taxAmount = isTaxActive
+    ? taxType === 'percent'
+      ? Math.round(((subtotal - discountAmount) * taxRate) / 100)
+      : taxRate
+    : 0;
+  const total = Math.max(0, subtotal - discountAmount + taxAmount);
   const parsedAmount = parseInt(paymentAmount.replace(/\./g, ''), 10) || 0;
   const change = Math.max(0, parsedAmount - total);
+  const totalCartPcs = cart.reduce(
+    (sum, item) =>
+      sum +
+      (item.is_weighted === 1
+        ? item.weight_gram
+          ? Number((item.weight_gram / 1000).toFixed(2))
+          : 1
+        : item.quantity),
+    0
+  );
 
   const handleNumpadPress = (value: string) => {
     if (value === 'backspace') {
@@ -225,6 +256,10 @@ export default function TransactionScreen() {
       customerName: targetCustomerName,
       subtotalAmount: subtotal,
       discountAmount: discountAmount,
+      taxAmount: isTaxActive ? taxAmount : 0,
+      taxName: isTaxActive ? taxName : '',
+      taxRate: isTaxActive ? taxRate : 0,
+      taxType: isTaxActive ? taxType : 'none',
       cashierName: activeCashierName,
       shiftId: activeShiftId,
     });
@@ -234,7 +269,14 @@ export default function TransactionScreen() {
       paymentMethod === 'hutang' ? 0 : (parsedAmount || total),
       targetCustomerId,
       activeCashierName,
-      activeShiftId
+      activeShiftId,
+      {
+        enabled: isTaxActive,
+        name: taxName,
+        type: taxType,
+        rate: taxRate,
+        amount: taxAmount,
+      }
     );
     setSuccessDailySeq(dailySeq);
     setPaymentAmount('');
@@ -443,6 +485,13 @@ export default function TransactionScreen() {
           discountAmount={discountAmount}
           discount={discount}
           total={total}
+          totalCartPcs={totalCartPcs}
+          isTaxActive={isTaxActive}
+          taxName={taxName}
+          taxType={taxType}
+          taxRate={taxRate}
+          taxAmount={taxAmount}
+          onToggleTax={() => setIsTaxActive(!isTaxActive)}
           gridColumns={gridColumns}
           pendingCount={pendingOrders.length}
           onAddToCart={handleAddToCartWithValidation}
@@ -471,6 +520,12 @@ export default function TransactionScreen() {
           subtotal={subtotal}
           discountAmount={discountAmount}
           total={total}
+          totalCartPcs={totalCartPcs}
+          isTaxActive={isTaxActive}
+          taxName={taxName}
+          taxType={taxType}
+          taxRate={taxRate}
+          taxAmount={taxAmount}
           paymentMethod={paymentMethod}
           paymentAmount={paymentAmount}
           parsedAmount={parsedAmount}
@@ -777,6 +832,13 @@ function Step1View({
   discountAmount,
   discount,
   total,
+  totalCartPcs,
+  isTaxActive,
+  taxName,
+  taxType,
+  taxRate,
+  taxAmount,
+  onToggleTax,
   gridColumns,
   pendingCount,
   onAddToCart,
@@ -806,6 +868,13 @@ function Step1View({
   discountAmount: number;
   discount: { type: 'nominal' | 'percent'; value: number } | null;
   total: number;
+  totalCartPcs: number;
+  isTaxActive: boolean;
+  taxName: string;
+  taxType: 'percent' | 'nominal';
+  taxRate: number;
+  taxAmount: number;
+  onToggleTax: () => void;
   gridColumns: number;
   pendingCount: number;
   onAddToCart: (p: Product) => void;
@@ -923,7 +992,7 @@ function Step1View({
       <View style={styles.rightPanel}>
         <View style={styles.rightHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <ThemedText type="title" style={{ fontSize: 17 }}>Keranjang</ThemedText>
+            <ThemedText type="title" style={{ fontSize: 17, fontWeight: '800' }}>Keranjang</ThemedText>
             {pendingCount > 0 && (
               <TouchableOpacity
                 style={styles.pendingBadgeHeader}
@@ -946,6 +1015,20 @@ function Step1View({
               </TouchableOpacity>
             )}
             <Button title="Selesai" variant="outline" size="sm" onPress={onDone} />
+          </View>
+        </View>
+
+        {/* Sub-bar Informasi Keranjang: Jumlah Jenis Produk & Total Pcs */}
+        <View style={styles.cartCountBar}>
+          <View style={styles.cartCountBadge}>
+            <ThemedText style={styles.cartCountBadgeText}>
+              📦 {cart.length} Jenis Produk
+            </ThemedText>
+          </View>
+          <View style={[styles.cartCountBadge, { backgroundColor: '#ede9fe', borderColor: '#ddd6fe' }]}>
+            <ThemedText style={[styles.cartCountBadgeText, { color: Colors.tintDark }]}>
+              🔢 {totalCartPcs} Total Pcs
+            </ThemedText>
           </View>
         </View>
 
@@ -1043,7 +1126,7 @@ function Step1View({
         />
 
         <View style={styles.footer}>
-          {discountAmount > 0 ? (
+          {(discountAmount > 0 || (isTaxActive && taxAmount > 0)) ? (
             <View style={{ marginBottom: 6, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <ThemedText style={{ fontSize: 11, color: Colors.muted }}>Subtotal</ThemedText>
@@ -1051,22 +1134,37 @@ function Step1View({
                   Rp {subtotal.toLocaleString('id-ID')}
                 </ThemedText>
               </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-                <TouchableOpacity onPress={onOpenDiscount} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              {discountAmount > 0 ? (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                  <TouchableOpacity onPress={onOpenDiscount} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <ThemedText style={{ fontSize: 11, color: Colors.danger, fontWeight: '700' }}>
+                      🏷️ Diskon ({discount?.type === 'percent' ? `${discount.value}%` : 'Nominal'})
+                    </ThemedText>
+                    <ThemedText style={{ fontSize: 10, color: Colors.tint }}>✏️</ThemedText>
+                  </TouchableOpacity>
                   <ThemedText style={{ fontSize: 11, color: Colors.danger, fontWeight: '700' }}>
-                    🏷️ Diskon ({discount?.type === 'percent' ? `${discount.value}%` : 'Nominal'})
+                    -Rp {discountAmount.toLocaleString('id-ID')}
                   </ThemedText>
-                  <ThemedText style={{ fontSize: 10, color: Colors.tint }}>✏️</ThemedText>
-                </TouchableOpacity>
-                <ThemedText style={{ fontSize: 11, color: Colors.danger, fontWeight: '700' }}>
-                  -Rp {discountAmount.toLocaleString('id-ID')}
-                </ThemedText>
-              </View>
+                </View>
+              ) : null}
+              {isTaxActive && taxAmount > 0 ? (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                  <TouchableOpacity onPress={onToggleTax} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <ThemedText style={{ fontSize: 11, color: Colors.tintDark, fontWeight: '700' }}>
+                      🧾 {taxName} ({taxType === 'percent' ? `${taxRate}%` : 'Nominal'})
+                    </ThemedText>
+                    <ThemedText style={{ fontSize: 10, color: '#16a34a', fontWeight: '800' }}>[Aktif]</ThemedText>
+                  </TouchableOpacity>
+                  <ThemedText style={{ fontSize: 11, color: Colors.tintDark, fontWeight: '700' }}>
+                    +Rp {taxAmount.toLocaleString('id-ID')}
+                  </ThemedText>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
           <View style={styles.totalRow}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <ThemedText type="defaultSemiBold" style={{ fontSize: 15 }}>Total</ThemedText>
               <TouchableOpacity
                 style={[
@@ -1084,6 +1182,24 @@ function Step1View({
                   ]}
                 >
                   {discountAmount > 0 ? '🏷️ Ubah Diskon' : '+ Diskon'}
+                </ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.discountTriggerBtn,
+                  isTaxActive && { backgroundColor: '#ede9fe', borderColor: Colors.tint },
+                ]}
+                onPress={onToggleTax}
+                disabled={cart.length === 0}
+                activeOpacity={0.7}
+              >
+                <ThemedText
+                  style={[
+                    styles.discountTriggerText,
+                    isTaxActive && { color: Colors.tintDark, fontWeight: '800' },
+                  ]}
+                >
+                  {isTaxActive ? '🧾 Pajak ON' : '+ Pajak'}
                 </ThemedText>
               </TouchableOpacity>
             </View>
@@ -1121,6 +1237,12 @@ function Step2View({
   subtotal,
   discountAmount,
   total,
+  totalCartPcs,
+  isTaxActive,
+  taxName,
+  taxType,
+  taxRate,
+  taxAmount,
   paymentMethod,
   paymentAmount,
   parsedAmount,
@@ -1143,6 +1265,12 @@ function Step2View({
   subtotal: number;
   discountAmount: number;
   total: number;
+  totalCartPcs: number;
+  isTaxActive: boolean;
+  taxName: string;
+  taxType: 'percent' | 'nominal';
+  taxRate: number;
+  taxAmount: number;
   paymentMethod: 'tunai' | 'qris' | 'hutang';
   paymentAmount: string;
   parsedAmount: number;
@@ -1240,47 +1368,70 @@ function Step2View({
       <View style={styles.colSummary}>
         <View style={styles.step2TopRow}>
           <Pressable onPress={onBack} hitSlop={6}>
-            <ThemedText style={{ color: Colors.tint, fontWeight: '600' }}>← Kembali</ThemedText>
+            <ThemedText style={{ color: Colors.tint, fontWeight: '700', fontSize: 13 }}>← Kembali</ThemedText>
           </Pressable>
           <RealtimeClockBadge compact />
         </View>
-        <ThemedText type="title" style={{ fontSize: 16, marginBottom: 8 }}>
-          Ringkasan Pesanan
-        </ThemedText>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <ThemedText type="title" style={{ fontSize: 16, fontWeight: '800' }}>
+            Ringkasan Pesanan
+          </ThemedText>
+          <View style={styles.summaryCountBadge}>
+            <ThemedText style={styles.summaryCountBadgeText}>
+              {cart.length} Jenis • {totalCartPcs} Pcs
+            </ThemedText>
+          </View>
+        </View>
+
         <FlatList
           data={cart}
           keyExtractor={(item) => item.product_id.toString()}
           renderItem={({ item }) => (
             <View style={styles.summaryItem}>
-              <ThemedText style={{ flex: 1, fontSize: 12 }}>{item.product_name}</ThemedText>
-              <ThemedText style={{ fontSize: 12, color: Colors.muted }}>x{item.quantity}</ThemedText>
-              <ThemedText style={{ fontSize: 12, fontWeight: '600' }}>
+              <ThemedText style={{ flex: 1, fontSize: 13.5, fontWeight: '700', color: '#0f172a' }} numberOfLines={1}>
+                {item.product_name}
+              </ThemedText>
+              <View style={styles.summaryQtyBadge}>
+                <ThemedText style={styles.summaryQtyBadgeText}>
+                  {item.is_weighted === 1 ? `${item.weight_gram}g` : `${item.quantity}x`}
+                </ThemedText>
+              </View>
+              <ThemedText style={{ fontSize: 13.5, fontWeight: '800', color: '#0f172a' }}>
                 Rp {item.subtotal.toLocaleString('id-ID')}
               </ThemedText>
             </View>
           )}
-          ItemSeparatorComponent={() => <View style={{ height: 4 }} />}
+          ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
         />
-        <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderColor: Colors.border }}>
+        <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1.5, borderColor: '#e2e8f0', gap: 4 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <ThemedText style={{ fontSize: 12.5, color: '#64748b' }}>Subtotal</ThemedText>
+            <ThemedText style={{ fontSize: 12.5, color: '#334155', fontWeight: '600' }}>
+              Rp {subtotal.toLocaleString('id-ID')}
+            </ThemedText>
+          </View>
           {discountAmount > 0 ? (
-            <>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
-                <ThemedText style={{ fontSize: 12, color: Colors.muted }}>Subtotal</ThemedText>
-                <ThemedText style={{ fontSize: 12, color: Colors.muted }}>
-                  Rp {subtotal.toLocaleString('id-ID')}
-                </ThemedText>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                <ThemedText style={{ fontSize: 12, color: Colors.danger, fontWeight: '700' }}>Diskon</ThemedText>
-                <ThemedText style={{ fontSize: 12, color: Colors.danger, fontWeight: '700' }}>
-                  -Rp {discountAmount.toLocaleString('id-ID')}
-                </ThemedText>
-              </View>
-            </>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <ThemedText style={{ fontSize: 12.5, color: Colors.danger, fontWeight: '700' }}>Diskon</ThemedText>
+              <ThemedText style={{ fontSize: 12.5, color: Colors.danger, fontWeight: '700' }}>
+                -Rp {discountAmount.toLocaleString('id-ID')}
+              </ThemedText>
+            </View>
           ) : null}
-          <View style={styles.totalRow}>
-            <ThemedText type="defaultSemiBold">Total Tagihan</ThemedText>
-            <ThemedText type="defaultSemiBold" style={{ fontSize: 18, color: Colors.tint }}>
+          {isTaxActive && taxAmount > 0 ? (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <ThemedText style={{ fontSize: 12.5, color: Colors.tintDark, fontWeight: '700' }}>
+                {taxName} ({taxType === 'percent' ? `${taxRate}%` : 'Nominal'})
+              </ThemedText>
+              <ThemedText style={{ fontSize: 12.5, color: Colors.tintDark, fontWeight: '700' }}>
+                +Rp {taxAmount.toLocaleString('id-ID')}
+              </ThemedText>
+            </View>
+          ) : null}
+          <View style={[styles.totalRow, { marginTop: 4, paddingTop: 6, borderTopWidth: 1, borderColor: '#e2e8f0' }]}>
+            <ThemedText type="defaultSemiBold" style={{ fontSize: 15, color: '#0f172a' }}>Total Tagihan</ThemedText>
+            <ThemedText type="defaultSemiBold" style={{ fontSize: 20, color: '#16a34a', fontWeight: '900' }}>
               Rp {total.toLocaleString('id-ID')}
             </ThemedText>
           </View>
@@ -1554,6 +1705,10 @@ function SuccessView({
     customerName?: string;
     subtotalAmount?: number;
     discountAmount?: number;
+    taxAmount?: number;
+    taxName?: string;
+    taxRate?: number;
+    taxType?: 'percent' | 'nominal' | 'none';
     cashierName?: string;
     shiftId?: number | null;
   } | null;
@@ -1586,6 +1741,10 @@ function SuccessView({
         change: lastTransaction.change,
         subtotalAmount: lastTransaction.subtotalAmount,
         discountAmount: lastTransaction.discountAmount,
+        taxAmount: lastTransaction.taxAmount,
+        taxName: lastTransaction.taxName,
+        taxRate: lastTransaction.taxRate,
+        taxType: lastTransaction.taxType,
         storeName,
         storeAddress,
         storePhone,
@@ -1720,6 +1879,18 @@ function SuccessView({
                     </ThemedText>
                   </View>
                 </>
+              ) : null}
+
+              {lastTransaction?.taxAmount && lastTransaction.taxAmount > 0 ? (
+                <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                  <ThemedText style={styles.receiptMetaText}>
+                    {lastTransaction.taxName || 'Pajak'}{' '}
+                    {lastTransaction.taxType === 'percent' ? `(${lastTransaction.taxRate}%)` : ''}
+                  </ThemedText>
+                  <ThemedText style={styles.receiptMetaText}>
+                    +Rp {lastTransaction.taxAmount.toLocaleString('id-ID')}
+                  </ThemedText>
+                </View>
               ) : null}
 
               <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
@@ -1941,13 +2112,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   leftPanel: {
-    flex: 1.3,
+    flex: 1.25,
     padding: 12,
     borderRightWidth: 1,
     borderRightColor: Colors.border,
   },
   rightPanel: {
-    flex: 0.9,
+    flex: 0.95,
     padding: 12,
     justifyContent: 'space-between',
     backgroundColor: '#ffffff',
@@ -2716,5 +2887,51 @@ const styles = StyleSheet.create({
   },
   discountTriggerTextActive: {
     color: '#dc2626',
+  },
+  cartCountBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 8,
+  },
+  cartCountBadge: {
+    backgroundColor: '#e0e7ff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  cartCountBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4338ca',
+  },
+  summaryQtyBadge: {
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'center',
+  },
+  summaryQtyBadgeText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  summaryCountBadge: {
+    backgroundColor: '#dbeafe',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  summaryCountBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#1d4ed8',
   },
 });

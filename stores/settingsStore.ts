@@ -25,6 +25,10 @@ interface SettingsState {
   cloudSyncStatus: 'idle' | 'syncing' | 'synced' | 'error';
   supabaseUrl: string;
   supabaseAnonKey: string;
+  taxEnabled: boolean;
+  taxName: string;
+  taxType: 'percent' | 'nominal';
+  taxRate: number;
   loading: boolean;
 
   loadSettings: (db: SQLiteDatabase) => Promise<void>;
@@ -57,6 +61,13 @@ interface SettingsState {
   setCloudConnected: (connected: boolean) => void;
   setCloudSyncStatus: (status: 'idle' | 'syncing' | 'synced' | 'error') => void;
   setCloudCredentials: (db: SQLiteDatabase, url: string, key: string) => Promise<void>;
+  setTaxSettings: (
+    db: SQLiteDatabase,
+    enabled: boolean,
+    name?: string,
+    type?: 'percent' | 'nominal',
+    rate?: number
+  ) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -79,6 +90,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   supabaseUrl: 'https://vhtualqxbtrmnljzmees.supabase.co',
   supabaseAnonKey:
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZodHVhbHF4YnRybW5sanptZWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MTk4NzAsImV4cCI6MjEwNDQ5NTg3MH0.ZCch1NWey4In2xLiwZht0VbFnNrEScITUCKhHe3EdFE',
+  taxEnabled: false,
+  taxName: 'Pajak / PB1',
+  taxType: 'percent',
+  taxRate: 10,
   loading: false,
 
   loadSettings: async (db) => {
@@ -110,6 +125,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         supabaseAnonKey:
           map.supabase_anon_key ||
           'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZodHVhbHF4YnRybW5sanptZWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MTk4NzAsImV4cCI6MjEwNDQ5NTg3MH0.ZCch1NWey4In2xLiwZht0VbFnNrEScITUCKhHe3EdFE',
+        taxEnabled: map.tax_enabled === '1',
+        taxName: map.tax_name || 'Pajak / PB1',
+        taxType: (map.tax_type as 'percent' | 'nominal') || 'percent',
+        taxRate: map.tax_rate ? parseFloat(map.tax_rate) : 10,
         loading: false,
       });
     } catch (e) {
@@ -246,14 +265,29 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setCloudConnected: (connected: boolean) => set({ isCloudConnected: connected }),
   setCloudSyncStatus: (status) => set({ cloudSyncStatus: status }),
   setCloudCredentials: async (db, url, key) => {
-    await db.runAsync(
-      "INSERT OR REPLACE INTO settings (key, value) VALUES ('supabase_url', ?)",
-      url
-    );
-    await db.runAsync(
-      "INSERT OR REPLACE INTO settings (key, value) VALUES ('supabase_anon_key', ?)",
-      key
-    );
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'supabase_url', url);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'supabase_anon_key', key);
+    });
     set({ supabaseUrl: url, supabaseAnonKey: key });
+  },
+
+  setTaxSettings: async (db, enabled, name, type, rate) => {
+    const finalName = name !== undefined ? name : get().taxName;
+    const finalType = type !== undefined ? type : get().taxType;
+    const finalRate = rate !== undefined ? rate : get().taxRate;
+
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'tax_enabled', enabled ? '1' : '0');
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'tax_name', finalName);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'tax_type', finalType);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'tax_rate', finalRate.toString());
+    });
+    set({
+      taxEnabled: enabled,
+      taxName: finalName,
+      taxType: finalType,
+      taxRate: finalRate,
+    });
   },
 }));

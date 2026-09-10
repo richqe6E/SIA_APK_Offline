@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  const DATABASE_VERSION = 14;
+  const DATABASE_VERSION = 15;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -26,6 +26,10 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     INSERT OR IGNORE INTO settings (key, value) VALUES ('receipt_footer', 'Terima kasih atas kunjungan Anda!');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('qris_image_path', '');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('app_orientation', 'portrait');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('tax_enabled', '0');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('tax_name', 'Pajak / PB1');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('tax_type', 'percent');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('tax_rate', '10');
   `);
 
   if (currentDbVersion >= DATABASE_VERSION) return;
@@ -363,6 +367,17 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
       ALTER TABLE transactions ADD COLUMN shift_id INTEGER DEFAULT NULL;
     `);
     currentDbVersion = 14;
+  }
+
+  if (currentDbVersion === 14) {
+    // Migrasi v15: Pajak / Biaya Tambahan (Tax / Surcharge) pada transaksi
+    await db.execAsync(`
+      ALTER TABLE transactions ADD COLUMN tax_amount REAL NOT NULL DEFAULT 0;
+      ALTER TABLE transactions ADD COLUMN tax_rate REAL NOT NULL DEFAULT 0;
+      ALTER TABLE transactions ADD COLUMN tax_type TEXT NOT NULL DEFAULT 'none';
+      ALTER TABLE transactions ADD COLUMN tax_name TEXT NOT NULL DEFAULT 'Pajak / PB1';
+    `);
+    currentDbVersion = 15;
   }
 
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);

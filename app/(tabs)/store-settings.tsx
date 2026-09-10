@@ -43,6 +43,11 @@ export default function StoreSettingsScreen() {
     receiptFooter,
     qrisImagePath,
     appOrientation,
+    taxEnabled,
+    taxName,
+    taxType,
+    taxRate,
+    setTaxSettings,
     loadSettings,
     saveSettings,
     setBusinessMode,
@@ -64,6 +69,10 @@ export default function StoreSettingsScreen() {
   const [phone2, setPhone2] = useState(storePhone2);
   const [footer, setFooter] = useState(receiptFooter);
   const [qrisPath, setQrisPath] = useState(qrisImagePath);
+  const [taxIsActive, setTaxIsActive] = useState(taxEnabled);
+  const [taxLabel, setTaxLabel] = useState(taxName);
+  const [taxCalcType, setTaxCalcType] = useState<'percent' | 'nominal'>(taxType);
+  const [taxRateVal, setTaxRateVal] = useState(taxRate.toString());
   const [saving, setSaving] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showPairingModal, setShowPairingModal] = useState(false);
@@ -84,7 +93,11 @@ export default function StoreSettingsScreen() {
     setPhone2(storePhone2);
     setFooter(receiptFooter);
     setQrisPath(qrisImagePath);
-  }, [storeName, businessType, businessMode, defaultViewMode, appOrientation, adminPin, storeAddress, storePhone, storePhone2, receiptFooter, qrisImagePath]);
+    setTaxIsActive(taxEnabled);
+    setTaxLabel(taxName);
+    setTaxCalcType(taxType);
+    setTaxRateVal(taxRate.toString());
+  }, [storeName, businessType, businessMode, defaultViewMode, appOrientation, adminPin, storeAddress, storePhone, storePhone2, receiptFooter, qrisImagePath, taxEnabled, taxName, taxType, taxRate]);
 
   const pickQrisImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -129,8 +142,10 @@ export default function StoreSettingsScreen() {
       await setDefaultViewMode(db, viewMode);
       await setAppOrientation(db, orientation);
       await setAdminPin(db, pin.trim());
+      const parsedTaxRate = parseFloat(taxRateVal.replace(/[^0-9.]/g, '')) || 0;
+      await setTaxSettings(db, taxIsActive, taxLabel.trim() || 'Pajak / PB1', taxCalcType, parsedTaxRate);
 
-      Alert.alert('Berhasil', 'Pengaturan toko dan preferensi orientasi berhasil disimpan!');
+      Alert.alert('Berhasil', 'Pengaturan toko, pajak, dan preferensi orientasi berhasil disimpan!');
       router.back();
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Gagal menyimpan pengaturan');
@@ -326,6 +341,123 @@ export default function StoreSettingsScreen() {
                 </ThemedText>
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Pengaturan Pajak & Biaya Tambahan */}
+          <View style={{ gap: 8, padding: 12, backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={{ flex: 1 }}>
+                <ThemedText type="defaultSemiBold" style={{ fontSize: 14, color: '#0f172a' }}>
+                  🧾 Pajak & Biaya Tambahan (PB1 / Surcharge)
+                </ThemedText>
+                <ThemedText style={{ fontSize: 11, color: Colors.muted, marginTop: 2 }}>
+                  Otomatis menambahkan biaya tambahan pada total belanjaan di kasir dan mencetaknya di nota.
+                </ThemedText>
+              </View>
+            </View>
+
+            {/* Toggle Switch Pajak */}
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+              <TouchableOpacity
+                style={[
+                  styles.viewChoiceBtn,
+                  { flex: 1, height: 38 },
+                  !taxIsActive && styles.viewChoiceActive,
+                ]}
+                onPress={() => setTaxIsActive(false)}
+              >
+                <ThemedText style={[styles.viewChoiceText, !taxIsActive && styles.viewChoiceTextActive]}>
+                  ✕ Nonaktif
+                </ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.viewChoiceBtn,
+                  { flex: 1, height: 38 },
+                  taxIsActive && [styles.viewChoiceActive, { backgroundColor: '#2563eb', borderColor: '#1d4ed8' }],
+                ]}
+                onPress={() => setTaxIsActive(true)}
+              >
+                <ThemedText style={[styles.viewChoiceText, taxIsActive && { color: '#ffffff', fontWeight: '800' }]}>
+                  ✓ Aktifkan Pajak
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            {taxIsActive ? (
+              <View style={{ gap: 10, marginTop: 6, paddingTop: 10, borderTopWidth: 1, borderColor: '#e2e8f0' }}>
+                <View style={{ gap: 4 }}>
+                  <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>
+                    Nama Biaya / Label Pajak:
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { height: 38, fontSize: 12 }]}
+                    value={taxLabel}
+                    onChangeText={setTaxLabel}
+                    placeholder="Contoh: Pajak PB1 10%, Biaya Layanan, dsb."
+                    placeholderTextColor={Colors.placeholder}
+                  />
+                </View>
+
+                <View style={{ gap: 4 }}>
+                  <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>
+                    Metode Perhitungan Pajak:
+                  </ThemedText>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      style={[
+                        styles.viewChoiceBtn,
+                        { flex: 1, height: 36 },
+                        taxCalcType === 'percent' && styles.viewChoiceActive,
+                      ]}
+                      onPress={() => setTaxCalcType('percent')}
+                    >
+                      <ThemedText style={[styles.viewChoiceText, taxCalcType === 'percent' && styles.viewChoiceTextActive]}>
+                        % Persentase
+                      </ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.viewChoiceBtn,
+                        { flex: 1, height: 36 },
+                        taxCalcType === 'nominal' && styles.viewChoiceActive,
+                      ]}
+                      onPress={() => setTaxCalcType('nominal')}
+                    >
+                      <ThemedText style={[styles.viewChoiceText, taxCalcType === 'nominal' && styles.viewChoiceTextActive]}>
+                        Rp Nominal Tetap
+                      </ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={{ gap: 4 }}>
+                  <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>
+                    {taxCalcType === 'percent' ? 'Tarif Pajak (%):' : 'Nominal Pajak (Rp):'}
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { height: 38, fontSize: 12 }]}
+                    value={taxRateVal}
+                    onChangeText={setTaxRateVal}
+                    keyboardType="numeric"
+                    placeholder={taxCalcType === 'percent' ? 'Contoh: 10' : 'Contoh: 2000'}
+                    placeholderTextColor={Colors.placeholder}
+                  />
+                </View>
+
+                {/* Simulasi Ringkas */}
+                <View style={{ padding: 8, backgroundColor: '#eff6ff', borderRadius: 8, borderWidth: 1, borderColor: '#bfdbfe' }}>
+                  <ThemedText style={{ fontSize: 11, color: '#1e40af', fontWeight: '700' }}>
+                    💡 Simulasi Perhitungan:
+                  </ThemedText>
+                  <ThemedText style={{ fontSize: 11, color: '#1e40af', marginTop: 2 }}>
+                    {taxCalcType === 'percent'
+                      ? `Belanja Rp 100.000 + ${taxLabel} (${taxRateVal || 0}%) = Rp ${(100000 + Math.round((100000 * (parseFloat(taxRateVal) || 0)) / 100)).toLocaleString('id-ID')}`
+                      : `Belanja Rp 100.000 + ${taxLabel} (Rp ${(parseFloat(taxRateVal) || 0).toLocaleString('id-ID')}) = Rp ${(100000 + (parseFloat(taxRateVal) || 0)).toLocaleString('id-ID')}`}
+                  </ThemedText>
+                </View>
+              </View>
+            ) : null}
           </View>
 
           {/* Kunci Orientasi Layar Aplikasi (Poin 22) */}
