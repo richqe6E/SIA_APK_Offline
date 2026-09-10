@@ -106,31 +106,40 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       for (const row of rows) {
         map[row.key] = row.value;
       }
-      set({
-        storeName: map.store_name ?? 'POS Offline',
-        businessType: map.business_type ?? 'Toko Retail',
-        businessMode: 'retail',
-        adminPin: map.admin_pin ?? '123456',
-        defaultViewMode: (map.default_view_mode as ViewMode) || 'list',
-        isOnboarded: map.is_onboarded === '1',
-        storeAddress: map.store_address ?? 'Jl. Cipto Mangunkusumo, Samarinda',
-        storePhone: map.store_phone ?? '0812-3456-7890',
-        storePhone2: map.store_phone2 ?? '',
-        receiptFooter: map.receipt_footer ?? 'Terima kasih atas kunjungan Anda!',
-        qrisImagePath: map.qris_image_path ?? '',
-        appOrientation: (map.app_orientation as AppOrientation) || 'portrait',
-        storePairingCode: map.store_pairing_code || 'AZ-7789',
-        supabaseUrl:
-          map.supabase_url || 'https://vhtualqxbtrmnljzmees.supabase.co',
-        supabaseAnonKey:
-          map.supabase_anon_key ||
-          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZodHVhbHF4YnRybW5sanptZWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MTk4NzAsImV4cCI6MjEwNDQ5NTg3MH0.ZCch1NWey4In2xLiwZht0VbFnNrEScITUCKhHe3EdFE',
-        taxEnabled: map.tax_enabled === '1',
-        taxName: map.tax_name || 'Pajak / PB1',
-        taxType: (map.tax_type as 'percent' | 'nominal') || 'percent',
-        taxRate: map.tax_rate ? parseFloat(map.tax_rate) : 10,
-        loading: false,
-      });
+        let pairingCode = map.store_pairing_code;
+        if (!pairingCode) {
+          pairingCode = `AZ-${Math.floor(1000 + Math.random() * 9000)}`;
+          await db.runAsync(
+            'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+            ['store_pairing_code', pairingCode]
+          );
+        }
+
+        set({
+          storeName: map.store_name ?? 'POS Offline',
+          businessType: map.business_type ?? 'Toko Retail',
+          businessMode: 'retail',
+          adminPin: map.admin_pin ?? '123456',
+          defaultViewMode: (map.default_view_mode as ViewMode) || 'list',
+          isOnboarded: map.is_onboarded === '1',
+          storeAddress: map.store_address ?? 'Jl. Cipto Mangunkusumo, Samarinda',
+          storePhone: map.store_phone ?? '0812-3456-7890',
+          storePhone2: map.store_phone2 ?? '',
+          receiptFooter: map.receipt_footer ?? 'Terima kasih atas kunjungan Anda!',
+          qrisImagePath: map.qris_image_path ?? '',
+          appOrientation: (map.app_orientation as AppOrientation) || 'portrait',
+          storePairingCode: pairingCode,
+          supabaseUrl:
+            map.supabase_url || 'https://vhtualqxbtrmnljzmees.supabase.co',
+          supabaseAnonKey:
+            map.supabase_anon_key ||
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZodHVhbHF4YnRybW5sanptZWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MTk4NzAsImV4cCI6MjEwNDQ5NTg3MH0.ZCch1NWey4In2xLiwZht0VbFnNrEScITUCKhHe3EdFE',
+          taxEnabled: map.tax_enabled === '1',
+          taxName: map.tax_name || 'Pajak / PB1',
+          taxType: (map.tax_type as 'percent' | 'nominal') || 'percent',
+          taxRate: map.tax_rate ? parseFloat(map.tax_rate) : 10,
+          loading: false,
+        });
     } catch (e) {
       console.error('loadSettings error:', e);
       set({ loading: false });

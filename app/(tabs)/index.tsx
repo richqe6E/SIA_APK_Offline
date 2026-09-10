@@ -24,6 +24,12 @@ function formatRupiah(n: number) {
   return 'Rp ' + Math.round(n).toLocaleString('id-ID');
 }
 
+function formatShortRupiah(n: number) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace('.0', '') + 'jt';
+  if (n >= 1000) return Math.round(n / 1000) + 'rb';
+  return n > 0 ? n.toString() : '';
+}
+
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -47,6 +53,14 @@ export default function DashboardScreen() {
   const [expiredAlerts, setExpiredAlerts] = useState<
     { id: number; name: string; sku: string; expired_date: string; stock: number; diffDays: number }[]
   >([]);
+  const [lowStockAlerts, setLowStockAlerts] = useState<
+    { id: number; name: string; barcode: string; stock: number; category_name?: string }[]
+  >([]);
+  const [todayCashMetrics, setTodayCashMetrics] = useState({
+    cashInTunai: 0,
+    cashInNonTunai: 0,
+    cashOut: 0,
+  });
 
   useLockOrientation(
     appOrientation === 'landscape'
@@ -108,6 +122,49 @@ export default function DashboardScreen() {
       .filter((p) => p.diffDays <= 30)
       .sort((a, b) => a.diffDays - b.diffDays);
     setExpiredAlerts(alerts);
+
+    // Query produk dengan stok menipis (<20 pcs)
+    const lowRows = await db.getAllAsync<{ id: number; name: string; barcode: string; stock: number; category_name?: string }>(
+      `SELECT p.id, p.name, p.barcode, p.stock, COALESCE(c.name, 'Umum') as category_name
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       WHERE p.has_stock = 1 AND p.stock < 20
+       ORDER BY p.stock ASC`
+    );
+    setLowStockAlerts(lowRows);
+
+    // Query transaksi hari ini berdasarkan metode pembayaran
+    const todayTx = await db.getAllAsync<{ payment_method: string; total: number }>(
+      "SELECT payment_method, COALESCE(SUM(total), 0) as total FROM transactions WHERE date(created_at) = date('now','localtime') GROUP BY payment_method"
+    );
+    let txTunai = 0;
+    let txNonTunai = 0;
+    for (const r of todayTx) {
+      if (r.payment_method === 'tunai') txTunai = r.total;
+      else if (r.payment_method === 'qris') txNonTunai = r.total;
+    }
+
+    // Query mutasi buku kas hari ini
+    const todayLedger = await db.getAllAsync<{ type: string; account: string; category: string; total: number }>(
+      "SELECT type, account, category, COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE date(created_at) = date('now','localtime') GROUP BY type, account, category"
+    );
+    let ledgerInHand = 0;
+    let ledgerInBank = 0;
+    let ledgerOut = 0;
+    for (const l of todayLedger) {
+      if (l.type === 'in') {
+        if (l.account === 'bank') ledgerInBank += l.total;
+        else ledgerInHand += l.total;
+      } else if (l.type === 'out' && l.category !== 'setor_bank') {
+        ledgerOut += l.total;
+      }
+    }
+
+    setTodayCashMetrics({
+      cashInTunai: txTunai + ledgerInHand,
+      cashInNonTunai: txNonTunai + ledgerInBank,
+      cashOut: ledgerOut,
+    });
 
     const today = await db.getFirstAsync<{ total: number; count: number }>(
       "SELECT COALESCE(SUM(total), 0) as total, COUNT(*) as count FROM transactions WHERE date(created_at) = date('now','localtime')"
@@ -202,44 +259,6 @@ export default function DashboardScreen() {
 
   const renderDualCashCard = (isLandscape: boolean) => (
     <Card padding={isLandscape ? 16 : 14} style={styles.cashBalanceCard}>
-      {/* Header: Total Kas Toko */}
-      <View
-        style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 10,
-          paddingBottom: 8,
-          borderBottomWidth: 1,
-          borderColor: '#f1f5f9',
-        }}
-      >
-        <View>
-          <ThemedText style={{ fontSize: 10, color: '#64748b', fontWeight: '800', letterSpacing: 0.5 }}>
-            TOTAL LIKUIDITAS KAS TOKO
-          </ThemedText>
-          <ThemedText
-            style={{
-              fontSize: isLandscape ? 20 : 18,
-              fontWeight: '900',
-              color: totalBalance >= 0 ? '#0f172a' : Colors.danger,
-              marginTop: 1,
-            }}
-          >
-            {formatRupiah(totalBalance)}
-          </ThemedText>
-        </View>
-        {currentUserRole !== 'kasir' && (
-          <TouchableOpacity
-            style={styles.openLedgerBtn}
-            onPress={() => router.push('/(tabs)/financial-reports')}
-            activeOpacity={0.8}
-          >
-            <ThemedText style={styles.openLedgerText}>Buku Kas ›</ThemedText>
-          </TouchableOpacity>
-        )}
-      </View>
-
       {/* Saku 1: Saldo Kas Fisik di Tangan (Laci Kasir) */}
       <View style={styles.cashPocketContainer}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -267,7 +286,7 @@ export default function DashboardScreen() {
             <ThemedText
               style={{
                 fontSize: isLandscape ? 24 : 22,
-                fontWeight: '800',
+                fontWeight: '900',
                 color: cashHandBalance >= 0 ? Colors.tintDark : Colors.danger,
                 marginTop: 2,
               }}
@@ -313,58 +332,133 @@ export default function DashboardScreen() {
         ) : null}
       </View>
 
-      {/* Saku 2: Saldo Kas di Bank (Rekening / QRIS / Transfer) */}
-      <View style={[styles.cashPocketContainer, { marginTop: 8, backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }]}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <ThemedText style={{ fontSize: 11, color: '#0369a1', fontWeight: '800' }}>
-                🏛️ SALDO KAS DI BANK
-              </ThemedText>
-              <View style={[styles.denomBadge, { backgroundColor: '#e0f2fe', borderColor: '#bae6fd' }]}>
-                <ThemedText style={{ fontSize: 9.5, color: '#0284c7', fontWeight: '700' }}>QRIS / Transfer</ThemedText>
-              </View>
-            </View>
-            <ThemedText
-              style={{
-                fontSize: isLandscape ? 20 : 18,
-                fontWeight: '800',
-                color: cashBankBalance >= 0 ? '#0284c7' : Colors.danger,
-                marginTop: 2,
-              }}
-            >
-              {formatRupiah(cashBankBalance)}
-            </ThemedText>
-          </View>
+      {/* Metrik Kas Hari Ini: Kas Masuk Tunai, Non-Tunai, Kas Keluar */}
+      <View style={styles.cashMetricsRow}>
+        {/* Kas Masuk Tunai */}
+        <View style={[styles.cashMetricCard, { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' }]}>
+          <ThemedText style={{ fontSize: 10, color: '#16a34a', fontWeight: '800' }}>
+            📥 Kas Masuk Tunai
+          </ThemedText>
+          <ThemedText style={{ fontSize: 14, fontWeight: '900', color: '#15803d', marginTop: 2 }} numberOfLines={1}>
+            {formatRupiah(todayCashMetrics.cashInTunai)}
+          </ThemedText>
+          <ThemedText style={{ fontSize: 8.5, color: '#16a34a', marginTop: 1 }}>
+            Penjualan fisik & masuk
+          </ThemedText>
+        </View>
 
-          {currentUserRole !== 'kasir' && (
-            <TouchableOpacity
-              style={styles.bankQuickBtn}
-              onPress={() => router.push('/(tabs)/financial-reports')}
-              activeOpacity={0.8}
-            >
-              <ThemedText style={{ fontSize: 11 }}>🏦</ThemedText>
-              <ThemedText style={styles.bankQuickBtnText}>Setor Kas ›</ThemedText>
-            </TouchableOpacity>
-          )}
+        {/* Kas Masuk Non-Tunai */}
+        <View style={[styles.cashMetricCard, { backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }]}>
+          <ThemedText style={{ fontSize: 10, color: '#0369a1', fontWeight: '800' }}>
+            📱 Non-Tunai (QRIS)
+          </ThemedText>
+          <ThemedText style={{ fontSize: 14, fontWeight: '900', color: '#0284c7', marginTop: 2 }} numberOfLines={1}>
+            {formatRupiah(todayCashMetrics.cashInNonTunai)}
+          </ThemedText>
+          <ThemedText style={{ fontSize: 8.5, color: '#0284c7', marginTop: 1 }}>
+            QRIS & transfer bank
+          </ThemedText>
+        </View>
+
+        {/* Kas Keluar */}
+        <View style={[styles.cashMetricCard, { backgroundColor: '#fef2f2', borderColor: '#fecaca' }]}>
+          <ThemedText style={{ fontSize: 10, color: '#dc2626', fontWeight: '800' }}>
+            📤 Kas Keluar
+          </ThemedText>
+          <ThemedText style={{ fontSize: 14, fontWeight: '900', color: '#b91c1c', marginTop: 2 }} numberOfLines={1}>
+            {formatRupiah(todayCashMetrics.cashOut)}
+          </ThemedText>
+          <ThemedText style={{ fontSize: 8.5, color: '#dc2626', marginTop: 1 }}>
+            Beban operasional
+          </ThemedText>
         </View>
       </View>
 
-      {/* Breakdown Kas Hari Ini */}
-      {isLandscape && (
-        <View style={styles.cashBreakdownRow}>
-          <View style={styles.cashSubItem}>
-            <ThemedText style={styles.cashSubLabel}>Uang Masuk Hari Ini</ThemedText>
-            <ThemedText style={[styles.cashSubVal, { color: '#15803d' }]}>
-              + {formatRupiah(summary.today)}
-            </ThemedText>
-          </View>
-          <View style={styles.cashSubDivider} />
-          <View style={styles.cashSubItem}>
-            <ThemedText style={styles.cashSubLabel}>Penjualan Bulan</ThemedText>
-            <ThemedText style={styles.cashSubVal}>
-              {formatRupiah(summary.month)}
-            </ThemedText>
+      {/* Footer: Tombol Navigasi ke Buku Kas */}
+      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderColor: '#f1f5f9' }}>
+        <TouchableOpacity
+          style={styles.openLedgerBtn}
+          onPress={() => router.push('/(tabs)/financial-reports')}
+          activeOpacity={0.8}
+        >
+          <ThemedText style={styles.openLedgerText}>
+            {currentUserRole === 'kasir' ? 'Input Kas Masuk / Keluar ›' : 'Buku Kas & Mutasi ›'}
+          </ThemedText>
+        </TouchableOpacity>
+      </View>
+    </Card>
+  );
+
+  const renderLowStockCard = (isLandscape: boolean) => (
+    <Card padding={14} style={[styles.lowStockCard, !isLandscape && { marginBottom: 12 }]}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <ThemedText style={{ fontSize: 16 }}>⚠️</ThemedText>
+          <ThemedText style={{ fontSize: 13, fontWeight: '800', color: '#1e293b' }}>
+            Peringatan Stok Menipis (&lt;20)
+          </ThemedText>
+        </View>
+        <View
+          style={[
+            styles.expiredBadge,
+            { backgroundColor: lowStockAlerts.length > 0 ? '#fef3c7' : '#dcfce7' },
+          ]}
+        >
+          <ThemedText
+            style={[
+              styles.expiredBadgeText,
+              { color: lowStockAlerts.length > 0 ? '#b45309' : '#15803d' },
+            ]}
+          >
+            {lowStockAlerts.length > 0 ? `${lowStockAlerts.length} Perlu Restock` : 'Stok Aman'}
+          </ThemedText>
+        </View>
+      </View>
+
+      {lowStockAlerts.length === 0 ? (
+        <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+          Semua produk memiliki stok yang cukup (tidak ada produk dengan stok di bawah 20).
+        </ThemedText>
+      ) : (
+        <View style={{ gap: 6 }}>
+          {lowStockAlerts.slice(0, 3).map((item) => (
+            <View key={item.id} style={styles.expiredItemRow}>
+              <View style={{ flex: 1, paddingRight: 6 }}>
+                <ThemedText style={styles.expiredItemName} numberOfLines={1}>
+                  {item.name}
+                </ThemedText>
+                <ThemedText style={styles.expiredItemMeta}>
+                  Barcode: {item.barcode || '-'}
+                </ThemedText>
+              </View>
+              <View
+                style={[
+                  styles.diffTag,
+                  { backgroundColor: item.stock <= 5 ? '#fee2e2' : '#fef3c7' },
+                ]}
+              >
+                <ThemedText
+                  style={[
+                    styles.diffTagText,
+                    { color: item.stock <= 5 ? '#dc2626' : '#b45309', fontWeight: '800' },
+                  ]}
+                >
+                  Sisa {item.stock} pcs
+                </ThemedText>
+              </View>
+            </View>
+          ))}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+            {lowStockAlerts.length > 3 ? (
+              <ThemedText style={{ fontSize: 10, color: '#94a3b8' }}>
+                +{lowStockAlerts.length - 3} produk menipis lainnya
+              </ThemedText>
+            ) : <View />}
+            <TouchableOpacity onPress={() => router.push('/(tabs)/explore')}>
+              <ThemedText style={{ fontSize: 11, fontWeight: '700', color: Colors.tintDark }}>
+                Beli Stok ›
+              </ThemedText>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -388,11 +482,13 @@ export default function DashboardScreen() {
             POS AZIZAH
           </ThemedText>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
-            <Image
-              source={require('@/assets/images/app-logo-p.png')}
-              style={styles.storeLogo}
-              resizeMode="contain"
-            />
+            <View style={styles.storeLogoBox}>
+              <Image
+                source={require('@/assets/images/app-logo-p.png')}
+                style={styles.storeLogo}
+                resizeMode="contain"
+              />
+            </View>
             <View style={{ flex: 1 }}>
               <ThemedText type="title" style={{ fontSize: 17, color: '#1e1b4b', fontWeight: '800' }} numberOfLines={1}>
                 {storeName}
@@ -587,6 +683,9 @@ export default function DashboardScreen() {
                     </Card>
                   </View>
 
+                  {/* Widget Peringatan Stok Menipis (Landscape) */}
+                  {renderLowStockCard(true)}
+
                   {/* Widget Peringatan Kadaluarsa (Landscape) */}
                   <Card padding={14} style={styles.expiredCard}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -692,24 +791,34 @@ export default function DashboardScreen() {
                     </Card>
                   </View>
 
-                  {/* Grafik 7 Hari */}
+                  {/* Grafik 7 Hari (Landscape) */}
                   <Card padding={16} style={{ flex: 1, backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
-                    <ThemedText style={styles.sectionTitle}>Tren Penjualan (7 Hari)</ThemedText>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <ThemedText style={styles.sectionTitle}>Tren Penjualan (7 Hari)</ThemedText>
+                      <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+                        Total: {formatRupiah(summary.week)}
+                      </ThemedText>
+                    </View>
                     <View style={styles.chartRow}>
                       {summary.weekTrend.map((d, i) => (
                         <View key={i} style={styles.chartCol}>
+                          {d.total > 0 && (
+                            <ThemedText style={styles.barAmount} numberOfLines={1}>
+                              {formatShortRupiah(d.total)}
+                            </ThemedText>
+                          )}
                           <View style={styles.barWrapper}>
                             <View
                               style={[
                                 styles.bar,
                                 {
-                                  height: `${Math.max(6, (d.total / maxTrend) * 100)}%`,
-                                  backgroundColor: d.label === HARI_INI ? Colors.tintDark : '#e9d5ff',
+                                  height: `${Math.max(8, (d.total / maxTrend) * 100)}%`,
+                                  backgroundColor: d.label === HARI_INI ? Colors.tintDark : '#cbd5e1',
                                 },
                               ]}
                             />
                           </View>
-                          <ThemedText style={[styles.barLabel, d.label === HARI_INI && { fontWeight: '700', color: Colors.tintDark }]}>
+                          <ThemedText style={[styles.barLabel, d.label === HARI_INI && { fontWeight: '800', color: Colors.tintDark }]}>
                             {d.label === HARI_INI ? 'Hari Ini' : d.label}
                           </ThemedText>
                         </View>
@@ -776,24 +885,34 @@ export default function DashboardScreen() {
                   </View>
                 </Card>
 
-                {/* Grafik 7 Hari */}
+                {/* Grafik 7 Hari (Portrait) */}
                 <Card padding={14} style={{ marginBottom: 12, backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
-                  <ThemedText style={styles.sectionTitle}>Tren Penjualan (7 Hari)</ThemedText>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <ThemedText style={styles.sectionTitle}>Tren Penjualan (7 Hari)</ThemedText>
+                    <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+                      Total: {formatRupiah(summary.week)}
+                    </ThemedText>
+                  </View>
                   <View style={styles.chartRow}>
                     {summary.weekTrend.map((d, i) => (
                       <View key={i} style={styles.chartCol}>
+                        {d.total > 0 && (
+                          <ThemedText style={styles.barAmount} numberOfLines={1}>
+                            {formatShortRupiah(d.total)}
+                          </ThemedText>
+                        )}
                         <View style={styles.barWrapper}>
                           <View
                             style={[
                               styles.bar,
                               {
-                                height: `${Math.max(6, (d.total / maxTrend) * 100)}%`,
-                                backgroundColor: d.label === HARI_INI ? Colors.tint : '#e9d5ff',
+                                height: `${Math.max(8, (d.total / maxTrend) * 100)}%`,
+                                backgroundColor: d.label === HARI_INI ? Colors.tint : '#cbd5e1',
                               },
                             ]}
                           />
                         </View>
-                        <ThemedText style={styles.barLabel}>
+                        <ThemedText style={[styles.barLabel, d.label === HARI_INI && { fontWeight: '800', color: Colors.tintDark }]}>
                           {d.label === HARI_INI ? 'Hari Ini' : d.label}
                         </ThemedText>
                       </View>
@@ -816,6 +935,9 @@ export default function DashboardScreen() {
                     </ThemedText>
                   </Card>
                 </View>
+
+                {/* Widget Peringatan Stok Menipis (Portrait) */}
+                {renderLowStockCard(false)}
 
                 {/* Widget Peringatan Kadaluarsa (Portrait) */}
                 <Card padding={14} style={[styles.expiredCard, { marginBottom: 12 }]}>
@@ -991,9 +1113,21 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
+  storeLogoBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 3,
+  },
   storeLogo: {
-    width: 38,
-    height: 38,
+    width: '100%',
+    height: '100%',
+    borderRadius: 8,
   },
   orientationToggleBtn: {
     flexDirection: 'row',
@@ -1225,22 +1359,50 @@ const styles = StyleSheet.create({
   chartRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    height: 100,
+    height: 128,
     gap: 8,
+    paddingTop: 16,
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#f1f5f9',
+    paddingBottom: 4,
   },
-  chartCol: { flex: 1, alignItems: 'center' },
+  chartCol: { flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' },
   barWrapper: {
     flex: 1,
     width: '100%',
     justifyContent: 'flex-end',
     alignItems: 'center',
   },
-  bar: {
-    width: 14,
-    borderRadius: 4,
-    minHeight: 4,
+  barAmount: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#64748b',
+    marginBottom: 3,
   },
-  barLabel: { fontSize: 9, color: Colors.placeholder, marginTop: 4 },
+  bar: {
+    width: 18,
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 6,
+    minHeight: 6,
+  },
+  barLabel: { fontSize: 10, color: '#64748b', marginTop: 5, fontWeight: '600' },
+  cashMetricsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 8,
+  },
+  cashMetricCard: {
+    flex: 1,
+    borderRadius: 10,
+    padding: 8,
+    borderWidth: 1,
+  },
+  lowStockCard: {
+    backgroundColor: '#ffffff',
+    borderColor: '#fed7aa',
+    borderWidth: 1,
+    borderRadius: 12,
+  },
   headerRightActions: {
     flexDirection: 'row',
     alignItems: 'center',
