@@ -25,7 +25,7 @@ export function ConnectionModal({
   canClose = true,
 }: ConnectionModalProps) {
   const { pairingCode, setPairingCode, loading, syncError } = useMonitorStore();
-  const [inputCode, setInputCode] = useState(pairingCode || 'AZ-7789');
+  const [inputCode, setInputCode] = useState(pairingCode || '');
   const [localError, setLocalError] = useState('');
 
   const handleConnect = async () => {

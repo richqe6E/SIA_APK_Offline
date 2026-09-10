@@ -505,7 +505,7 @@ export async function compileSyncPayload(
        COALESCE(SUM(stock * COALESCE(cost_price, 0)), 0) as total_val,
        COALESCE(SUM(stock), 0) as total_qty
      FROM products
-     WHERE is_active = 1`
+     WHERE stock >= 0`
   );
   const inventoryValuation = {
     totalStockValue: stockValRow?.total_val || 0,
@@ -546,16 +546,17 @@ export async function compileSyncPayload(
     selling_price: number;
   }>(
     `SELECT 
-       id, 
-       name, 
-       stock, 
-       COALESCE(category, 'Umum') as category, 
-       COALESCE(unit, 'pcs') as unit, 
-       COALESCE(cost_price, 0) as cost_price, 
-       COALESCE(price, 0) as selling_price
-     FROM products 
-     WHERE is_active = 1 AND stock <= 40
-     ORDER BY stock ASC, name ASC
+       p.id, 
+       p.name, 
+       p.stock, 
+       COALESCE(c.name, 'Umum') as category, 
+       'pcs' as unit, 
+       COALESCE(p.cost_price, 0) as cost_price, 
+       COALESCE(p.price, 0) as selling_price
+     FROM products p
+     LEFT JOIN categories c ON c.id = p.category_id
+     WHERE p.stock <= 40
+     ORDER BY p.stock ASC, p.name ASC
      LIMIT 50`
   );
 
@@ -568,7 +569,7 @@ export async function compileSyncPayload(
   }>(
     `SELECT id, name, stock, expired_date 
      FROM products 
-     WHERE is_active = 1 AND expired_date IS NOT NULL AND expired_date != ''`
+     WHERE expired_date IS NOT NULL AND expired_date != ''`
   );
   const expiringProducts: {
     id: number;
@@ -603,7 +604,7 @@ export async function compileSyncPayload(
   }>(
     `SELECT id, category, description, amount, created_at 
      FROM cash_ledger 
-     WHERE type = 'out' AND category != 'setor_bank' AND date(date) = date('now','localtime')
+     WHERE type = 'out' AND category != 'setor_bank' AND date(created_at) = date('now','localtime')
      ORDER BY id DESC
      LIMIT 30`
   );
@@ -753,18 +754,18 @@ export async function pushSyncToCloud(
                 for (const dep of cloudPl.pendingDeposits) {
                   const tag = `[dep_${dep.id}]`;
                   const existing = await db.getFirstAsync<{ id: number }>(
-                    `SELECT id FROM cash_ledger WHERE note LIKE ?`,
+                    `SELECT id FROM cash_ledger WHERE description LIKE ?`,
                     [`%${tag}%`]
                   );
                   if (!existing) {
                     await db.runAsync(
-                      `INSERT INTO cash_ledger (type, category, amount, source, note, created_at)
-                       VALUES ('expense', 'Setor Kas ke Bank', ?, 'cash', ?, datetime('now', 'localtime'))`,
+                      `INSERT INTO cash_ledger (type, category, amount, account, description, created_at)
+                       VALUES ('out', 'setor_bank', ?, 'hand', ?, datetime('now', 'localtime'))`,
                       [dep.amount, `Setor ke ${dep.bankTarget} via HP Pemilik ${tag}${dep.notes ? ` - ${dep.notes}` : ''}`]
                     );
                     await db.runAsync(
-                      `INSERT INTO cash_ledger (type, category, amount, source, note, created_at)
-                       VALUES ('income', 'Setor Kas ke Bank', ?, 'bank', ?, datetime('now', 'localtime'))`,
+                      `INSERT INTO cash_ledger (type, category, amount, account, description, created_at)
+                       VALUES ('in', 'setor_bank', ?, 'bank', ?, datetime('now', 'localtime'))`,
                       [dep.amount, `Terima setoran laci ke ${dep.bankTarget} via HP Pemilik ${tag}`]
                     );
                     anyApplied = true;
@@ -801,12 +802,17 @@ export async function pushSyncToCloud(
           }),
         });
 
+
         if (!response.ok) {
           const errText = await response.text();
           console.warn('Supabase push warning:', errText);
+          useSettingsStore.getState().setCloudSyncStatus('error');
+          return { success: false, payload, error: `Gagal push ke cloud (${response.status})` };
         }
       } catch (cloudErr: any) {
         console.warn('Supabase push network error:', cloudErr?.message);
+        useSettingsStore.getState().setCloudSyncStatus('error');
+        return { success: false, payload, error: 'Tidak dapat terhubung ke server cloud' };
       }
     }
 

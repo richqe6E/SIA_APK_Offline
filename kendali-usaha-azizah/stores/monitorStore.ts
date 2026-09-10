@@ -28,7 +28,7 @@ interface MonitorState {
 }
 
 export const useMonitorStore = create<MonitorState>((set, get) => ({
-  pairingCode: 'AZ-7789',
+  pairingCode: '',
   storeName: 'AGEN SOSIS AZIZAH',
   isConfigured: false,
   syncData: null,
@@ -47,7 +47,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
         Storage.getItem(STORAGE_KEYS.AUTO_INTERVAL),
       ]);
 
-      const code = savedCode ? savedCode.trim().toUpperCase() : 'AZ-7789';
+      const code = savedCode ? savedCode.trim().toUpperCase() : '';
       const interval = savedInterval ? parseInt(savedInterval, 10) : 30;
 
       set({
@@ -57,8 +57,12 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
         autoRefreshInterval: interval,
       });
 
-      // Initial data fetch
-      await get().fetchData(false);
+      // Initial data fetch only if previously configured
+      if (savedCode) {
+        await get().fetchData(false);
+      } else {
+        set({ loading: false });
+      }
     } catch (e: any) {
       console.warn('loadSavedConfig error:', e);
       set({ loading: false });
