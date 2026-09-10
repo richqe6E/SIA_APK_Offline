@@ -92,6 +92,8 @@ interface TransactionState {
   holdCurrentCart: (db: SQLiteDatabase, note: string) => Promise<boolean>;
   resumePendingOrder: (db: SQLiteDatabase, orderId: number) => Promise<boolean>;
   deletePendingOrder: (db: SQLiteDatabase, orderId: number) => Promise<void>;
+  cancelTransaction: (db: SQLiteDatabase, transactionId: number) => Promise<{ success: boolean; message?: string }>;
+  revertAndEditTransaction: (db: SQLiteDatabase, transactionId: number) => Promise<{ success: boolean; restoredItemsCount: number; message?: string }>;
 }
 
 export const useTransactionStore = create<TransactionState>((set, get) => ({
@@ -473,5 +475,138 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
   deletePendingOrder: async (db, orderId) => {
     await db.runAsync('DELETE FROM pending_orders WHERE id = ?', orderId);
     await get().loadPendingOrders(db);
+  },
+
+  cancelTransaction: async (db, transactionId) => {
+    try {
+      let affectedTx: Transaction | null = null;
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        affectedTx = await txn.getFirstAsync<Transaction>(
+          'SELECT * FROM transactions WHERE id = ?',
+          transactionId
+        );
+        if (!affectedTx) throw new Error('Transaksi tidak ditemukan');
+
+        const items = await txn.getAllAsync<TransactionItem>(
+          'SELECT * FROM transaction_items WHERE transaction_id = ?',
+          transactionId
+        );
+
+        for (const item of items) {
+          const prod = await txn.getFirstAsync<{ has_stock: number }>(
+            'SELECT has_stock FROM products WHERE id = ?',
+            item.product_id
+          );
+          if (prod?.has_stock === 1) {
+            const qtyToRestore = item.weight_gram
+              ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+              : item.quantity;
+            await txn.runAsync(
+              `UPDATE products SET stock = stock + ?, updated_at = datetime('now','localtime') WHERE id = ?`,
+              qtyToRestore,
+              item.product_id
+            );
+          }
+        }
+
+        if (affectedTx.is_credit === 1) {
+          const rec = await txn.getFirstAsync<{ id: number }>(
+            'SELECT id FROM customer_receivables WHERE transaction_id = ?',
+            transactionId
+          );
+          if (rec) {
+            await txn.runAsync('DELETE FROM receivable_payments WHERE receivable_id = ?', rec.id);
+            await txn.runAsync('DELETE FROM customer_receivables WHERE id = ?', rec.id);
+          }
+        }
+
+        await txn.runAsync('DELETE FROM transaction_items WHERE transaction_id = ?', transactionId);
+        await txn.runAsync('DELETE FROM transactions WHERE id = ?', transactionId);
+      });
+
+      await useProductStore.getState().loadProducts(db);
+      await get().loadTransactions(db);
+      triggerAutoSync(db);
+
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, message: error?.message || 'Gagal membatalkan transaksi' };
+    }
+  },
+
+  revertAndEditTransaction: async (db, transactionId) => {
+    try {
+      let restoredCart: CartItem[] = [];
+      let discountAmount = 0;
+
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        const tx = await txn.getFirstAsync<Transaction>(
+          'SELECT * FROM transactions WHERE id = ?',
+          transactionId
+        );
+        if (!tx) throw new Error('Transaksi tidak ditemukan');
+        discountAmount = tx.discount_amount || 0;
+
+        const items = await txn.getAllAsync<TransactionItem>(
+          'SELECT * FROM transaction_items WHERE transaction_id = ?',
+          transactionId
+        );
+
+        for (const item of items) {
+          const prod = await txn.getFirstAsync<{ has_stock: number }>(
+            'SELECT has_stock FROM products WHERE id = ?',
+            item.product_id
+          );
+          if (prod?.has_stock === 1) {
+            const qtyToRestore = item.weight_gram
+              ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+              : item.quantity;
+            await txn.runAsync(
+              `UPDATE products SET stock = stock + ?, updated_at = datetime('now','localtime') WHERE id = ?`,
+              qtyToRestore,
+              item.product_id
+            );
+          }
+        }
+
+        restoredCart = items.map((i) => ({
+          product_id: i.product_id,
+          product_name: i.product_name,
+          product_price: i.product_price,
+          quantity: i.quantity,
+          subtotal: i.subtotal,
+          is_weighted: i.weight_gram ? 1 : 0,
+          weight_gram: i.weight_gram ?? undefined,
+          price_per_kg: i.price_per_kg ?? undefined,
+        }));
+
+        if (tx.is_credit === 1) {
+          const rec = await txn.getFirstAsync<{ id: number }>(
+            'SELECT id FROM customer_receivables WHERE transaction_id = ?',
+            transactionId
+          );
+          if (rec) {
+            await txn.runAsync('DELETE FROM receivable_payments WHERE receivable_id = ?', rec.id);
+            await txn.runAsync('DELETE FROM customer_receivables WHERE id = ?', rec.id);
+          }
+        }
+
+        await txn.runAsync('DELETE FROM transaction_items WHERE transaction_id = ?', transactionId);
+        await txn.runAsync('DELETE FROM transactions WHERE id = ?', transactionId);
+      });
+
+      set({
+        cart: restoredCart,
+        discount: discountAmount > 0 ? { value: discountAmount, type: 'nominal' } : null,
+      });
+
+      await useProductStore.getState().loadProducts(db);
+      await get().loadTransactions(db);
+      triggerAutoSync(db);
+
+      return { success: true, restoredItemsCount: restoredCart.length };
+    } catch (error: any) {
+      return { success: false, restoredItemsCount: 0, message: error?.message || 'Gagal merevert transaksi' };
+    }
   },
 }));
