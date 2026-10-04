@@ -55,6 +55,22 @@ interface SortOptionItem {
   retailOnly?: boolean;
 }
 
+const barcodeTextCache = new Map<string, string>();
+function getExtraBarcodesText(barcodes?: string): string {
+  if (!barcodes) return '';
+  const cached = barcodeTextCache.get(barcodes);
+  if (cached !== undefined) return cached;
+  try {
+    const list: string[] = JSON.parse(barcodes);
+    const result = Array.isArray(list) ? list.join(' ') : barcodes;
+    barcodeTextCache.set(barcodes, result);
+    return result;
+  } catch {
+    barcodeTextCache.set(barcodes, barcodes);
+    return barcodes;
+  }
+}
+
 const SORT_OPTIONS: SortOptionItem[] = [
   {
     id: 'oldest',
@@ -535,17 +551,7 @@ export default function ProductsScreen() {
 
         // 3. Filter Tokenized Search
         if (tokens.length > 0) {
-          let extraBarcodesStr = '';
-          if (p.barcodes) {
-            try {
-              const list: string[] = JSON.parse(p.barcodes);
-              if (Array.isArray(list)) {
-                extraBarcodesStr = list.join(' ');
-              }
-            } catch {
-              extraBarcodesStr = p.barcodes;
-            }
-          }
+          const extraBarcodesStr = getExtraBarcodesText(p.barcodes);
           const searchTarget = `${p.name} ${p.category_name || ''} ${p.barcode || ''} ${extraBarcodesStr}`.toLowerCase();
           const matchesAllTokens = tokens.every((token) => searchTarget.includes(token));
           if (!matchesAllTokens) return false;
@@ -568,17 +574,7 @@ export default function ProductsScreen() {
 
       // 2. Filter Pencarian Fleksibel (Tokenized Multi-Word: Nama, Kategori, Barcode Utama & Barcode Tambahan)
       if (tokens.length > 0) {
-        let extraBarcodesStr = '';
-        if (p.barcodes) {
-          try {
-            const list: string[] = JSON.parse(p.barcodes);
-            if (Array.isArray(list)) {
-              extraBarcodesStr = list.join(' ');
-            }
-          } catch {
-            extraBarcodesStr = p.barcodes;
-          }
-        }
+        const extraBarcodesStr = getExtraBarcodesText(p.barcodes);
         const searchTarget = `${p.name} ${p.category_name || ''} ${p.barcode || ''} ${extraBarcodesStr}`.toLowerCase();
         const matchesAllTokens = tokens.every((token) => searchTarget.includes(token));
         if (!matchesAllTokens) {
@@ -824,6 +820,10 @@ export default function ProductsScreen() {
         data={filteredProducts}
         keyExtractor={(item) => item.id.toString()}
         contentContainerStyle={styles.list}
+        initialNumToRender={14}
+        maxToRenderPerBatch={14}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === 'android'}
         renderItem={({ item }) => (
           <Card style={styles.productItem} padding={12}>
             <View style={styles.productRow}>

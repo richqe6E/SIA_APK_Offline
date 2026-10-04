@@ -53,17 +53,17 @@ export default function ReportsScreen() {
 
     switch (p) {
       case 'daily':
-        dateFilter = "WHERE date(t.created_at) = date('now','localtime')";
+        dateFilter = "WHERE t.created_at >= date('now','localtime') AND t.created_at < date('now','localtime', '+1 day')";
         break;
       case 'weekly':
         dateFilter = "WHERE t.created_at >= datetime('now','localtime','-7 days')";
         break;
       case 'monthly':
-        dateFilter = "WHERE strftime('%Y-%m', t.created_at) = strftime('%Y-%m', 'now','localtime')";
+        dateFilter = "WHERE t.created_at >= strftime('%Y-%m-01 00:00:00', 'now','localtime')";
         break;
       case 'custom':
-        dateFilter = 'WHERE date(t.created_at) BETWEEN ? AND ?';
-        params.push(fmtDate(customStart), fmtDate(customEnd));
+        dateFilter = 'WHERE t.created_at >= ? AND t.created_at <= ?';
+        params.push(`${fmtDate(customStart)} 00:00:00`, `${fmtDate(customEnd)} 23:59:59`);
         break;
     }
 

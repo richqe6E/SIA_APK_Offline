@@ -143,25 +143,32 @@ export default function DashboardScreen() {
     );
     setLowStockAlerts(lowRows);
 
-    // Query transaksi hari ini (tunai murni, qris murni, split payment presisi)
-    const pureTunai = await db.getFirstAsync<{ total: number }>(
-      `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
-    );
-    const pureQris = await db.getFirstAsync<{ total: number }>(
-      `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
-    );
-    const splitTx = await db.getFirstAsync<{ cashTotal: number; qrisTotal: number }>(
-      `SELECT COALESCE(SUM(cash_received), 0) as cashTotal, COALESCE(SUM(qris_received), 0) as qrisTotal FROM transactions WHERE (payment_method = 'split' OR (cash_received > 0 AND qris_received > 0)) AND date(created_at) = date('now','localtime')`
+    // Query transaksi hari ini (tunai murni, qris murni, split payment presisi via 1 kueri agregat cepat)
+    const todayPaymentMetrics = await db.getFirstAsync<{
+      tunai: number;
+      qris: number;
+    }>(
+      `SELECT
+         COALESCE(SUM(CASE 
+           WHEN payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0) THEN total
+           WHEN payment_method = 'split' OR (cash_received > 0 AND qris_received > 0) THEN cash_received
+           ELSE 0 END), 0) as tunai,
+         COALESCE(SUM(CASE 
+           WHEN payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0) THEN total
+           WHEN payment_method = 'split' OR (cash_received > 0 AND qris_received > 0) THEN qris_received
+           ELSE 0 END), 0) as qris
+       FROM transactions
+       WHERE created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')`
     );
 
-    const txTunai = (pureTunai?.total ?? 0) + (splitTx?.cashTotal ?? 0);
-    const txNonTunai = (pureQris?.total ?? 0) + (splitTx?.qrisTotal ?? 0);
+    const txTunai = todayPaymentMetrics?.tunai ?? 0;
+    const txNonTunai = todayPaymentMetrics?.qris ?? 0;
 
-    // Query mutasi buku kas hari ini (sinkron dengan Buku Kas)
+    // Query mutasi buku kas hari ini (sinkron dengan Buku Kas via idx_cash_ledger_type_date)
     const todayLedger = await db.getAllAsync<{ type: string; account: string; category: string; total: number }>(
       `SELECT type, account, category, COALESCE(SUM(amount), 0) as total 
        FROM cash_ledger 
-       WHERE (date(date) = date('now','localtime') OR date(created_at) = date('now','localtime'))
+       WHERE date >= date('now','localtime') AND date < date('now','localtime', '+1 day')
        GROUP BY type, account, category`
     );
     let ledgerInHand = 0;
@@ -171,7 +178,7 @@ export default function DashboardScreen() {
       if (l.type === 'in') {
         if (l.account === 'bank') ledgerInBank += l.total;
         else ledgerInHand += l.total;
-      } else if (l.type === 'out' && l.category !== 'setor_bank') {
+      } else if (l.type === 'out' && l.category !== 'setor_bank' && l.category !== 'modal_awal') {
         ledgerOut += l.total;
       }
     }
@@ -183,16 +190,16 @@ export default function DashboardScreen() {
     });
 
     const today = await db.getFirstAsync<{ total: number; count: number }>(
-      "SELECT COALESCE(SUM(total), 0) as total, COUNT(*) as count FROM transactions WHERE date(created_at) = date('now','localtime')"
+      "SELECT COALESCE(SUM(total), 0) as total, COUNT(*) as count FROM transactions WHERE created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')"
     );
     const yesterday = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE date(created_at) = date('now','localtime','-1 day')"
+      "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE created_at >= date('now','localtime','-1 day') AND created_at < date('now','localtime')"
     );
     const week = await db.getFirstAsync<{ total: number }>(
       "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE created_at >= datetime('now','localtime','-7 days')"
     );
     const month = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now','localtime')"
+      "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE created_at >= strftime('%Y-%m-01 00:00:00', 'now','localtime')"
     );
     const productCount = await db.getFirstAsync<{ count: number }>(
       'SELECT COUNT(*) as count FROM products'
@@ -201,7 +208,7 @@ export default function DashboardScreen() {
       'SELECT COALESCE(AVG(total), 0) as avg FROM transactions'
     );
     const itemsSold = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(ti.quantity), 0) as total FROM transaction_items ti JOIN transactions t ON ti.transaction_id = t.id WHERE date(t.created_at) = date('now','localtime')"
+      "SELECT COALESCE(SUM(ti.quantity), 0) as total FROM transaction_items ti JOIN transactions t ON ti.transaction_id = t.id WHERE t.created_at >= date('now','localtime') AND t.created_at < date('now','localtime', '+1 day')"
     );
 
     const weekRows = await db.getAllAsync<{ day: string; total: number }>(

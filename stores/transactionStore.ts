@@ -89,6 +89,7 @@ interface TransactionState {
   pendingOrders: PendingOrder[];
   loading: boolean;
   hasMore: boolean;
+  isCheckingOut: boolean;
 
   setDiscount: (value: number, type: 'nominal' | 'percent') => void;
   clearDiscount: () => void;
@@ -129,6 +130,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
   pendingOrders: [],
   loading: false,
   hasMore: true,
+  isCheckingOut: false,
 
   setDiscount: (value, type) => {
     set({ discount: { value, type } });
@@ -306,143 +308,167 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     taxOptions,
     splitPayment,
   ) => {
-    const { cart } = get();
-    if (cart.length === 0) return 0;
+    const { isCheckingOut, cart } = get();
+    if (isCheckingOut || cart.length === 0) return 0;
+    set({ isCheckingOut: true });
 
-    const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
-    const discountAmount = get().getDiscountAmount();
-    const taxAmount = taxOptions?.enabled ? (taxOptions.amount || 0) : 0;
-    const taxRate = taxOptions?.enabled ? (taxOptions.rate || 0) : 0;
-    const taxType = taxOptions?.enabled ? (taxOptions.type || 'none') : 'none';
-    const taxName = taxOptions?.enabled ? (taxOptions.name || 'Pajak / PB1') : '';
-    const total = Math.max(0, subtotal - discountAmount + taxAmount);
-    const isCredit = paymentMethod === 'hutang' ? 1 : 0;
+    try {
+      const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
+      const discountAmount = get().getDiscountAmount();
+      const taxAmount = taxOptions?.enabled ? (taxOptions.amount || 0) : 0;
+      const taxRate = taxOptions?.enabled ? (taxOptions.rate || 0) : 0;
+      const taxType = taxOptions?.enabled ? (taxOptions.type || 'none') : 'none';
+      const taxName = taxOptions?.enabled ? (taxOptions.name || 'Pajak / PB1') : '';
+      const total = Math.max(0, subtotal - discountAmount + taxAmount);
+      const isCredit = paymentMethod === 'hutang' ? 1 : 0;
 
-    // F1 (BUG-004): Guardrail database - cegah kurang bayar kecuali transaksi piutang/hutang
-    if (!isCredit && paymentAmount < total) {
-      throw new Error(
-        `Nominal pembayaran (Rp ${Math.round(paymentAmount).toLocaleString('id-ID')}) kurang dari total tagihan (Rp ${Math.round(total).toLocaleString('id-ID')}).`
-      );
-    }
-
-    const finalPaymentAmount = isCredit ? 0 : paymentAmount;
-    const change = isCredit ? 0 : paymentAmount - total;
-
-    // F2 (BUG-002): Hitung porsi split. Simpan payment_method sebagai 'split' agar laporan metode bayar akurat
-    const splitCash = splitPayment?.cash ?? 0;
-    const splitQris = splitPayment?.qris ?? 0;
-    const hasSplit = splitCash > 0 || splitQris > 0;
-    const effectivePaymentMethod = hasSplit ? 'split' : paymentMethod;
-    const cashReceivedForLedger = hasSplit ? splitCash : (effectivePaymentMethod === 'tunai' ? finalPaymentAmount : 0);
-    const qrisReceivedForLedger = hasSplit ? splitQris : (effectivePaymentMethod === 'qris' ? finalPaymentAmount : 0);
-
-    let transactionId = 0;
-    let dailySeq = 0;
-    await db.withExclusiveTransactionAsync(async (txn) => {
-      // F3: increment nomor urut harian dalam transaksi yang sama
-      // agar atomic — tidak mungkin ada nota ganda atau terlewat.
-      const today = localDateStr();
-      await txn.runAsync(
-        'INSERT OR IGNORE INTO daily_counters (date, last_seq, updated_at) VALUES (?, 0, datetime(\'now\',\'localtime\'))',
-        today
-      );
-      await txn.runAsync(
-        'UPDATE daily_counters SET last_seq = last_seq + 1, updated_at = datetime(\'now\',\'localtime\') WHERE date = ?',
-        today
-      );
-      const counterRow = await txn.getFirstAsync<{ last_seq: number }>(
-        'SELECT last_seq FROM daily_counters WHERE date = ?',
-        today
-      );
-      dailySeq = counterRow?.last_seq ?? 0;
-
-      const result = await txn.runAsync(
-        'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit, discount_amount, subtotal_amount, cashier_name, shift_id, tax_amount, tax_rate, tax_type, tax_name, cash_received, qris_received, daily_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        total,
-        effectivePaymentMethod,
-        finalPaymentAmount,
-        change >= 0 ? change : 0,
-        customerId,
-        isCredit,
-        discountAmount,
-        subtotal,
-        cashierName,
-        shiftId,
-        taxAmount,
-        taxRate,
-        taxType,
-        taxName,
-        cashReceivedForLedger,
-        qrisReceivedForLedger,
-        dailySeq
-      );
-      transactionId = result.lastInsertRowId as number;
-
-      for (const item of cart) {
-        // Ambil cost_price dari tabel products
-        const prod = await txn.getFirstAsync<{ cost_price: number; has_stock: number }>(
-          'SELECT cost_price, has_stock FROM products WHERE id = ?',
-          item.product_id
+      // F1 (BUG-004): Guardrail database - cegah kurang bayar kecuali transaksi piutang/hutang
+      if (!isCredit && paymentAmount < total) {
+        throw new Error(
+          `Nominal pembayaran (Rp ${Math.round(paymentAmount).toLocaleString('id-ID')}) kurang dari total tagihan (Rp ${Math.round(total).toLocaleString('id-ID')}).`
         );
-        const baseCostPrice = prod?.cost_price ?? 0;
-        const finalCostPrice = item.is_weighted === 1
-          ? Math.round(((item.weight_gram ?? 1000) / 1000) * baseCostPrice)
-          : baseCostPrice;
+      }
 
+      const finalPaymentAmount = isCredit ? 0 : paymentAmount;
+      const change = isCredit ? 0 : paymentAmount - total;
+
+      // F2 (BUG-002): Hitung porsi split. Simpan payment_method sebagai 'split' agar laporan metode bayar akurat
+      const splitCash = splitPayment?.cash ?? 0;
+      const splitQris = splitPayment?.qris ?? 0;
+      const hasSplit = splitCash > 0 || splitQris > 0;
+      const effectivePaymentMethod = hasSplit ? 'split' : paymentMethod;
+      const cashReceivedForLedger = hasSplit ? splitCash : (effectivePaymentMethod === 'tunai' ? finalPaymentAmount : 0);
+      const qrisReceivedForLedger = hasSplit ? splitQris : (effectivePaymentMethod === 'qris' ? finalPaymentAmount : 0);
+
+      const purchasedItems = [...cart];
+      let transactionId = 0;
+      let dailySeq = 0;
+
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        // F3: increment nomor urut harian dalam transaksi yang sama
+        // agar atomic — tidak mungkin ada nota ganda atau terlewat.
+        const today = localDateStr();
         await txn.runAsync(
-          'INSERT INTO transaction_items (transaction_id, product_id, product_name, product_price, quantity, subtotal, cost_price, weight_gram, price_per_kg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          transactionId,
-          item.product_id,
-          item.product_name,
-          item.product_price,
-          item.quantity,
-          item.subtotal,
-          finalCostPrice,
-          item.weight_gram ?? null,
-          item.price_per_kg ?? null
+          'INSERT OR IGNORE INTO daily_counters (date, last_seq, updated_at) VALUES (?, 0, datetime(\'now\',\'localtime\'))',
+          today
         );
+        await txn.runAsync(
+          'UPDATE daily_counters SET last_seq = last_seq + 1, updated_at = datetime(\'now\',\'localtime\') WHERE date = ?',
+          today
+        );
+        const counterRow = await txn.getFirstAsync<{ last_seq: number }>(
+          'SELECT last_seq FROM daily_counters WHERE date = ?',
+          today
+        );
+        dailySeq = counterRow?.last_seq ?? 0;
 
-        // Pengurangan stok otomatis jika produk mengaktifkan kelola stok
-        if (prod?.has_stock === 1) {
+        const result = await txn.runAsync(
+          'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit, discount_amount, subtotal_amount, cashier_name, shift_id, tax_amount, tax_rate, tax_type, tax_name, cash_received, qris_received, daily_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          total,
+          effectivePaymentMethod,
+          finalPaymentAmount,
+          change >= 0 ? change : 0,
+          customerId,
+          isCredit,
+          discountAmount,
+          subtotal,
+          cashierName,
+          shiftId,
+          taxAmount,
+          taxRate,
+          taxType,
+          taxName,
+          cashReceivedForLedger,
+          qrisReceivedForLedger,
+          dailySeq
+        );
+        transactionId = result.lastInsertRowId as number;
+
+        for (const item of purchasedItems) {
+          // Ambil cost_price dari tabel products
+          const prod = await txn.getFirstAsync<{ cost_price: number; has_stock: number }>(
+            'SELECT cost_price, has_stock FROM products WHERE id = ?',
+            item.product_id
+          );
+          const baseCostPrice = prod?.cost_price ?? 0;
+          const finalCostPrice = item.is_weighted === 1
+            ? Math.round(((item.weight_gram ?? 1000) / 1000) * baseCostPrice)
+            : baseCostPrice;
+
+          await txn.runAsync(
+            'INSERT INTO transaction_items (transaction_id, product_id, product_name, product_price, quantity, subtotal, cost_price, weight_gram, price_per_kg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            transactionId,
+            item.product_id,
+            item.product_name,
+            item.product_price,
+            item.quantity,
+            item.subtotal,
+            finalCostPrice,
+            item.weight_gram ?? null,
+            item.price_per_kg ?? null
+          );
+
+          // Pengurangan stok otomatis jika produk mengaktifkan kelola stok
+          if (prod?.has_stock === 1) {
+            const qtyToDeduct = item.is_weighted === 1
+              ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+              : item.quantity;
+            await txn.runAsync(
+              `UPDATE products SET stock = MAX(0, stock - ?), updated_at = datetime('now','localtime') WHERE id = ?`,
+              qtyToDeduct,
+              item.product_id
+            );
+          }
+        }
+
+        // Jika pembayaran Hutang / Kasbon, catat otomatis ke piutang pelanggan
+        if (isCredit && customerId) {
+          await txn.runAsync(
+            'INSERT INTO customer_receivables (customer_id, transaction_id, total_amount, paid_amount, status) VALUES (?, ?, ?, 0, ?)',
+            customerId,
+            transactionId,
+            total,
+            'unpaid'
+          );
+        }
+      });
+
+      // 1. Reset keranjang belanja dan diskon setelah checkout sukses
+      set({ cart: [], discount: null });
+
+      // 2. Pembaruan stok produk in-memory instan (optimistic update tanpa re-query ribuan produk)
+      useProductStore.setState((state) => ({
+        products: state.products.map((p) => {
+          const item = purchasedItems.find((it) => it.product_id === p.id);
+          if (!item || p.has_stock !== 1) return p;
           const qtyToDeduct = item.is_weighted === 1
             ? Math.ceil((item.weight_gram ?? 1000) / 1000)
             : item.quantity;
-          await txn.runAsync(
-            `UPDATE products SET stock = MAX(0, stock - ?), updated_at = datetime('now','localtime') WHERE id = ?`,
-            qtyToDeduct,
-            item.product_id
-          );
+          return { ...p, stock: Math.max(0, p.stock - qtyToDeduct) };
+        }),
+      }));
+
+      // 3. Background non-blocking sync & ledger reload (tidak menghambat kembalinya nomor nota ke kasir)
+      setTimeout(async () => {
+        try {
+          get().loadTransactions(db);
+          const { useCashStore } = await import('@/stores/cashStore');
+          useCashStore.getState().loadLedger(db);
+          if (isCredit) {
+            const { useDebtReceivableStore } = await import('@/stores/debtReceivableStore');
+            useDebtReceivableStore.getState().loadReceivables(db);
+            useDebtReceivableStore.getState().loadCustomers(db);
+          }
+          triggerAutoSync(db);
+        } catch (bgErr) {
+          console.warn('Background sync warning:', bgErr);
         }
-      }
+      }, 50);
 
-      // Jika pembayaran Hutang / Kasbon, catat otomatis ke piutang pelanggan
-      if (isCredit && customerId) {
-        await txn.runAsync(
-          'INSERT INTO customer_receivables (customer_id, transaction_id, total_amount, paid_amount, status) VALUES (?, ?, ?, 0, ?)',
-          customerId,
-          transactionId,
-          total,
-          'unpaid'
-        );
-      }
-    });
-
-    // Reset keranjang belanja dan diskon setelah checkout sukses
-    set({ cart: [], discount: null });
-    await get().loadTransactions(db);
-    useProductStore.getState().loadProducts(db);
-    const { useCashStore } = await import('@/stores/cashStore');
-    await useCashStore.getState().loadLedger(db);
-    if (isCredit) {
-      const { useDebtReceivableStore } = await import('@/stores/debtReceivableStore');
-      await useDebtReceivableStore.getState().loadReceivables(db);
-      await useDebtReceivableStore.getState().loadCustomers(db);
+      return dailySeq;
+    } finally {
+      set({ isCheckingOut: false });
     }
-
-    // Otomatis sinkronkan snapshot ke cloud bridge di background
-    triggerAutoSync(db);
-
-    return dailySeq;
   },
 
 
@@ -452,13 +478,13 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     let whereClause = '';
     switch (period) {
       case 'today':
-        whereClause = "WHERE date(t.created_at) = date('now','localtime')";
+        whereClause = "WHERE t.created_at >= date('now','localtime') AND t.created_at < date('now','localtime', '+1 day')";
         break;
       case 'week':
         whereClause = "WHERE t.created_at >= datetime('now','localtime','-7 days')";
         break;
       case 'month':
-        whereClause = "WHERE strftime('%Y-%m', t.created_at) = strftime('%Y-%m', 'now','localtime')";
+        whereClause = "WHERE t.created_at >= strftime('%Y-%m-01 00:00:00', 'now','localtime')";
         break;
     }
 
@@ -597,12 +623,14 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
         }
 
         if (affectedTx.is_credit === 1) {
-          const rec = await txn.getFirstAsync<{ id: number }>(
-            'SELECT id FROM customer_receivables WHERE transaction_id = ?',
+          const rec = await txn.getFirstAsync<{ id: number; paid_amount: number }>(
+            'SELECT id, paid_amount FROM customer_receivables WHERE transaction_id = ?',
             transactionId
           );
           if (rec) {
-            await txn.runAsync('DELETE FROM receivable_payments WHERE receivable_id = ?', rec.id);
+            if (rec.paid_amount > 0) {
+              throw new Error('Transaksi hutang/piutang ini sudah memiliki pembayaran cicilan. Batalkan pembayaran cicilan terlebih dahulu di menu Piutang.');
+            }
             await txn.runAsync('DELETE FROM customer_receivables WHERE id = ?', rec.id);
           }
         }
@@ -626,6 +654,17 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
 
       await useProductStore.getState().loadProducts(db);
       await get().loadTransactions(db);
+      try {
+        const { useCashStore } = await import('@/stores/cashStore');
+        await useCashStore.getState().loadLedger(db);
+        if ((affectedTx as any)?.is_credit === 1) {
+          const { useDebtReceivableStore } = await import('@/stores/debtReceivableStore');
+          await useDebtReceivableStore.getState().loadReceivables(db);
+          await useDebtReceivableStore.getState().loadCustomers(db);
+        }
+      } catch (syncErr) {
+        console.warn('Sync error after cancelTransaction:', syncErr);
+      }
       triggerAutoSync(db);
 
       return { success: true };
@@ -638,6 +677,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     try {
       let restoredCart: CartItem[] = [];
       let discountAmount = 0;
+      let txRecord: Transaction | null = null;
 
       await db.withExclusiveTransactionAsync(async (txn) => {
         const tx = await txn.getFirstAsync<Transaction>(
@@ -645,6 +685,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
           transactionId
         );
         if (!tx) throw new Error('Transaksi tidak ditemukan');
+        txRecord = tx;
         discountAmount = tx.discount_amount || 0;
 
         const items = await txn.getAllAsync<TransactionItem>(
@@ -681,12 +722,14 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
         }));
 
         if (tx.is_credit === 1) {
-          const rec = await txn.getFirstAsync<{ id: number }>(
-            'SELECT id FROM customer_receivables WHERE transaction_id = ?',
+          const rec = await txn.getFirstAsync<{ id: number; paid_amount: number }>(
+            'SELECT id, paid_amount FROM customer_receivables WHERE transaction_id = ?',
             transactionId
           );
           if (rec) {
-            await txn.runAsync('DELETE FROM receivable_payments WHERE receivable_id = ?', rec.id);
+            if (rec.paid_amount > 0) {
+              throw new Error('Piutang transaksi ini sudah memiliki riwayat cicilan. Batalkan pembayaran cicilan terlebih dahulu sebelum mengedit transaksi ini.');
+            }
             await txn.runAsync('DELETE FROM customer_receivables WHERE id = ?', rec.id);
           }
         }
@@ -702,6 +745,17 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
 
       await useProductStore.getState().loadProducts(db);
       await get().loadTransactions(db);
+      try {
+        const { useCashStore } = await import('@/stores/cashStore');
+        await useCashStore.getState().loadLedger(db);
+        if ((txRecord as any)?.is_credit === 1) {
+          const { useDebtReceivableStore } = await import('@/stores/debtReceivableStore');
+          await useDebtReceivableStore.getState().loadReceivables(db);
+          await useDebtReceivableStore.getState().loadCustomers(db);
+        }
+      } catch (syncErr) {
+        console.warn('Sync error after revertAndEditTransaction:', syncErr);
+      }
       triggerAutoSync(db);
 
       return { success: true, restoredItemsCount: restoredCart.length };

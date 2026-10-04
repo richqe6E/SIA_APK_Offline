@@ -15,12 +15,13 @@ import { useShiftStore } from '@/stores/shiftStore';
 import { useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Alert,
   FlatList,
   Image,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -39,9 +40,33 @@ import { EditCartPriceModal } from '@/components/edit-cart-price-modal';
 import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
 import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
 
+// Cache penelusuran barcode & nama produk untuk optimasi instan ribuan produk (O(1) memory lookup)
+const barcodeSearchTextCache = new Map<string, string>();
+function getSearchTextForProduct(p: Product): string {
+  const cacheKey = `${p.id}_${p.name}_${p.barcode || ''}_${p.barcodes || ''}`;
+  const cached = barcodeSearchTextCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  let barcodesStr = p.barcode || '';
+  if (p.barcodes) {
+    try {
+      const list = JSON.parse(p.barcodes);
+      if (Array.isArray(list)) barcodesStr += ' ' + list.join(' ');
+      else barcodesStr += ' ' + p.barcodes;
+    } catch {
+      barcodesStr += ' ' + p.barcodes;
+    }
+  }
+  const result = `${p.name} ${barcodesStr}`.toLowerCase();
+  barcodeSearchTextCache.set(cacheKey, result);
+  return result;
+}
+
 export default function TransactionScreen() {
   const router = useRouter();
   useLockOrientation(ScreenOrientation.OrientationLock.LANDSCAPE);
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const insets = useSafeAreaInsets();
   const db = useSQLiteContext();
@@ -180,25 +205,19 @@ export default function TransactionScreen() {
     setDefaultViewMode(db, mode);
   };
 
-  const filteredProducts = products.filter((p) => {
-    const matchCat = selectedCategoryId ? p.category_id === selectedCategoryId : true;
+  const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return matchCat;
+    const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
 
-    const tokens = q.split(/\s+/).filter(Boolean);
-    let barcodesStr = p.barcode || '';
-    if (p.barcodes) {
-      try {
-        const list: string[] = JSON.parse(p.barcodes);
-        if (Array.isArray(list)) barcodesStr += ' ' + list.join(' ');
-      } catch {
-        barcodesStr += ' ' + p.barcodes;
-      }
-    }
-    const searchTarget = `${p.name} ${barcodesStr}`.toLowerCase();
-    const matchSearch = tokens.every((token) => searchTarget.includes(token));
-    return matchCat && matchSearch;
-  });
+    return products.filter((p) => {
+      const matchCat = selectedCategoryId ? p.category_id === selectedCategoryId : true;
+      if (!matchCat) return false;
+      if (tokens.length === 0) return true;
+
+      const searchTarget = getSearchTextForProduct(p);
+      return tokens.every((token) => searchTarget.includes(token));
+    });
+  }, [products, selectedCategoryId, searchQuery]);
 
   const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
   const discountAmount = getDiscountAmount();
@@ -307,74 +326,85 @@ export default function TransactionScreen() {
   };
 
   const proceedWithCheckout = async () => {
-    const useSplit = isSplitActive && splitCash + splitQris >= total && splitCash >= 0 && splitQris >= 0;
-    let targetCustomerId = selectedCustomerId;
-    let targetCustomerName = '';
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
-    if (paymentMethod === 'hutang') {
-      if (!targetCustomerId && quickCustomerName.trim()) {
-        targetCustomerId = await addCustomer(db, quickCustomerName.trim());
-        targetCustomerName = quickCustomerName.trim();
-      } else if (targetCustomerId) {
-        const c = customers.find((cust) => cust.id === targetCustomerId);
-        targetCustomerName = c ? c.name : 'Pelanggan';
-      } else {
-        Alert.alert('Pilih Pelanggan', 'Pilih nama pelanggan yang berhutang terlebih dahulu!');
-        return;
+    try {
+      const useSplit = isSplitActive && splitCash + splitQris >= total && splitCash >= 0 && splitQris >= 0;
+      let targetCustomerId = selectedCustomerId;
+      let targetCustomerName = '';
+
+      if (paymentMethod === 'hutang') {
+        if (!targetCustomerId && quickCustomerName.trim()) {
+          targetCustomerId = await addCustomer(db, quickCustomerName.trim());
+          targetCustomerName = quickCustomerName.trim();
+        } else if (targetCustomerId) {
+          const c = customers.find((cust) => cust.id === targetCustomerId);
+          targetCustomerName = c ? c.name : 'Pelanggan';
+        } else {
+          Alert.alert('Pilih Pelanggan', 'Pilih nama pelanggan yang berhutang terlebih dahulu!');
+          return;
+        }
       }
+
+      const activeCashierName = currentShift?.cashier_name || (currentUserRole === 'pemilik' ? 'Pemilik' : 'Kasir');
+      const activeShiftId = currentShift?.id ?? null;
+
+      setSuccessTotal(total);
+      const finalPaymentAmount = useSplit
+        ? (splitCash + splitQris)
+        : (paymentMethod === 'hutang' ? 0 : (parsedAmount || total));
+      const finalChange = useSplit ? Math.max(0, (splitCash + splitQris) - total) : (paymentMethod === 'hutang' ? 0 : change);
+      setLastTransaction({
+        items: [...cart],
+        paymentMethod: useSplit ? 'split' : paymentMethod,
+        paymentAmount: finalPaymentAmount,
+        change: finalChange,
+        customerName: targetCustomerName,
+        subtotalAmount: subtotal,
+        discountAmount: discountAmount,
+        taxAmount: isTaxActive ? taxAmount : 0,
+        taxName: isTaxActive ? activeTaxName : '',
+        taxRate: isTaxActive ? activeTaxRate : 0,
+        taxType: isTaxActive ? activeTaxType : 'none',
+        cashierName: activeCashierName,
+        shiftId: activeShiftId,
+        cashReceived: useSplit ? splitCash : (paymentMethod === 'tunai' ? parsedAmount : 0),
+        qrisReceived: useSplit ? splitQris : (paymentMethod === 'qris' ? parsedAmount : 0),
+      });
+      const dailySeq = await checkout(
+        db,
+        useSplit ? 'split' : paymentMethod,
+        finalPaymentAmount,
+        targetCustomerId,
+        activeCashierName,
+        activeShiftId,
+        {
+          enabled: isTaxActive,
+          name: activeTaxName,
+          type: activeTaxType,
+          rate: activeTaxRate,
+          amount: taxAmount,
+        },
+        useSplit ? { cash: splitCash, qris: splitQris } : undefined,
+      );
+      if (dailySeq > 0) {
+        setSuccessDailySeq(dailySeq);
+        setPaymentAmount('');
+        setQuickCustomerName('');
+        setSelectedCustomerId(null);
+        setIsSplitActive(false);
+        setSplitCash(0);
+        setSplitQris(0);
+        setSplitCashInput('');
+        setSplitQrisInput('');
+        setShowSuccess(true);
+      }
+    } catch (err: any) {
+      Alert.alert('Gagal Memproses Transaksi', err?.message || 'Terjadi kesalahan sistem saat menyimpan transaksi.');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const activeCashierName = currentShift?.cashier_name || (currentUserRole === 'pemilik' ? 'Pemilik' : 'Kasir');
-    const activeShiftId = currentShift?.id ?? null;
-
-    setSuccessTotal(total);
-    const finalPaymentAmount = useSplit
-      ? (splitCash + splitQris)
-      : (paymentMethod === 'hutang' ? 0 : (parsedAmount || total));
-    const finalChange = useSplit ? Math.max(0, (splitCash + splitQris) - total) : (paymentMethod === 'hutang' ? 0 : change);
-    setLastTransaction({
-      items: [...cart],
-      paymentMethod: useSplit ? 'split' : paymentMethod,
-      paymentAmount: finalPaymentAmount,
-      change: finalChange,
-      customerName: targetCustomerName,
-      subtotalAmount: subtotal,
-      discountAmount: discountAmount,
-      taxAmount: isTaxActive ? taxAmount : 0,
-      taxName: isTaxActive ? activeTaxName : '',
-      taxRate: isTaxActive ? activeTaxRate : 0,
-      taxType: isTaxActive ? activeTaxType : 'none',
-      cashierName: activeCashierName,
-      shiftId: activeShiftId,
-      cashReceived: useSplit ? splitCash : (paymentMethod === 'tunai' ? parsedAmount : 0),
-      qrisReceived: useSplit ? splitQris : (paymentMethod === 'qris' ? parsedAmount : 0),
-    });
-    const dailySeq = await checkout(
-      db,
-      useSplit ? 'split' : paymentMethod,
-      finalPaymentAmount,
-      targetCustomerId,
-      activeCashierName,
-      activeShiftId,
-      {
-        enabled: isTaxActive,
-        name: activeTaxName,
-        type: activeTaxType,
-        rate: activeTaxRate,
-        amount: taxAmount,
-      },
-      useSplit ? { cash: splitCash, qris: splitQris } : undefined,
-    );
-    setSuccessDailySeq(dailySeq);
-    setPaymentAmount('');
-    setQuickCustomerName('');
-    setSelectedCustomerId(null);
-    setIsSplitActive(false);
-    setSplitCash(0);
-    setSplitQris(0);
-    setSplitCashInput('');
-    setSplitQrisInput('');
-    setShowSuccess(true);
   };
 
   const handleSelesaiMenjual = () => {
@@ -640,6 +670,7 @@ export default function TransactionScreen() {
           onOpenQrisCustomerModal={() => setShowQrisCustomerModal(true)}
           onBack={() => setStep(1)}
           onConfirm={handleCheckout}
+          isSubmitting={isSubmitting}
           // F2: Split Payment props
           isSplitActive={isSplitActive}
           splitCash={splitCash}
@@ -1203,6 +1234,10 @@ function Step1View({
           numColumns={viewMode === 'grid' ? gridColumns : 1}
           contentContainerStyle={viewMode === 'grid' ? styles.productGrid : styles.productList}
           columnWrapperStyle={viewMode === 'grid' ? { gap: 8 } : undefined}
+          initialNumToRender={14}
+          maxToRenderPerBatch={14}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
           renderItem={({ item }) =>
             viewMode === 'grid' ? (
               <ProductCard
@@ -1502,6 +1537,7 @@ function Step2View({
   onOpenQrisCustomerModal,
   onBack,
   onConfirm,
+  isSubmitting = false,
   // F2: Split Payment props
   isSplitActive,
   splitCash,
@@ -1542,6 +1578,7 @@ function Step2View({
   onOpenQrisCustomerModal: () => void;
   onBack: () => void;
   onConfirm: () => void;
+  isSubmitting?: boolean;
   // F2: Split Payment props
   isSplitActive: boolean;
   splitCash: number;
@@ -2050,13 +2087,15 @@ function Step2View({
 
         <Button
           title={
-            paymentMethod === 'hutang'
+            isSubmitting
+              ? 'Memproses Transaksi...'
+              : paymentMethod === 'hutang'
               ? (canConfirm ? `Konfirmasi Hutang (Rp ${total.toLocaleString('id-ID')})` : 'Pilih Pelanggan Terlebih Dahulu')
               : paymentMethod === 'tunai'
               ? 'Konfirmasi Pembayaran'
               : 'Sudah Masuk / Lunas (QRIS/Transfer)'
           }
-          disabled={!canConfirm}
+          disabled={!canConfirm || isSubmitting}
           style={paymentMethod === 'hutang' && canConfirm ? { backgroundColor: '#d97706' } : undefined}
           onPress={onConfirm}
         />
@@ -2461,7 +2500,7 @@ function SuccessView({
 // ─────────────────────────────────────────
 // GRID CARD VIEW (Ideal for Kuliner / Menu)
 // ─────────────────────────────────────────
-function ProductCard({
+const ProductCard = React.memo(function ProductCard({
   product,
   onPress,
 }: {
@@ -2527,12 +2566,12 @@ function ProductCard({
       )}
     </Pressable>
   );
-}
+});
 
 // ─────────────────────────────────────────
 // COMPACT LIST BUTTON VIEW (Ideal for Retail)
 // ─────────────────────────────────────────
-function ProductListItem({
+const ProductListItem = React.memo(function ProductListItem({
   product,
   onPress,
 }: {
@@ -2592,7 +2631,7 @@ function ProductListItem({
       </View>
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

@@ -59,11 +59,18 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     const params: any[] = [];
 
     if (month !== undefined && year !== undefined) {
-      query += " WHERE strftime('%m', expense_date) = ? AND strftime('%Y', expense_date) = ?";
-      params.push(String(month).padStart(2, '0'), String(year));
+      const mm = String(month).padStart(2, '0');
+      const start = `${year}-${mm}-01`;
+      const nextMonth = month === 12 ? 1 : month + 1;
+      const nextYear = month === 12 ? year + 1 : year;
+      const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+      query += ' WHERE expense_date >= ? AND expense_date < ?';
+      params.push(start, end);
     } else if (year !== undefined) {
-      query += " WHERE strftime('%Y', expense_date) = ?";
-      params.push(String(year));
+      const start = `${year}-01-01`;
+      const end = `${year + 1}-01-01`;
+      query += ' WHERE expense_date >= ? AND expense_date < ?';
+      params.push(start, end);
     }
 
     query += ' ORDER BY expense_date DESC, id DESC';
@@ -104,20 +111,30 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
   },
 
   getTotalExpenses: async (db, month, year) => {
+    const mm = String(month).padStart(2, '0');
+    const start = `${year}-${mm}-01`;
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+
     const result = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(amount), 0) as total FROM expenses
-       WHERE strftime('%m', expense_date) = ? AND strftime('%Y', expense_date) = ?`,
-      String(month).padStart(2, '0'),
-      String(year)
+       WHERE expense_date >= ? AND expense_date < ?`,
+      start,
+      end
     );
     return result?.total ?? 0;
   },
 
   getTotalExpensesYear: async (db, year) => {
+    const start = `${year}-01-01`;
+    const end = `${year + 1}-01-01`;
+
     const result = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(amount), 0) as total FROM expenses
-       WHERE strftime('%Y', expense_date) = ?`,
-      String(year)
+       WHERE expense_date >= ? AND expense_date < ?`,
+      start,
+      end
     );
     return result?.total ?? 0;
   },
@@ -126,11 +143,18 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     let query = `SELECT category, COALESCE(SUM(amount), 0) as total FROM expenses`;
     const params: any[] = [];
     if (month !== undefined && year !== undefined) {
-      query += ` WHERE strftime('%m', expense_date) = ? AND strftime('%Y', expense_date) = ?`;
-      params.push(String(month).padStart(2, '0'), String(year));
+      const mm = String(month).padStart(2, '0');
+      const start = `${year}-${mm}-01`;
+      const nextMonth = month === 12 ? 1 : month + 1;
+      const nextYear = month === 12 ? year + 1 : year;
+      const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+      query += ` WHERE expense_date >= ? AND expense_date < ?`;
+      params.push(start, end);
     } else if (year !== undefined) {
-      query += ` WHERE strftime('%Y', expense_date) = ?`;
-      params.push(String(year));
+      const start = `${year}-01-01`;
+      const end = `${year + 1}-01-01`;
+      query += ` WHERE expense_date >= ? AND expense_date < ?`;
+      params.push(start, end);
     }
     query += ' GROUP BY category ORDER BY total DESC';
     return await db.getAllAsync<{ category: string; total: number }>(query, ...params);

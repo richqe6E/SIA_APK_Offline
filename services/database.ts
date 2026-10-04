@@ -3,7 +3,13 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  const DATABASE_VERSION = 16;
+  // Selalu aktifkan WAL mode dan Foreign Keys enforcement di setiap koneksi
+  await db.execAsync(`
+    PRAGMA journal_mode = 'wal';
+    PRAGMA foreign_keys = ON;
+  `);
+
+  const DATABASE_VERSION = 18;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -36,9 +42,6 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
 
   if (currentDbVersion === 0) {
     await db.execAsync(`
-      PRAGMA journal_mode = 'wal';
-      PRAGMA foreign_keys = ON;
-
       CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -394,6 +397,59 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
       );
     `);
     currentDbVersion = 16;
+  }
+
+  if (currentDbVersion === 16) {
+    // Migrasi v17: Indeks performa tinggi untuk transaksi kasir, split payment, shift kasir, dan relasi
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
+      CREATE INDEX IF NOT EXISTS idx_transactions_pm_split ON transactions(payment_method, cash_received, qris_received);
+      CREATE INDEX IF NOT EXISTS idx_transactions_shift_id ON transactions(shift_id);
+      CREATE INDEX IF NOT EXISTS idx_transactions_customer_id ON transactions(customer_id);
+      CREATE INDEX IF NOT EXISTS idx_transaction_items_txid ON transaction_items(transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_transaction_items_prod ON transaction_items(product_id);
+      CREATE INDEX IF NOT EXISTS idx_customer_receivables_cust ON customer_receivables(customer_id);
+      CREATE INDEX IF NOT EXISTS idx_customer_receivables_tx ON customer_receivables(transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_supplier_debts_sup ON supplier_debts(supplier_id);
+      CREATE INDEX IF NOT EXISTS idx_cash_ledger_type_date ON cash_ledger(type, date);
+      CREATE INDEX IF NOT EXISTS idx_cash_ledger_account ON cash_ledger(account);
+    `);
+    currentDbVersion = 17;
+  }
+
+  if (currentDbVersion === 17) {
+    // Migrasi v18: Indeks laporan beban & shift, serta balancing historis modal awal shift
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
+      CREATE INDEX IF NOT EXISTS idx_cash_shifts_status ON cash_shifts(status, opened_at);
+      CREATE INDEX IF NOT EXISTS idx_cash_ledger_cat_date ON cash_ledger(category, date);
+    `);
+
+    // Pastikan shift historis yang sudah berstatus 'closed' tidak meninggalkan saldo modal awal yang menggembung di buku kas
+    try {
+      const closedShifts = await db.getAllAsync<{ id: number; cashier_name: string; starting_cash: number; closed_at: string }>(
+        `SELECT id, cashier_name, starting_cash, closed_at FROM cash_shifts WHERE status = 'closed' AND starting_cash > 0`
+      );
+      for (const cs of closedShifts) {
+        const existingOut = await db.getFirstAsync<{ id: number }>(
+          `SELECT id FROM cash_ledger WHERE type = 'out' AND category = 'modal_awal' AND description LIKE ?`,
+          `%Shift #${cs.id}%`
+        );
+        if (!existingOut) {
+          const closeDate = cs.closed_at ? cs.closed_at.slice(0, 10) : '2026-01-01';
+          await db.runAsync(
+            `INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES ('out', 'modal_awal', ?, ?, ?, 'hand')`,
+            `Tutup Shift Kasir #${cs.id} (${cs.cashier_name}) - Pelepasan Modal Awal`,
+            cs.starting_cash,
+            closeDate
+          );
+        }
+      }
+    } catch (e) {
+      console.warn('Migration v18 shift balancing warning:', e);
+    }
+
+    currentDbVersion = 18;
   }
 
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);

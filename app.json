@@ -19,6 +19,7 @@
     },
     "android": {
       "package": "com.rumahmakan.posoffline",
+      "versionCode": 2,
       "permissions": [
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.BLUETOOTH_CONNECT",
@@ -59,9 +60,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "baa8672e-6402-45d0-bce2-5e5a80c6fa7f"
+        "projectId": "97d847aa-a65d-4eb8-9d21-33f936cce00e"
       }
     },
-    "owner": "yayasandevapps-team"
+    "owner": "rikire"
   }
 }

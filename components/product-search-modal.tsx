@@ -23,6 +23,23 @@ interface ProductSearchModalProps {
   hasStockOnly?: boolean;
 }
 
+const extraBarcodesCache = new Map<string, string>();
+function getExtraBarcodesText(barcodes?: string | null): string {
+  if (!barcodes) return '';
+  const cached = extraBarcodesCache.get(barcodes);
+  if (cached !== undefined) return cached;
+  let parsed = '';
+  try {
+    const list = JSON.parse(barcodes);
+    if (Array.isArray(list)) parsed = list.join(' ');
+    else parsed = String(barcodes);
+  } catch {
+    parsed = String(barcodes);
+  }
+  extraBarcodesCache.set(barcodes, parsed);
+  return parsed;
+}
+
 export function ProductSearchModal({
   visible,
   onClose,
@@ -44,15 +61,8 @@ export function ProductSearchModal({
     return products.filter((p) => {
       if (hasStockOnly && p.has_stock !== 1) return false;
 
-      let barcodesStr = p.barcode || '';
-      if (p.barcodes) {
-        try {
-          const list: string[] = JSON.parse(p.barcodes);
-          if (Array.isArray(list)) barcodesStr += ' ' + list.join(' ');
-        } catch {
-          barcodesStr += ' ' + p.barcodes;
-        }
-      }
+      const extra = getExtraBarcodesText(p.barcodes);
+      const barcodesStr = p.barcode ? (extra ? `${p.barcode} ${extra}` : p.barcode) : extra;
 
       const searchTarget = `${p.name} ${p.category_name || ''} ${barcodesStr}`.toLowerCase();
       return tokens.every((token) => searchTarget.includes(token));
@@ -122,6 +132,10 @@ export function ProductSearchModal({
             style={styles.list}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            initialNumToRender={14}
+            maxToRenderPerBatch={14}
+            windowSize={5}
+            removeClippedSubviews={true}
             renderItem={({ item }) => (
               <TouchableOpacity
                 style={styles.productRow}

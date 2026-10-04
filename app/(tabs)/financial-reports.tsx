@@ -51,6 +51,9 @@ type FilterMode = 'month' | 'year';
 interface LabaRugiData {
   periodeLabel: string;
   penjualanBruto: number;
+  potonganPenjualan: number;
+  pajakPB1: number;
+  penjualanBersih: number;
   hpp: number;
   labaKotor: number;
   totalBeban: number;
@@ -307,57 +310,89 @@ function LabaRugiTab({
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      let salesQuery = '';
-      let hppQuery = '';
-      let cashLedgerWhere = '';
-      let otherIncomeWhere = '';
+      let startDate = '';
+      let endDate = '';
+      let startDay = '';
+      let endDay = '';
 
       if (filterMode === 'month') {
         const mm = String(selectedMonth).padStart(2, '0');
         const yy = String(selectedYear);
-        salesQuery = `WHERE strftime('%m', t.created_at) = '${mm}' AND strftime('%Y', t.created_at) = '${yy}'`;
-        hppQuery = `WHERE strftime('%m', t.created_at) = '${mm}' AND strftime('%Y', t.created_at) = '${yy}'`;
-        cashLedgerWhere = `WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank') AND strftime('%m', date) = '${mm}' AND strftime('%Y', date) = '${yy}'`;
-        otherIncomeWhere = `WHERE type = 'in' AND category = 'pendapatan_lain' AND strftime('%m', date) = '${mm}' AND strftime('%Y', date) = '${yy}'`;
+        startDate = `${yy}-${mm}-01 00:00:00`;
+        const nextMonth = selectedMonth === 12 ? 1 : selectedMonth + 1;
+        const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear;
+        endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01 00:00:00`;
+        startDay = `${yy}-${mm}-01`;
+        endDay = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
       } else {
-        salesQuery = `WHERE strftime('%Y', t.created_at) = '${selectedYear}'`;
-        hppQuery = `WHERE strftime('%Y', t.created_at) = '${selectedYear}'`;
-        cashLedgerWhere = `WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank') AND strftime('%Y', date) = '${selectedYear}'`;
-        otherIncomeWhere = `WHERE type = 'in' AND category = 'pendapatan_lain' AND strftime('%Y', date) = '${selectedYear}'`;
+        const yy = String(selectedYear);
+        startDate = `${yy}-01-01 00:00:00`;
+        endDate = `${selectedYear + 1}-01-01 00:00:00`;
+        startDay = `${yy}-01-01`;
+        endDay = `${selectedYear + 1}-01-01`;
       }
 
-      // 1. Penjualan bruto
-      const salesResult = await db.getFirstAsync<{ total: number; count: number }>(
-        `SELECT COALESCE(SUM(t.total), 0) as total, COUNT(*) as count
-         FROM transactions t ${salesQuery}`
+      // 1. Penjualan Bruto, Potongan Penjualan (Diskon), Pajak PB1, & Jumlah Transaksi (Memanfaatkan B-Tree Index idx_transactions_created_at)
+      const salesResult = await db.getFirstAsync<{
+        bruto: number;
+        discounts: number;
+        taxes: number;
+        count: number;
+      }>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN t.subtotal_amount > 0 THEN t.subtotal_amount ELSE (t.total + COALESCE(t.discount_amount, 0) - COALESCE(t.tax_amount, 0)) END), 0) as bruto,
+           COALESCE(SUM(t.discount_amount), 0) as discounts,
+           COALESCE(SUM(t.tax_amount), 0) as taxes,
+           COUNT(*) as count
+         FROM transactions t
+         WHERE t.created_at >= ? AND t.created_at < ?`,
+        startDate,
+        endDate
       );
 
-      // 2. HPP = SUM(qty * cost_price) dari transaction_items
+      // 2. HPP = SUM(qty * cost_price) dari transaction_items (Memanfaatkan idx_transactions_created_at & idx_transaction_items_txid)
       const hppResult = await db.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(ti.quantity * ti.cost_price), 0) as total
          FROM transaction_items ti
          JOIN transactions t ON t.id = ti.transaction_id
-         ${hppQuery}`
+         WHERE t.created_at >= ? AND t.created_at < ?`,
+        startDate,
+        endDate
       );
 
-      // 3. Beban Operasional: Single Source of Truth dari cash_ledger
+      // 3. Beban Operasional Usaha: Single Source of Truth dari cash_ledger (eksklusif stok, hutang supplier, setor bank, dan modal awal)
       const expenseResult = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger ${cashLedgerWhere}`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger
+         WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+         AND date >= ? AND date < ?`,
+        startDay,
+        endDay
       );
 
       const bebanByCategory = await db.getAllAsync<{ category: string; total: number }>(
         `SELECT category, COALESCE(SUM(amount), 0) as total FROM cash_ledger
-         ${cashLedgerWhere} GROUP BY category ORDER BY total DESC`
+         WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+         AND date >= ? AND date < ?
+         GROUP BY category ORDER BY total DESC`,
+        startDay,
+        endDay
       );
 
-      // 4. Pendapatan Lain-lain dari cash_ledger
+      // 4. Pendapatan Non-Operasional & Jasa dari cash_ledger
       const otherIncomeResult = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger ${otherIncomeWhere}`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger
+         WHERE type = 'in' AND category IN ('pendapatan_lain', 'pendapatan_jasa')
+         AND date >= ? AND date < ?`,
+        startDay,
+        endDay
       );
 
-      const penjualanBruto = salesResult?.total ?? 0;
+      const penjualanBruto = salesResult?.bruto ?? 0;
+      const potonganPenjualan = salesResult?.discounts ?? 0;
+      const pajakPB1 = salesResult?.taxes ?? 0;
+      const penjualanBersih = Math.max(0, penjualanBruto - potonganPenjualan);
       const hpp = hppResult?.total ?? 0;
-      const labaKotor = penjualanBruto - hpp;
+      const labaKotor = penjualanBersih - hpp;
       const totalBeban = expenseResult?.total ?? 0;
       const labaOperasional = labaKotor - totalBeban;
       const pendapatanLain = otherIncomeResult?.total ?? 0;
@@ -370,6 +405,9 @@ function LabaRugiTab({
       setData({
         periodeLabel,
         penjualanBruto,
+        potonganPenjualan,
+        pajakPB1,
+        penjualanBersih,
         hpp,
         labaKotor,
         totalBeban,
@@ -519,7 +557,7 @@ function LabaRugiTab({
         {/* KPI Rows */}
         <View style={styles.execRow}>
           <ThemedText style={styles.execLabel}>📈 Pendapatan Penjualan Bersih</ThemedText>
-          <ThemedText style={styles.execValueBold}>{fmtRp(data.penjualanBruto)}</ThemedText>
+          <ThemedText style={styles.execValueBold}>{fmtRp(data.penjualanBersih ?? data.penjualanBruto)}</ThemedText>
         </View>
         <View style={styles.execRow}>
           <ThemedText style={styles.execLabel}>📦 Beban Pokok Penjualan (HPP)</ThemedText>
@@ -537,7 +575,7 @@ function LabaRugiTab({
         </View>
         {data.pendapatanLain > 0 && (
           <View style={styles.execRow}>
-            <ThemedText style={styles.execLabel}>💵 Pendapatan Non-Operasional</ThemedText>
+            <ThemedText style={styles.execLabel}>💵 Pendapatan Non-Operasional / Lain-lain</ThemedText>
             <ThemedText style={[styles.execValue, { color: Colors.success }]}>+ {fmtRp(data.pendapatanLain)}</ThemedText>
           </View>
         )}
@@ -548,9 +586,9 @@ function LabaRugiTab({
             <ThemedText style={[styles.execNetLabel, { color: data.labaBersih >= 0 ? '#166534' : '#991b1b' }]}>
               {data.labaBersih >= 0 ? 'LABA BERSIH (NET PROFIT)' : 'RUGI BERSIH (NET LOSS)'}
             </ThemedText>
-            {data.penjualanBruto > 0 && (
+            {(data.penjualanBersih || data.penjualanBruto) > 0 && (
               <ThemedText style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>
-                Margin: {((data.labaBersih / data.penjualanBruto) * 100).toFixed(1)}%
+                Margin: {((data.labaBersih / (data.penjualanBersih || data.penjualanBruto)) * 100).toFixed(1)}%
               </ThemedText>
             )}
           </View>
@@ -810,13 +848,25 @@ function LabaRugiTab({
                     <ThemedText style={styles.slipRowVal}>{fmtRp(data.penjualanBruto)}</ThemedText>
                   </View>
                   <View style={styles.slipRow}>
-                    <ThemedText style={styles.slipRowLabel}>Potongan & Retur Penjualan</ThemedText>
-                    <ThemedText style={styles.slipRowVal}>Rp 0</ThemedText>
+                    <ThemedText style={styles.slipRowLabel}>Potongan & Diskon Penjualan</ThemedText>
+                    <ThemedText style={[styles.slipRowVal, data.potonganPenjualan > 0 && { color: '#b91c1c' }]}>
+                      {data.potonganPenjualan > 0 ? `- ${fmtRp(data.potonganPenjualan)}` : 'Rp 0'}
+                    </ThemedText>
                   </View>
                   <View style={[styles.slipRow, styles.slipSubtotalRow]}>
                     <ThemedText style={styles.slipSubtotalLabel}>Total Pendapatan Usaha Bersih</ThemedText>
-                    <ThemedText style={styles.slipSubtotalVal}>{fmtRp(data.penjualanBruto)}</ThemedText>
+                    <ThemedText style={styles.slipSubtotalVal}>{fmtRp(data.penjualanBersih)}</ThemedText>
                   </View>
+                  {data.pajakPB1 > 0 && (
+                    <View style={styles.slipRow}>
+                      <ThemedText style={[styles.slipRowLabel, { fontSize: 11, color: Colors.muted }]}>
+                        ℹ️ Titipan Pajak PB1 Restoran (Kewajiban Kas)
+                      </ThemedText>
+                      <ThemedText style={[styles.slipRowVal, { fontSize: 11, color: Colors.muted }]}>
+                        {fmtRp(data.pajakPB1)}
+                      </ThemedText>
+                    </View>
+                  )}
 
                   {/* II. HPP */}
                   <View style={styles.slipSectionHeader}>
@@ -935,9 +985,9 @@ function LabaRugiTab({
                         {fmtRp(data.labaBersih)}
                       </ThemedText>
                     </View>
-                    {data.penjualanBruto > 0 && (
+                    {(data.penjualanBersih || data.penjualanBruto) > 0 && (
                       <ThemedText style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                        Net Profit Margin: {((data.labaBersih / data.penjualanBruto) * 100).toFixed(1)}% dari Penjualan Bersih
+                        Net Profit Margin: {((data.labaBersih / (data.penjualanBersih || data.penjualanBruto)) * 100).toFixed(1)}% dari Penjualan Bersih
                       </ThemedText>
                     )}
                   </View>
@@ -1070,21 +1120,29 @@ function BukuKasTab({
 
   const loadTodayStats = useCallback(async () => {
     try {
-      // Tunai murni hari ini
+      // Tunai murni hari ini (Memanfaatkan B-Tree index idx_transactions_created_at)
       const sPureCash = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
+        `SELECT COALESCE(SUM(total), 0) as total FROM transactions
+         WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0)
+         AND created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')`
       );
       // Split payment porsi tunai hari ini
       const sSplit = await db.getFirstAsync<{ cashTotal: number }>(
-        `SELECT COALESCE(SUM(cash_received), 0) as cashTotal FROM transactions WHERE (payment_method = 'split' OR (cash_received > 0 AND qris_received > 0)) AND date(created_at) = date('now','localtime')`
+        `SELECT COALESCE(SUM(cash_received), 0) as cashTotal FROM transactions
+         WHERE (payment_method = 'split' OR (cash_received > 0 AND qris_received > 0))
+         AND created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')`
       );
       const totalSalesCash = (sPureCash?.total ?? 0) + (sSplit?.cashTotal ?? 0);
 
+      // Mutasi kas masuk & keluar hari ini (Memanfaatkan idx_cash_ledger_type_date)
       const lIn = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'in' AND (date(date) = date('now','localtime') OR date(created_at) = date('now','localtime'))`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger
+         WHERE type = 'in' AND date >= date('now','localtime') AND date < date('now','localtime', '+1 day')`
       );
       const lOut = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'out' AND category NOT IN ('bayar_hutang_supplier', 'setor_bank') AND (date(date) = date('now','localtime') OR date(created_at) = date('now','localtime'))`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger
+         WHERE type = 'out' AND category NOT IN ('bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+         AND date >= date('now','localtime') AND date < date('now','localtime', '+1 day')`
       );
 
       setTodayStats({

@@ -193,6 +193,14 @@ export const useCashStore = create<CashState>((set, get) => ({
       let manualBankOut = 0;
       let bankDeposited = 0;
 
+      // Pre-compute bank-in keys untuk lookup O(1) (eliminasi O(N^2) bottleneck)
+      const bankInSet = new Set<string>();
+      for (const r of rows) {
+        if (r.type === 'in' && r.account === 'bank' && r.category === 'setor_bank') {
+          bankInSet.add(`${r.amount}_${r.date}`);
+        }
+      }
+
       for (const row of rows) {
         if (row.type === 'in') {
           if (row.account === 'bank') {
@@ -208,9 +216,7 @@ export const useCashStore = create<CashState>((set, get) => ({
             if (row.category === 'setor_bank') {
               bankDeposited += row.amount;
               // Kompatibilitas legacy: jika row setor_bank tidak memiliki pasangan 'in' bank
-              const hasBankInPair = rows.some(
-                (other) => other.type === 'in' && other.account === 'bank' && other.category === 'setor_bank' && other.amount === row.amount && other.date === row.date
-              );
+              const hasBankInPair = bankInSet.has(`${row.amount}_${row.date}`);
               if (!hasBankInPair) {
                 manualBankIn += row.amount;
               }

@@ -54,6 +54,30 @@ interface ProductState {
   findProductByBarcode: (code: string) => Product | undefined;
 }
 
+let barcodeProductMap = new Map<string, Product>();
+
+function rebuildBarcodeMap(products: Product[]): Map<string, Product> {
+  const map = new Map<string, Product>();
+  for (const p of products) {
+    if (p.barcode && p.barcode.trim()) {
+      map.set(p.barcode.trim(), p);
+    }
+    if (p.barcodes) {
+      try {
+        const list: string[] = JSON.parse(p.barcodes);
+        if (Array.isArray(list)) {
+          for (const b of list) {
+            if (b && b.trim()) map.set(b.trim(), p);
+          }
+        }
+      } catch {
+        // format non-JSON
+      }
+    }
+  }
+  return map;
+}
+
 export const useProductStore = create<ProductState>((set, get) => ({
   products: [],
   loading: false,
@@ -71,6 +95,7 @@ export const useProductStore = create<ProductState>((set, get) => ({
     query += ' ORDER BY p.name ASC';
 
     const products = await db.getAllAsync<Product>(query, ...params);
+    barcodeProductMap = rebuildBarcodeMap(products);
     set({ products, loading: false });
   },
 
@@ -157,17 +182,10 @@ export const useProductStore = create<ProductState>((set, get) => ({
   findProductByBarcode: (code: string) => {
     const cleanCode = code.trim();
     if (!cleanCode) return undefined;
-    return get().products.find((p) => {
-      if (p.barcode && p.barcode.trim() === cleanCode) return true;
-      if (p.barcodes) {
-        try {
-          const list: string[] = JSON.parse(p.barcodes);
-          if (Array.isArray(list) && list.some((b) => b.trim() === cleanCode)) return true;
-        } catch {
-          if (p.barcodes.includes(cleanCode)) return true;
-        }
-      }
-      return false;
-    });
+    const directHit = barcodeProductMap.get(cleanCode);
+    if (directHit) return directHit;
+
+    const lower = cleanCode.toLowerCase();
+    return get().products.find((p) => p.name.toLowerCase() === lower);
   },
 }));

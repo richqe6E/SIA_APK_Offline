@@ -212,59 +212,19 @@ export default function HistoryScreen() {
   const handleDelete = (t: Transaction) => {
     Alert.alert(
       'Hapus Transaksi',
-      `Yakin ingin menghapus catatan riwayat transaksi ${formatInvoice(t.id, t.created_at, t.daily_seq)}? Data yang dihapus tidak dapat dipulihkan.\n\nStok produk akan dikembalikan dan piutang terkait (jika transaksi hutang) akan dihapus.`,
+      `Yakin ingin menghapus catatan riwayat transaksi ${formatInvoice(t.id, t.created_at, t.daily_seq)}? Data yang dihapus tidak dapat dipulihkan.\n\nStok produk akan dikembalikan dan piutang terkait (jika transaksi hutang) akan disinkronkan.`,
       [
         { text: 'Batal', style: 'cancel' },
         {
           text: 'Hapus',
           style: 'destructive',
           onPress: async () => {
-            try {
-              // K1 fix: hapus harus restore stok produk + hapus receivable hutang
-              // dalam satu transaksi atomik. Tanpa ini, stok akan terkurangi selamanya
-              // dan piutang orphan akan menggantung di customer_receivables.
-              await db.withExclusiveTransactionAsync(async (txn) => {
-                const items = await txn.getAllAsync<any>(
-                  'SELECT product_id, quantity, weight_gram FROM transaction_items WHERE transaction_id = ?',
-                  t.id
-                );
-
-                for (const item of items) {
-                  const prod = await txn.getFirstAsync<{ has_stock: number }>(
-                    'SELECT has_stock FROM products WHERE id = ?',
-                    item.product_id
-                  );
-                  if (prod?.has_stock === 1) {
-                    const qtyToRestore = item.weight_gram
-                      ? Math.ceil((item.weight_gram ?? 1000) / 1000)
-                      : item.quantity;
-                    await txn.runAsync(
-                      `UPDATE products SET stock = stock + ?, updated_at = datetime('now','localtime') WHERE id = ?`,
-                      qtyToRestore,
-                      item.product_id
-                    );
-                  }
-                }
-
-                if (t.is_credit === 1) {
-                  const rec = await txn.getFirstAsync<{ id: number }>(
-                    'SELECT id FROM customer_receivables WHERE transaction_id = ?',
-                    t.id
-                  );
-                  if (rec) {
-                    await txn.runAsync('DELETE FROM receivable_payments WHERE receivable_id = ?', rec.id);
-                    await txn.runAsync('DELETE FROM customer_receivables WHERE id = ?', rec.id);
-                  }
-                }
-
-                await txn.runAsync('DELETE FROM transaction_items WHERE transaction_id = ?', t.id);
-                await txn.runAsync('DELETE FROM transactions WHERE id = ?', t.id);
-              });
-              loadTransactions(db, period, page);
+            const res = await cancelTransaction(db, t.id);
+            if (res.success) {
               setSelected(null);
-              Alert.alert('Sukses', 'Transaksi dihapus. Stok produk telah dikembalikan.');
-            } catch (e: any) {
-              Alert.alert('Gagal', e?.message || 'Gagal menghapus transaksi');
+              Alert.alert('Sukses', 'Transaksi berhasil dihapus dan stok produk telah dikembalikan.');
+            } else {
+              Alert.alert('Gagal', res.message || 'Gagal menghapus transaksi');
             }
           },
         },
@@ -572,6 +532,10 @@ export default function HistoryScreen() {
               data={transactions}
               keyExtractor={(item) => item.id.toString()}
               contentContainerStyle={{ gap: 8, paddingTop: 8, paddingBottom: 32 }}
+              initialNumToRender={12}
+              maxToRenderPerBatch={12}
+              windowSize={5}
+              removeClippedSubviews={true}
               renderItem={({ item }) => {
                 const isSelected = selected?.id === item.id;
                 return (
@@ -710,6 +674,10 @@ export default function HistoryScreen() {
             data={transactions}
             keyExtractor={(item) => item.id.toString()}
             contentContainerStyle={{ gap: 8, paddingTop: 8, paddingBottom: 32 }}
+            initialNumToRender={12}
+            maxToRenderPerBatch={12}
+            windowSize={5}
+            removeClippedSubviews={true}
             renderItem={({ item }) => (
               <Pressable onPress={() => selectTransaction(item)}>
                 <Card style={styles.transactionCard} padding={12}>

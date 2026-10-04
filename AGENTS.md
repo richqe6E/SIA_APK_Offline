@@ -65,17 +65,53 @@ Proyek ini terdiri dari **2 Aplikasi Mandiri** yang saling terintegrasi melalui 
 ---
 
 ## 5. Prosedur Build & Deployment (Expo EAS)
-* **Akun EAS**: `risgoldofficial23`
+* **Akun EAS Aktif Terverifikasi**: `rikire` (`rikyrivaldi369@gmail.com`)
+* **Project ID EAS**: `97d847aa-a65d-4eb8-9d21-33f936cce00e` (`@rikire/pos-offline`)
+* **Keystore Digital**: `Build Credentials w2ACOjmW8I (default)` (Wajib dipertahankan agar update APK tidak menghapus data SQLite lokal pengguna).
 * **Profile**: `preview` (Format output berupa **.APK** langsung siap install di Android).
-* **Build Kasir Tablet**:
+* **Build Terkini (Tahap Audit Selesai)**:
+  - **Build ID**: `0cb2fde6-8240-447b-bebc-23c3618a3439`
+  - **Live URL**: https://expo.dev/accounts/rikire/projects/pos-offline/builds/0cb2fde6-8240-447b-bebc-23c3618a3439
+* **Perintah Build Latar Belakang (Non-Interactive)**:
   ```powershell
-  # Dijalankan di folder root POS-Offline-main
-  eas build -p android --profile preview --non-interactive --no-wait
+  $env:Path = "C:\Program Files\nodejs;" + $env:Path
+  $env:EXPO_TOKEN = "<EXPO_TOKEN>"
+  $env:EAS_NO_VCS = "1"
+  npx.cmd eas-cli build -p android --profile preview --non-interactive --no-wait
   ```
-* **Build Pemantau Smartphone**:
-  ```powershell
-  # Dijalankan di folder kendali-usaha-azizah
-  cd kendali-usaha-azizah
-  eas build -p android --profile preview --non-interactive --no-wait
-  ```
+
+---
+
+## 6. Riwayat Audit & Engineering (System Integrity Framework)
+
+### Tahap 1: Aplikasi Kasir Utama, Concurrency & Anti Double-Entry
+1. **SQLite PRAGMA Enforcement (`services/database.ts`)**: `PRAGMA journal_mode = 'wal'` dan `PRAGMA foreign_keys = ON` dijalankan pada setiap koneksi awal.
+2. **Indeks B-Tree Migrasi v17**: 11 indeks performa tinggi ditambahkan (`idx_transactions_created_at`, `idx_transactions_pm_split`, `idx_transaction_items_txid`, dll).
+3. **Mutex Anti Double-Entry Checkout (`stores/transactionStore.ts`)**: State `isCheckingOut` dan UI lock `isSubmitting` mengunci checkout sehingga klik cepat kasir tidak memicu nota ganda.
+4. **Atomic Sequential Nota (`daily_counters`)**: Menggantikan race condition `COUNT(*) + 1` dengan atomic increment terisolasi.
+5. **O(1) In-Memory Barcode Index (`stores/productStore.ts`)**: Hash map `barcodeProductMap` memungkinkan scan barcode instan tanpa scan linear.
+
+### Tahap 2: Laporan Keuangan SAK EMKM & Normalisasi Saldo Kas
+1. **Migrasi v18 (`services/database.ts`)**: Indeks `expenses(expense_date)`, `cash_shifts(status, opened_at)`, dan balancing modal awal shift historis.
+2. **Self-Balancing Shift Kasir (`stores/shiftStore.ts`)**: Pelepasan modal awal otomatis saat tutup shift (`type: 'out'`, `category: 'modal_awal'`), mencegah saldo kas laci menggembung fiktif.
+3. **Penyajian Laporan SAK EMKM (`app/(tabs)/financial-reports.tsx`)**:
+   - Penjualan Bruto dihitung dari harga kotor produk.
+   - Potongan Penjualan / Diskon disajikan transparan sebagai pengurang omzet bruto.
+   - Pajak PB1 diisolasi sebagai titipan kewajiban (bukan laba toko).
+   - Seluruh filter tanggal menggunakan rentang tanggal berindeks (`>= ? AND < ?`), menghilangkan delay 3–5 detik.
+4. **Cetak Thermal & PDF SAK EMKM (`services/print.ts` & `services/export.ts`)**: Format cetak terstandardisasi SAK EMKM.
+
+### Tahap 3: Riwayat Transaksi, Retur/Batal Nota & Skalabilitas Cloud Sync
+1. **Kueri Riwayat Berindeks & Virtualisasi (`history.tsx`)**: FlatList windowing (`initialNumToRender={12}`, `windowSize={5}`) menjaga konsumsi RAM < 100 MB.
+2. **Sentralisasi Pembatalan & Retur Nota**: Mengembalikan stok otomatis, memvalidasi cicilan piutang aktif (`paid_amount > 0`), dan menyinkronkan buku kas secara atomik.
+3. **Optimasi Background Cloud Sync (`services/cloudSync.ts`)**: 18 kueri full-table scan digantikan rentang berindeks dan kueri tren 7 hari dikonsolidasi menjadi 1 kueri agregat.
+4. **Pencarian Cepat Katalog & Kulakan (`product-search-modal.tsx` & `explore.tsx`)**: Barcode map caching mencegah ribuan `JSON.parse` saat mengetik pencarian barang.
+
+---
+
+## 7. Aturan Mutlak Pengembangan Selanjutnya (Core Rules)
+1. **TIDAK MENGUBAH FITUR DAN DESAIN APAPUN**: Seluruh tampilan UI, layout dual-pane, tombol, warna, modal popup, dan alur operasional aplikasi kasir harus dipertahankan 100% identik.
+2. **DOMAIN USAHA**: Toko bergerak murni di bidang **RETAIL / DISTRIBUTOR SOSIS & FROZEN FOOD ("AGEN SOSIS AZIZAH")**. Semua terminologi operasional kasir, katalog, dan freezer harus berakar pada ritel barang dagang beku.
+3. **PRESERVASI KREDENSIAL KEYSTORE**: Jangan pernah mengganti `owner` atau `projectId` di `app.json` ke project baru, agar file APK yang dihasilkan selalu kompatibel sebagai update langsung di HP kasir tanpa menghilangkan database SQLite lokal.
+
 

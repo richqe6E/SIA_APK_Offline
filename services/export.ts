@@ -43,8 +43,8 @@ export async function exportTransactionsToCSV(
   const params: any[] = [];
 
   if (startDate && endDate) {
-    whereClause = 'WHERE date(t.created_at) BETWEEN ? AND ?';
-    params.push(startDate, endDate);
+    whereClause = 'WHERE t.created_at >= ? AND t.created_at <= ?';
+    params.push(`${startDate} 00:00:00`, `${endDate} 23:59:59`);
   }
 
   const rows = await db.getAllAsync<any>(
@@ -600,8 +600,8 @@ export async function exportTransactionsToPDF(
   let whereClause = '';
   const params: any[] = [];
   if (startDate && endDate) {
-    whereClause = 'WHERE date(t.created_at) BETWEEN ? AND ?';
-    params.push(startDate, endDate);
+    whereClause = 'WHERE t.created_at >= ? AND t.created_at <= ?';
+    params.push(`${startDate} 00:00:00`, `${endDate} 23:59:59`);
   }
 
   const rows = await db.getAllAsync<any>(
@@ -774,12 +774,18 @@ export async function exportLabaRugiToPDF(params: {
             <td colspan="2">PENDAPATAN USAHA</td>
           </tr>
           <tr>
-            <td style="padding-left: 20px;">Penjualan Bersih (${data.jumlahTransaksi} transaksi)</td>
+            <td style="padding-left: 20px;">Penjualan Barang Dagangan (Bruto)</td>
             <td style="text-align: right;">${fmt(data.penjualanBruto)}</td>
           </tr>
+          ${(data.potonganPenjualan && data.potonganPenjualan > 0) ? `
+          <tr>
+            <td style="padding-left: 20px; color: #dc2626;">Potongan & Diskon Penjualan</td>
+            <td style="text-align: right; color: #dc2626;">- ${fmt(data.potonganPenjualan)}</td>
+          </tr>
+          ` : ''}
           <tr class="total-row">
-            <td>Total Pendapatan</td>
-            <td style="text-align: right;">${fmt(data.penjualanBruto)}</td>
+            <td>Total Pendapatan Usaha Bersih</td>
+            <td style="text-align: right;">${fmt(data.penjualanBersih ?? data.penjualanBruto)}</td>
           </tr>
 
           <tr class="section-header">

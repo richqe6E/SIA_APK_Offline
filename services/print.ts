@@ -299,6 +299,9 @@ export async function printLaporanLabaRugi(params: {
   data: {
     periodeLabel: string;
     penjualanBruto: number;
+    potonganPenjualan?: number;
+    penjualanBersih?: number;
+    pajakPB1?: number;
     hpp: number;
     labaKotor: number;
     totalBeban: number;
@@ -320,9 +323,13 @@ export async function printLaporanLabaRugi(params: {
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
   await BluetoothEscposPrinter.printText('A. PENDAPATAN\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Penjualan Bersih', data.penjualanBruto) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatLRRow('Penjualan Bruto', data.penjualanBruto) + '\n', {});
+  if (data.potonganPenjualan && data.potonganPenjualan > 0) {
+    await BluetoothEscposPrinter.printText(formatLRRow('Potongan Penjualan', -data.potonganPenjualan) + '\n', {});
+  }
+  const netSales = data.penjualanBersih ?? data.penjualanBruto;
   await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Total Pendapatan', data.penjualanBruto) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatLRRow('Total Pendapatan', netSales) + '\n', {});
   await BluetoothEscposPrinter.printText('\n', {});
 
   await BluetoothEscposPrinter.printText('B. HPP\n', {});

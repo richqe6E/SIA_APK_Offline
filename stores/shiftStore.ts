@@ -257,7 +257,16 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         COALESCE(SUM(CASE WHEN cash_received > 0 THEN cash_received WHEN payment_method = 'tunai' THEN total ELSE 0 END), 0) as sales_cash,
         COALESCE(SUM(CASE WHEN qris_received > 0 THEN qris_received WHEN payment_method = 'qris' THEN total ELSE 0 END), 0) as sales_non_cash
        FROM transactions
-       WHERE created_at >= ?`,
+       WHERE shift_id = ? OR (shift_id IS NULL AND created_at >= ?)`,
+      shift.id,
+      shift.opened_at
+    );
+
+    // Hitung pemasukan kas fisik non-penjualan (misal: cicilan piutang pelanggan atau penerimaan kas lain)
+    const inRow = await db.getFirstAsync<{ total_in: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total_in
+       FROM cash_ledger
+       WHERE type = 'in' AND category != 'modal_awal' AND (account = 'hand' OR account IS NULL) AND created_at >= ?`,
       shift.opened_at
     );
 
@@ -272,8 +281,9 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
     const salesCash = row?.sales_cash ?? 0;
     const salesNonCash = row?.sales_non_cash ?? 0;
     const transactionCount = row?.tx_count ?? 0;
+    const otherCashIn = inRow?.total_in ?? 0;
     const cashOut = expRow?.total_out ?? 0;
-    const expectedCash = Math.max(0, shift.starting_cash + salesCash - cashOut);
+    const expectedCash = Math.max(0, shift.starting_cash + salesCash + otherCashIn - cashOut);
 
     return {
       startingCash: shift.starting_cash,
@@ -326,6 +336,24 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
 
     if (!closedShift) {
       throw new Error('Gagal memproses penutupan shift');
+    }
+
+    // Pelepasan modal awal shift saat ditutup agar saldo kas laci kumulatif tidak menggembung
+    if (shift.starting_cash > 0) {
+      const today = getTodayDateStr();
+      await db.runAsync(
+        `INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)`,
+        'out',
+        'modal_awal',
+        `Tutup Shift Kasir #${shift.id} (${shift.cashier_name}) - Pelepasan Modal Awal`,
+        shift.starting_cash,
+        today,
+        'hand'
+      );
+      try {
+        const { useCashStore } = await import('@/stores/cashStore');
+        await useCashStore.getState().loadLedger(db);
+      } catch {}
     }
 
     set({ currentShift: null });

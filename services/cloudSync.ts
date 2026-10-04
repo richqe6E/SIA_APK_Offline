@@ -188,28 +188,31 @@ export async function compileSyncPayload(
        COALESCE(SUM(total), 0) as total_omset,
        COUNT(id) as tx_count
      FROM transactions 
-     WHERE date(created_at) = date('now','localtime')`
+     WHERE created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')`
   );
 
   const omset = txSummary?.total_omset || 0;
   const transactionCount = txSummary?.tx_count || 0;
   const avgPerTransaction = transactionCount > 0 ? Math.round(omset / transactionCount) : 0;
 
-  // 1b. Cash vs Non-Cash transactions today (termasuk porsi split payment presisi)
+  // 1b. Cash vs Non-Cash transactions today (termasuk porsi split payment presisi via index)
   const pureTunaiRow = await db.getFirstAsync<{ cnt: number; tot: number }>(
     `SELECT COUNT(id) as cnt, COALESCE(SUM(total), 0) as tot
      FROM transactions
-     WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
+     WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0)
+     AND created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')`
   );
   const pureQrisRow = await db.getFirstAsync<{ cnt: number; tot: number }>(
     `SELECT COUNT(id) as cnt, COALESCE(SUM(total), 0) as tot
      FROM transactions
-     WHERE payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
+     WHERE payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0)
+     AND created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')`
   );
   const splitTxRow = await db.getFirstAsync<{ cnt: number; cashTot: number; qrisTot: number }>(
     `SELECT COUNT(id) as cnt, COALESCE(SUM(cash_received), 0) as cashTot, COALESCE(SUM(qris_received), 0) as qrisTot
      FROM transactions
-     WHERE (payment_method = 'split' OR (cash_received > 0 AND qris_received > 0)) AND date(created_at) = date('now','localtime')`
+     WHERE (payment_method = 'split' OR (cash_received > 0 AND qris_received > 0))
+     AND created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')`
   );
 
   const cashTxCount = (pureTunaiRow?.cnt || 0) + (splitTxRow?.cnt || 0);
@@ -223,7 +226,7 @@ export async function compileSyncPayload(
        strftime('%H', created_at) as hr,
        COUNT(id) as tx_cnt
      FROM transactions
-     WHERE date(created_at) = date('now','localtime')
+     WHERE created_at >= date('now','localtime') AND created_at < date('now','localtime', '+1 day')
      GROUP BY hr
      ORDER BY tx_cnt DESC, hr ASC
      LIMIT 1`
@@ -237,7 +240,7 @@ export async function compileSyncPayload(
   const yestSummary = await db.getFirstAsync<{ total_omset: number | null }>(
     `SELECT COALESCE(SUM(total), 0) as total_omset 
      FROM transactions 
-     WHERE date(created_at) = date('now','localtime','-1 day')`
+     WHERE created_at >= date('now','localtime','-1 day') AND created_at < date('now','localtime')`
   );
   const omsetYesterday = yestSummary?.total_omset || 0;
 
@@ -245,7 +248,7 @@ export async function compileSyncPayload(
   const monthSummary = await db.getFirstAsync<{ total_omset: number | null }>(
     `SELECT COALESCE(SUM(total), 0) as total_omset 
      FROM transactions 
-     WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now','localtime')`
+     WHERE created_at >= strftime('%Y-%m-01 00:00:00', 'now','localtime')`
   );
   const omsetThisMonth = monthSummary?.total_omset || 0;
 
@@ -259,7 +262,7 @@ export async function compileSyncPayload(
        COALESCE(SUM(ti.quantity * COALESCE(ti.cost_price, 0)), 0) as total_cogs
      FROM transaction_items ti
      JOIN transactions t ON t.id = ti.transaction_id
-     WHERE date(t.created_at) = date('now','localtime')`
+     WHERE t.created_at >= date('now','localtime') AND t.created_at < date('now','localtime', '+1 day')`
   );
 
   const itemsSold = itemsSummary?.total_qty || 0;
@@ -267,11 +270,12 @@ export async function compileSyncPayload(
   const estimatedGrossProfit = Math.max(0, omset - cogs);
   const grossMarginPercent = omset > 0 ? Math.round((estimatedGrossProfit / omset) * 100) : 0;
 
-  // Today Operating Expenses (dikecualikan kulakan_stok, bayar_hutang_supplier, dan setor_bank)
+  // Today Operating Expenses (dikecualikan kulakan_stok, bayar_hutang_supplier, setor_bank, dan modal_awal)
   const expSummary = await db.getFirstAsync<{ total_exp: number | null }>(
     `SELECT COALESCE(SUM(amount), 0) as total_exp
      FROM cash_ledger
-     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank') AND date(date) = date('now','localtime')`
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+     AND date >= date('now','localtime') AND date < date('now','localtime', '+1 day')`
   );
   const operatingExpenses = expSummary?.total_exp || 0;
   const netProfitToday = estimatedGrossProfit - operatingExpenses;
@@ -281,7 +285,7 @@ export async function compileSyncPayload(
     `SELECT COALESCE(SUM(ti.quantity * COALESCE(ti.cost_price, 0)), 0) as m_cogs
      FROM transaction_items ti
      JOIN transactions t ON t.id = ti.transaction_id
-     WHERE strftime('%Y-%m', t.created_at) = strftime('%Y-%m', 'now','localtime')`
+     WHERE t.created_at >= strftime('%Y-%m-01 00:00:00', 'now','localtime')`
   );
   const mHpp = monthlyCogsRow?.m_cogs || 0;
   const mLabaKotor = Math.max(0, omsetThisMonth - mHpp);
@@ -289,7 +293,8 @@ export async function compileSyncPayload(
   const monthlyExpRow = await db.getFirstAsync<{ m_exp: number | null }>(
     `SELECT COALESCE(SUM(amount), 0) as m_exp
      FROM cash_ledger
-     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank') AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now','localtime')`
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+     AND date >= strftime('%Y-%m-01', 'now','localtime')`
   );
   const mTotalBeban = monthlyExpRow?.m_exp || 0;
   const mLabaBersih = mLabaKotor - mTotalBeban;
@@ -297,7 +302,8 @@ export async function compileSyncPayload(
   const bebanBreakdown = await db.getAllAsync<{ category: string; total: number }>(
     `SELECT category, SUM(amount) as total
      FROM cash_ledger
-     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank') AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now','localtime')
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+     AND date >= strftime('%Y-%m-01', 'now','localtime')
      GROUP BY category
      ORDER BY total DESC
      LIMIT 5`
@@ -441,7 +447,7 @@ export async function compileSyncPayload(
      FROM transaction_items ti
      JOIN transactions t ON t.id = ti.transaction_id
      JOIN products p ON p.id = ti.product_id
-     WHERE date(t.created_at) = date('now','localtime')
+     WHERE t.created_at >= date('now','localtime') AND t.created_at < date('now','localtime', '+1 day')
      GROUP BY p.id, p.name
      ORDER BY qty DESC
      LIMIT 5`
@@ -602,7 +608,8 @@ export async function compileSyncPayload(
   }>(
     `SELECT id, category, description, amount, created_at 
      FROM cash_ledger 
-     WHERE type = 'out' AND category != 'setor_bank' AND date(created_at) = date('now','localtime')
+     WHERE type = 'out' AND category NOT IN ('setor_bank', 'modal_awal')
+     AND date >= date('now','localtime') AND date < date('now','localtime', '+1 day')
      ORDER BY id DESC
      LIMIT 30`
   );
@@ -621,8 +628,16 @@ export async function compileSyncPayload(
     };
   });
 
-  // 17. Tren Penjualan 7 Hari Terakhir
+  // 17. Tren Penjualan 7 Hari Terakhir (1 Kueri Agregat Cepat Berindeks)
   const daysMap = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+  const trendRows = await db.getAllAsync<{ d: string; total: number }>(
+    `SELECT date(created_at) as d, COALESCE(SUM(total), 0) as total
+     FROM transactions
+     WHERE created_at >= datetime('now','localtime','-6 days')
+     GROUP BY date(created_at)`
+  );
+  const trendMap = new Map(trendRows.map((r) => [r.d, r.total]));
+
   const weeklySalesTrend: {
     date: string;
     dayName: string;
@@ -634,16 +649,10 @@ export async function compileSyncPayload(
     const dateStr = d.toISOString().slice(0, 10);
     const dayName = i === 0 ? 'Hari Ini' : daysMap[d.getDay()];
 
-    const row = await db.getFirstAsync<{ total: number | null }>(
-      `SELECT COALESCE(SUM(total), 0) as total 
-       FROM transactions 
-       WHERE date(created_at) = ?`,
-      [dateStr]
-    );
     weeklySalesTrend.push({
       date: dateStr,
       dayName,
-      total: row?.total || 0,
+      total: trendMap.get(dateStr) || 0,
     });
   }
 
