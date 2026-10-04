@@ -11,6 +11,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Colors } from '@/constants/theme';
+import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
 
 interface WeightedProductModalProps {
   visible: boolean;
@@ -34,18 +35,18 @@ export function WeightedProductModal({
   onConfirm,
 }: WeightedProductModalProps) {
   const [weightStr, setWeightStr] = useState('1000');
-  const [priceStr, setPriceStr] = useState(defaultPricePerKg.toString());
+  const [priceStr, setPriceStr] = useState(formatRupiahInput(defaultPricePerKg));
 
   useEffect(() => {
     if (visible) {
       setWeightStr(initialWeightGram ? initialWeightGram.toString() : '1000');
-      setPriceStr((initialPricePerKg ?? defaultPricePerKg).toString());
+      setPriceStr(formatRupiahInput(initialPricePerKg ?? defaultPricePerKg));
     }
   }, [visible, initialWeightGram, initialPricePerKg, defaultPricePerKg]);
 
-  const weightNum = parseFloat(weightStr) || 0;
-  const priceNum = parseFloat(priceStr) || 0;
-  const subtotal = Math.round((weightNum / 1000) * priceNum);
+  const weightNum = Math.max(0, parseFloat(weightStr) || 0);
+  const priceNum = Math.max(0, parseRupiahInput(priceStr));
+  const subtotal = Math.max(0, Math.round((weightNum / 1000) * priceNum));
   const kgFormatted = (weightNum / 1000).toLocaleString('id-ID', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 3,
@@ -105,7 +106,7 @@ export function WeightedProductModal({
               placeholderTextColor={Colors.disabled}
               keyboardType="numeric"
               value={weightStr}
-              onChangeText={setWeightStr}
+              onChangeText={(t) => setWeightStr(t.replace(/[^0-9.]/g, ''))}
               autoFocus
             />
 
@@ -144,7 +145,7 @@ export function WeightedProductModal({
               placeholderTextColor={Colors.disabled}
               keyboardType="numeric"
               value={priceStr}
-              onChangeText={setPriceStr}
+              onChangeText={(text) => setPriceStr(formatRupiahInput(text))}
             />
           </View>
 

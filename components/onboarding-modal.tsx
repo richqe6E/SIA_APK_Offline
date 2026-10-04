@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Colors } from '@/constants/theme';
-import { useSettingsStore, BusinessMode } from '@/stores/settingsStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 interface OnboardingModalProps {
   visible: boolean;
@@ -22,7 +22,6 @@ export function OnboardingModal({ visible, onComplete }: OnboardingModalProps) {
   const completeOnboarding = useSettingsStore((s) => s.completeOnboarding);
 
   const [storeName, setStoreName] = useState('');
-  const [selectedMode, setSelectedMode] = useState<BusinessMode>('retail');
   const [pin, setPin] = useState('123456');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -37,7 +36,7 @@ export function OnboardingModal({ visible, onComplete }: OnboardingModalProps) {
     }
 
     try {
-      await completeOnboarding(db, storeName.trim(), pin.trim(), 'retail');
+      await completeOnboarding(db, storeName.trim(), pin.trim());
       onComplete();
     } catch (e: any) {
       setErrorMsg(e.message || 'Gagal menyimpan pengaturan awal');

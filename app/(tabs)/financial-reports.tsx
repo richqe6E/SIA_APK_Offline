@@ -31,7 +31,6 @@ import {
   CASH_IN_CATEGORIES,
   CASH_OUT_CATEGORIES,
   CASH_CATEGORY_MAP,
-  getCashOutCategories,
   type CashTransactionType,
   type CashEntry,
 } from '@/stores/cashStore';
@@ -39,8 +38,9 @@ import { exportCashLedgerToPDF, exportLabaRugiToPDF, shareFile } from '@/service
 import { printLaporanLabaRugi } from '@/services/print';
 import { usePrinterStore } from '@/stores/printerStore';
 import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { BankDepositModal } from '@/components/bank-deposit-modal';
+import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
 
 // ─────────────────────────────────────────
 // Types & Constants
@@ -101,7 +101,6 @@ export default function FinancialReportsScreen() {
   const {
     storeName,
     businessType,
-    businessMode,
     storeAddress,
     storePhone,
     storePhone2,
@@ -139,6 +138,12 @@ export default function FinancialReportsScreen() {
   const [activeTab, setActiveTab] = useState<ActiveTab>(isKasir ? 'bukukas' : 'labarugi');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+  useFocusEffect(
+    useCallback(() => {
+      setRefreshTrigger((prev) => prev + 1);
+    }, [])
+  );
+
   useEffect(() => {
     if (isKasir && activeTab !== 'bukukas') {
       setActiveTab('bukukas');
@@ -154,9 +159,7 @@ export default function FinancialReportsScreen() {
 
   const handleTabChange = (tab: ActiveTab) => {
     setActiveTab(tab);
-    if (tab === 'labarugi') {
-      setRefreshTrigger((prev) => prev + 1);
-    }
+    setRefreshTrigger((prev) => prev + 1);
   };
 
   return (
@@ -170,7 +173,7 @@ export default function FinancialReportsScreen() {
           <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
             {isKasir
               ? 'Buku Kas Operasional & Pelunasan Piutang Pelanggan'
-              : `Standar Akuntansi POS Mikro (${businessMode === 'kuliner' ? 'Mode Kuliner' : 'Mode Retail'})`}
+              : 'Standar Akuntansi POS Mikro (Mode Retail)'}
           </ThemedText>
         </View>
 
@@ -1038,7 +1041,7 @@ function BukuKasTab({
   isTabletOrLandscape?: boolean;
 }) {
   const router = useRouter();
-  const { storeName, storeAddress, storePhone, storePhone2, businessMode, currentUserRole } = useSettingsStore();
+  const { storeName, storeAddress, storePhone, storePhone2, currentUserRole } = useSettingsStore();
   const isKasir = currentUserRole === 'kasir';
   const {
     entries,
@@ -1067,18 +1070,25 @@ function BukuKasTab({
 
   const loadTodayStats = useCallback(async () => {
     try {
-      const sCash = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai' AND date(created_at) = date('now','localtime')`
+      // Tunai murni hari ini
+      const sPureCash = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
       );
+      // Split payment porsi tunai hari ini
+      const sSplit = await db.getFirstAsync<{ cashTotal: number }>(
+        `SELECT COALESCE(SUM(cash_received), 0) as cashTotal FROM transactions WHERE (payment_method = 'split' OR (cash_received > 0 AND qris_received > 0)) AND date(created_at) = date('now','localtime')`
+      );
+      const totalSalesCash = (sPureCash?.total ?? 0) + (sSplit?.cashTotal ?? 0);
+
       const lIn = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'in' AND date(date) = date('now','localtime')`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'in' AND (date(date) = date('now','localtime') OR date(created_at) = date('now','localtime'))`
       );
       const lOut = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'out' AND category NOT IN ('bayar_hutang_supplier', 'setor_bank') AND date(date) = date('now','localtime')`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'out' AND category NOT IN ('bayar_hutang_supplier', 'setor_bank') AND (date(date) = date('now','localtime') OR date(created_at) = date('now','localtime'))`
       );
 
       setTodayStats({
-        cashIn: (sCash?.total ?? 0) + (lIn?.total ?? 0),
+        cashIn: totalSalesCash + (lIn?.total ?? 0),
         cashOut: lOut?.total ?? 0,
       });
     } catch {}
@@ -1096,6 +1106,7 @@ function BukuKasTab({
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [exportingCashPdf, setExportingCashPdf] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleExportCashPDF = async (type: 'in' | 'out') => {
     try {
@@ -1124,12 +1135,14 @@ function BukuKasTab({
     }
   };
 
-  useEffect(() => {
-    loadLedger(db);
-    loadDebts(db);
-    loadReceivables(db);
-    loadTodayStats();
-  }, [db, loadLedger, loadDebts, loadReceivables, loadTodayStats]);
+  useFocusEffect(
+    useCallback(() => {
+      loadLedger(db);
+      loadDebts(db);
+      loadReceivables(db);
+      loadTodayStats();
+    }, [db, loadLedger, loadDebts, loadReceivables, loadTodayStats])
+  );
 
   const openModal = (type: CashTransactionType) => {
     setEditingEntry(null);
@@ -1147,14 +1160,15 @@ function BukuKasTab({
     setEntryType(entry.type);
     setCategory(entry.category);
     setDescription(entry.description);
-    setAmount(entry.amount.toString());
+    setAmount(formatRupiahInput(entry.amount));
     setEntryAccount(entry.account || 'hand');
     setDate(entry.date);
     setModalVisible(true);
   };
 
   const handleSave = async () => {
-    const numericAmount = parseFloat(amount.replace(/[^0-9]/g, ''));
+    if (isSubmitting) return;
+    const numericAmount = parseRupiahInput(amount);
     if (!numericAmount || numericAmount <= 0) {
       Alert.alert('Error', 'Nominal harus lebih besar dari 0');
       return;
@@ -1165,6 +1179,7 @@ function BukuKasTab({
     }
     const cleanDate = date.trim() || new Date().toISOString().slice(0, 10);
 
+    setIsSubmitting(true);
     try {
       if (editingEntry) {
         await updateEntry(
@@ -1179,11 +1194,15 @@ function BukuKasTab({
         );
         setModalVisible(false);
         setEditingEntry(null);
+        await loadLedger(db);
+        await loadTodayStats();
         onMutate?.();
         Alert.alert('Sukses', 'Catatan mutasi kas berhasil diperbarui');
       } else {
         await addEntry(db, entryType, category, description.trim(), numericAmount, cleanDate, entryAccount);
         setModalVisible(false);
+        await loadLedger(db);
+        await loadTodayStats();
         onMutate?.();
         Alert.alert(
           'Sukses',
@@ -1192,10 +1211,12 @@ function BukuKasTab({
       }
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Gagal menyimpan transaksi kas');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleDelete = (id: number) => {
+  const handleDelete = useCallback((id: number) => {
     Alert.alert('Hapus Catatan', 'Apakah Anda yakin ingin menghapus catatan mutasi kas ini?', [
       { text: 'Batal', style: 'cancel' },
       {
@@ -1207,10 +1228,83 @@ function BukuKasTab({
         },
       },
     ]);
-  };
+  }, [db, deleteEntry, onMutate]);
+
+  const renderMutasiItem = useCallback(({ item }: { item: CashEntry }) => {
+    const isCashIn = item.type === 'in';
+    const isBankDeposit = item.category === 'setor_bank';
+    const isBankAccount = item.account === 'bank';
+    const categoryLabel = CASH_CATEGORY_MAP[item.category] || item.category.replace(/_/g, ' ');
+    return (
+      <Card padding={10} style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
+              <ThemedText style={{ fontSize: 14 }}>
+                {CATEGORY_ICONS[item.category] || (isCashIn ? '💰' : '💸')}
+              </ThemedText>
+              <ThemedText style={{ fontSize: 12, fontWeight: '700', color: isBankDeposit ? '#0369a1' : '#1e293b' }}>
+                {categoryLabel}
+              </ThemedText>
+              <View
+                style={{
+                  backgroundColor: isBankAccount ? '#e0f2fe' : '#f1f5f9',
+                  paddingHorizontal: 5,
+                  paddingVertical: 1,
+                  borderRadius: 4,
+                }}
+              >
+                <ThemedText
+                  style={{
+                    fontSize: 9,
+                    color: isBankAccount ? '#0369a1' : '#475569',
+                    fontWeight: '700',
+                  }}
+                >
+                  {isBankAccount ? '🏛️ Kas Bank' : '💵 Kas Fisik'}
+                </ThemedText>
+              </View>
+              {isBankDeposit && (
+                <View style={{ backgroundColor: '#e0f2fe', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                  <ThemedText style={{ fontSize: 9, color: '#0369a1', fontWeight: '700' }}>Transfer Bank</ThemedText>
+                </View>
+              )}
+            </View>
+            <ThemedText style={{ fontSize: 11, color: '#64748b' }} numberOfLines={1}>
+              {item.description}
+            </ThemedText>
+            <ThemedText style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 2 }}>
+              {item.date}
+            </ThemedText>
+          </View>
+
+          <View style={{ alignItems: 'flex-end' }}>
+            <ThemedText
+              style={{
+                fontSize: 13,
+                fontWeight: '800',
+                color: isCashIn ? '#15803d' : isBankDeposit ? '#0284c7' : '#b91c1c',
+              }}
+            >
+              {isCashIn ? '+ ' : '- '} {fmtRp(item.amount)}
+            </ThemedText>
+
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+              <TouchableOpacity onPress={() => openEditModal(item)}>
+                <ThemedText style={{ fontSize: 10, color: Colors.tint, fontWeight: '600' }}>Edit</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleDelete(item.id)}>
+                <ThemedText style={{ fontSize: 10, color: Colors.danger, fontWeight: '600' }}>Hapus</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Card>
+    );
+  }, [openEditModal, handleDelete]);
 
   const rawCategoriesToPick: readonly { id: string; label: string }[] =
-    entryType === 'in' ? CASH_IN_CATEGORIES : getCashOutCategories(businessMode);
+    entryType === 'in' ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES;
   const categoriesToPick = isKasir
     ? rawCategoriesToPick.filter((c) => c.id !== 'bayar_hutang_supplier' && c.id !== 'kulakan_stok')
     : rawCategoriesToPick;
@@ -1428,7 +1522,7 @@ function BukuKasTab({
           </View>
         </View>
 
-        {/* Sub-metrik Kas Masuk, Kas Keluar, dan Setor Bank */}
+        {/* Metrik Konsisten Kas Masuk & Kas Keluar Hari Ini (Sinkron dengan Kasir & Dashboard) */}
         <View
           style={{
             flexDirection: 'row',
@@ -1448,12 +1542,12 @@ function BukuKasTab({
               borderColor: '#dcfce7',
             }}
           >
-            <ThemedText style={{ fontSize: 9.5, color: '#16a34a', fontWeight: '700' }}>📥 Kas Masuk (+)</ThemedText>
-            <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#15803d', marginTop: 1 }} numberOfLines={1}>
-              {fmtRp(salesCashTotal + (salesQrisTotal || 0) + totalCashIn)}
+            <ThemedText style={{ fontSize: 9.5, color: '#16a34a', fontWeight: '700' }}>📥 Kas Masuk Hari Ini</ThemedText>
+            <ThemedText style={{ fontSize: 12, fontWeight: '800', color: '#15803d', marginTop: 1 }} numberOfLines={1}>
+              {fmtRp(todayStats.cashIn)}
             </ThemedText>
             <ThemedText style={{ fontSize: 8.5, color: '#64748b' }} numberOfLines={1}>
-              Penjualan & Modal
+              Penjualan fisik & modal
             </ThemedText>
           </View>
 
@@ -1467,12 +1561,12 @@ function BukuKasTab({
               borderColor: '#fee2e2',
             }}
           >
-            <ThemedText style={{ fontSize: 9.5, color: '#dc2626', fontWeight: '700' }}>📤 Kas Keluar (-)</ThemedText>
-            <ThemedText style={{ fontSize: 11.5, fontWeight: '800', color: '#b91c1c', marginTop: 1 }} numberOfLines={1}>
-              {fmtRp(totalCashOut)}
+            <ThemedText style={{ fontSize: 9.5, color: '#dc2626', fontWeight: '700' }}>📤 Kas Keluar Hari Ini</ThemedText>
+            <ThemedText style={{ fontSize: 12, fontWeight: '800', color: '#b91c1c', marginTop: 1 }} numberOfLines={1}>
+              {fmtRp(todayStats.cashOut)}
             </ThemedText>
             <ThemedText style={{ fontSize: 8.5, color: '#64748b' }} numberOfLines={1}>
-              Beban & Kulakan
+              Beban operasional harian
             </ThemedText>
           </View>
 
@@ -1744,85 +1838,14 @@ function BukuKasTab({
 
             {renderAccountFilterChips()}
 
-            {loading ? (
+            {loading && entries.length === 0 ? (
               <ActivityIndicator size="large" color={Colors.tint} style={{ marginTop: 24 }} />
             ) : (
               <FlatList
                 data={filteredEntries}
                 keyExtractor={(item) => item.id.toString()}
                 contentContainerStyle={{ gap: 6, paddingBottom: 32 }}
-                renderItem={({ item }) => {
-                  const isCashIn = item.type === 'in';
-                  const isBankDeposit = item.category === 'setor_bank';
-                  const isBankAccount = item.account === 'bank';
-                  const categoryLabel = CASH_CATEGORY_MAP[item.category] || item.category.replace(/_/g, ' ');
-                  return (
-                    <Card padding={10} style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <View style={{ flex: 1, paddingRight: 8 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
-                            <ThemedText style={{ fontSize: 14 }}>
-                              {CATEGORY_ICONS[item.category] || (isCashIn ? '💰' : '💸')}
-                            </ThemedText>
-                            <ThemedText style={{ fontSize: 12, fontWeight: '700', color: isBankDeposit ? '#0369a1' : '#1e293b' }}>
-                              {categoryLabel}
-                            </ThemedText>
-                            <View
-                              style={{
-                                backgroundColor: isBankAccount ? '#e0f2fe' : '#f1f5f9',
-                                paddingHorizontal: 5,
-                                paddingVertical: 1,
-                                borderRadius: 4,
-                              }}
-                            >
-                              <ThemedText
-                                style={{
-                                  fontSize: 9,
-                                  color: isBankAccount ? '#0369a1' : '#475569',
-                                  fontWeight: '700',
-                                }}
-                              >
-                                {isBankAccount ? '🏛️ Kas Bank' : '💵 Kas Fisik'}
-                              </ThemedText>
-                            </View>
-                            {isBankDeposit && (
-                              <View style={{ backgroundColor: '#e0f2fe', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
-                                <ThemedText style={{ fontSize: 9, color: '#0369a1', fontWeight: '700' }}>Transfer Bank</ThemedText>
-                              </View>
-                            )}
-                          </View>
-                          <ThemedText style={{ fontSize: 11, color: '#64748b' }} numberOfLines={1}>
-                            {item.description}
-                          </ThemedText>
-                          <ThemedText style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 2 }}>
-                            {item.date}
-                          </ThemedText>
-                        </View>
-
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <ThemedText
-                            style={{
-                              fontSize: 13,
-                              fontWeight: '800',
-                              color: isCashIn ? '#15803d' : isBankDeposit ? '#0284c7' : '#b91c1c',
-                            }}
-                          >
-                            {isCashIn ? '+ ' : '- '} {fmtRp(item.amount)}
-                          </ThemedText>
-
-                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                            <TouchableOpacity onPress={() => openEditModal(item)}>
-                              <ThemedText style={{ fontSize: 10, color: Colors.tint, fontWeight: '600' }}>Edit</ThemedText>
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => handleDelete(item.id)}>
-                              <ThemedText style={{ fontSize: 10, color: Colors.danger, fontWeight: '600' }}>Hapus</ThemedText>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      </View>
-                    </Card>
-                  );
-                }}
+                renderItem={renderMutasiItem}
                 ListEmptyComponent={
                   <EmptyState
                     icon="📒"
@@ -1855,85 +1878,14 @@ function BukuKasTab({
 
           {renderAccountFilterChips()}
 
-          {loading ? (
+          {loading && entries.length === 0 ? (
             <ActivityIndicator size="large" color={Colors.tint} style={{ marginTop: 24 }} />
           ) : (
             <FlatList
               data={filteredEntries}
               keyExtractor={(item) => item.id.toString()}
               contentContainerStyle={{ gap: 6, paddingBottom: 32 }}
-              renderItem={({ item }) => {
-                const isCashIn = item.type === 'in';
-                const isBankDeposit = item.category === 'setor_bank';
-                const isBankAccount = item.account === 'bank';
-                const categoryLabel = CASH_CATEGORY_MAP[item.category] || item.category.replace(/_/g, ' ');
-                return (
-                  <Card padding={10} style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <View style={{ flex: 1, paddingRight: 8 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
-                          <ThemedText style={{ fontSize: 14 }}>
-                            {CATEGORY_ICONS[item.category] || (isCashIn ? '💰' : '💸')}
-                          </ThemedText>
-                          <ThemedText style={{ fontSize: 12, fontWeight: '700', color: isBankDeposit ? '#0369a1' : '#1e293b' }}>
-                            {categoryLabel}
-                          </ThemedText>
-                          <View
-                            style={{
-                              backgroundColor: isBankAccount ? '#e0f2fe' : '#f1f5f9',
-                              paddingHorizontal: 5,
-                              paddingVertical: 1,
-                              borderRadius: 4,
-                            }}
-                          >
-                            <ThemedText
-                              style={{
-                                fontSize: 9,
-                                color: isBankAccount ? '#0369a1' : '#475569',
-                                fontWeight: '700',
-                              }}
-                            >
-                              {isBankAccount ? '🏛️ Kas Bank' : '💵 Kas Fisik'}
-                            </ThemedText>
-                          </View>
-                          {isBankDeposit && (
-                            <View style={{ backgroundColor: '#e0f2fe', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
-                              <ThemedText style={{ fontSize: 9, color: '#0369a1', fontWeight: '700' }}>Transfer Bank</ThemedText>
-                            </View>
-                          )}
-                        </View>
-                        <ThemedText style={{ fontSize: 11, color: '#64748b' }} numberOfLines={1}>
-                          {item.description}
-                        </ThemedText>
-                        <ThemedText style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 2 }}>
-                          {item.date}
-                        </ThemedText>
-                      </View>
-
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <ThemedText
-                          style={{
-                            fontSize: 13,
-                            fontWeight: '800',
-                            color: isCashIn ? '#15803d' : isBankDeposit ? '#0284c7' : '#b91c1c',
-                          }}
-                        >
-                          {isCashIn ? '+ ' : '- '} {fmtRp(item.amount)}
-                        </ThemedText>
-
-                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                          <TouchableOpacity onPress={() => openEditModal(item)}>
-                            <ThemedText style={{ fontSize: 10, color: Colors.tint, fontWeight: '600' }}>Edit</ThemedText>
-                          </TouchableOpacity>
-                          <TouchableOpacity onPress={() => handleDelete(item.id)}>
-                            <ThemedText style={{ fontSize: 10, color: Colors.danger, fontWeight: '600' }}>Hapus</ThemedText>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    </View>
-                  </Card>
-                );
-              }}
+              renderItem={renderMutasiItem}
               ListEmptyComponent={
                 <EmptyState
                   icon="📒"
@@ -2091,11 +2043,11 @@ function BukuKasTab({
               <ThemedText style={styles.formLabel}>Nominal (Rp)</ThemedText>
               <TextInput
                 style={styles.formInput}
-                placeholder="Contoh: 150000"
+                placeholder="Contoh: 150.000"
                 placeholderTextColor={Colors.disabled}
                 keyboardType="numeric"
                 value={amount}
-                onChangeText={setAmount}
+                onChangeText={(val) => setAmount(formatRupiahInput(val))}
               />
             </View>
 
@@ -2105,15 +2057,17 @@ function BukuKasTab({
                 variant="secondary"
                 size="sm"
                 style={{ flex: 1 }}
+                disabled={isSubmitting}
                 onPress={() => {
                   setModalVisible(false);
                   setEditingEntry(null);
                 }}
               />
               <Button
-                title={editingEntry ? 'Simpan Perubahan' : 'Simpan Kas'}
+                title={isSubmitting ? 'Menyimpan...' : (editingEntry ? 'Simpan Perubahan' : 'Simpan Kas')}
                 size="sm"
                 style={{ flex: 1 }}
+                disabled={isSubmitting}
                 onPress={handleSave}
               />
             </View>

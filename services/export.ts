@@ -82,7 +82,7 @@ export async function exportTransactionsToCSV(
     if (r.id !== currentTransactionId) {
       currentTransactionId = r.id;
       rowTotal = r.total;
-      rowPayMethod = r.payment_method === 'tunai' ? 'Tunai (Kas Tangan)' : r.payment_method === 'hutang' ? 'Hutang / Kasbon' : 'QRIS / Transfer (Kas Bank)';
+      rowPayMethod = r.payment_method === 'tunai' ? 'Tunai (Kas Tangan)' : r.payment_method === 'hutang' ? 'Hutang / Kasbon' : r.payment_method === 'split' ? 'Split (Tunai + QRIS)' : 'QRIS / Transfer (Kas Bank)';
       rowPayAmount = r.payment_amount;
       rowChange = r.change;
       rowDate = formatDate(new Date(r.created_at));
@@ -619,7 +619,7 @@ export async function exportTransactionsToPDF(
   const totalOmset = rows.reduce((sum, r) => sum + r.total, 0);
 
   const tableRows = rows.map((t, idx) => {
-    const payLabel = t.payment_method === 'tunai' ? 'Tunai' : t.payment_method === 'hutang' ? 'Hutang / Bon' : 'QRIS / Transfer';
+    const payLabel = t.payment_method === 'tunai' ? 'Tunai' : t.payment_method === 'hutang' ? 'Hutang / Bon' : t.payment_method === 'split' ? 'Split (Tunai + QRIS)' : 'QRIS / Transfer';
     return `
     <tr>
       <td style="text-align: center;">${idx + 1}</td>

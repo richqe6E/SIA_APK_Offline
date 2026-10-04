@@ -66,7 +66,7 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
   todayDrawerDate: null,
   todayDrawerAmount: 100000,
   isDrawerSetToday: false,
-  cashierList: ['Kasir 1', 'Kasir 2'],
+  cashierList: [],
 
   loadShiftData: async (db) => {
     try {
@@ -82,12 +82,12 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       const savedAmount = Number(map.get('daily_drawer_amount')) || 0;
       const isSet = savedDate === today && savedAmount > 0;
 
-      let cashiers = ['Kasir 1', 'Kasir 2'];
+      let cashiers: string[] = [];
       const rawCashiers = map.get('cashier_employees');
       if (rawCashiers) {
         try {
           const parsed = JSON.parse(rawCashiers);
-          if (Array.isArray(parsed) && parsed.length > 0) {
+          if (Array.isArray(parsed)) {
             cashiers = parsed;
           }
         } catch {}
@@ -182,7 +182,7 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
 
   removeCashierEmployee: async (db, name) => {
     const list = get().cashierList.filter((item) => item !== name);
-    const updated = list.length > 0 ? list : ['Kasir'];
+    const updated = list;
     await db.runAsync(
       "INSERT OR REPLACE INTO settings (key, value) VALUES ('cashier_employees', ?)",
       JSON.stringify(updated)
@@ -204,11 +204,12 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
   },
 
   openShift: async (db, cashierName, startingCash) => {
+    const cleanName = cashierName.trim() || 'Kasir';
     const result = await db.runAsync(
       `INSERT INTO cash_shifts (
         cashier_name, starting_cash, expected_cash, status
       ) VALUES (?, ?, ?, 'open')`,
-      cashierName.trim() || 'Kasir',
+      cleanName,
       startingCash,
       startingCash
     );
@@ -220,6 +221,24 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
 
     if (!newShift) {
       throw new Error('Gagal membuka shift kasir');
+    }
+
+    // Integrasikan modal awal ke cash_ledger agar masuk ke saldo laci fisik kasir
+    if (startingCash > 0) {
+      const today = getTodayDateStr();
+      await db.runAsync(
+        `INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)`,
+        'in',
+        'modal_awal',
+        `Modal Awal Kasir Shift #${newShift.id} (${cleanName})`,
+        startingCash,
+        today,
+        'hand'
+      );
+      try {
+        const { useCashStore } = await import('@/stores/cashStore');
+        await useCashStore.getState().loadLedger(db);
+      } catch {}
     }
 
     set({ currentShift: newShift });
@@ -235,17 +254,26 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
     }>(
       `SELECT
         COUNT(*) as tx_count,
-        COALESCE(SUM(CASE WHEN payment_method = 'tunai' THEN total ELSE 0 END), 0) as sales_cash,
-        COALESCE(SUM(CASE WHEN payment_method = 'qris' THEN total ELSE 0 END), 0) as sales_non_cash
+        COALESCE(SUM(CASE WHEN cash_received > 0 THEN cash_received WHEN payment_method = 'tunai' THEN total ELSE 0 END), 0) as sales_cash,
+        COALESCE(SUM(CASE WHEN qris_received > 0 THEN qris_received WHEN payment_method = 'qris' THEN total ELSE 0 END), 0) as sales_non_cash
        FROM transactions
        WHERE created_at >= ?`,
+      shift.opened_at
+    );
+
+    // Hitung pengeluaran kas fisik selama shift berjalan
+    const expRow = await db.getFirstAsync<{ total_out: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total_out
+       FROM cash_ledger
+       WHERE type = 'out' AND (account = 'hand' OR account IS NULL) AND created_at >= ?`,
       shift.opened_at
     );
 
     const salesCash = row?.sales_cash ?? 0;
     const salesNonCash = row?.sales_non_cash ?? 0;
     const transactionCount = row?.tx_count ?? 0;
-    const expectedCash = shift.starting_cash + salesCash;
+    const cashOut = expRow?.total_out ?? 0;
+    const expectedCash = Math.max(0, shift.starting_cash + salesCash - cashOut);
 
     return {
       startingCash: shift.starting_cash,

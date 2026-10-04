@@ -102,9 +102,11 @@ export async function restoreDatabaseBackup(
 
   const { data } = parsed;
 
-  await db.withTransactionAsync(async () => {
+  // K2 fix: gunakan transaksi EKSKLUSIF agar seluruh loop restore terjadi dalam satu
+  // transaksi atomik — tidak ada kemungkinan sebagian tabel terisi sebagian kosong.
+  await db.withExclusiveTransactionAsync(async (txn) => {
     // 1. Bersihkan seluruh tabel
-    await db.execAsync(`
+    await txn.execAsync(`
       DELETE FROM cash_shifts;
       DELETE FROM pending_orders;
       DELETE FROM transaction_items;
@@ -123,6 +125,7 @@ export async function restoreDatabaseBackup(
       DELETE FROM categories;
       DELETE FROM customers;
       DELETE FROM suppliers;
+      DELETE FROM daily_counters;
       DELETE FROM sqlite_sequence;
     `);
 
@@ -130,7 +133,7 @@ export async function restoreDatabaseBackup(
     if (Array.isArray(data.settings)) {
       for (const row of data.settings) {
         if (row.key && row.value !== undefined) {
-          await db.runAsync(
+          await txn.runAsync(
             'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
             row.key,
             String(row.value)
@@ -142,7 +145,7 @@ export async function restoreDatabaseBackup(
     // 3. Pulihkan Categories
     if (Array.isArray(data.categories)) {
       for (const row of data.categories) {
-        await db.runAsync(
+        await txn.runAsync(
           'INSERT INTO categories (id, name, created_at) VALUES (?, ?, ?)',
           row.id,
           row.name,
@@ -154,7 +157,7 @@ export async function restoreDatabaseBackup(
     // 4. Pulihkan Products
     if (Array.isArray(data.products)) {
       for (const row of data.products) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO products (
             id, name, category_id, price, cost_price, has_stock, stock, min_stock,
             image_path, barcode, barcodes, is_weighted, expired_date, created_at, updated_at
@@ -181,7 +184,7 @@ export async function restoreDatabaseBackup(
     // 5. Pulihkan Customers
     if (Array.isArray(data.customers)) {
       for (const row of data.customers) {
-        await db.runAsync(
+        await txn.runAsync(
           'INSERT INTO customers (id, name, address, phone, created_at) VALUES (?, ?, ?, ?, ?)',
           row.id,
           row.name,
@@ -195,7 +198,7 @@ export async function restoreDatabaseBackup(
     // 6. Pulihkan Suppliers
     if (Array.isArray(data.suppliers)) {
       for (const row of data.suppliers) {
-        await db.runAsync(
+        await txn.runAsync(
           'INSERT INTO suppliers (id, name, address, phone, created_at) VALUES (?, ?, ?, ?, ?)',
           row.id,
           row.name,
@@ -209,7 +212,7 @@ export async function restoreDatabaseBackup(
     // 7. Pulihkan Purchases & Purchase Items
     if (Array.isArray(data.purchases)) {
       for (const row of data.purchases) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO purchases (
             id, supplier_id, invoice_number, total_amount, payment_type, payment_source, due_date, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -227,7 +230,7 @@ export async function restoreDatabaseBackup(
 
     if (Array.isArray(data.purchase_items)) {
       for (const row of data.purchase_items) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO purchase_items (
             id, purchase_id, product_id, product_name, quantity, cost_price, subtotal
           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -245,7 +248,7 @@ export async function restoreDatabaseBackup(
     // 8. Pulihkan Supplier Debts & Payments
     if (Array.isArray(data.supplier_debts)) {
       for (const row of data.supplier_debts) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO supplier_debts (
             id, supplier_id, purchase_id, total_amount, paid_amount, status, due_date, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -263,7 +266,7 @@ export async function restoreDatabaseBackup(
 
     if (Array.isArray(data.debt_payments)) {
       for (const row of data.debt_payments) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO debt_payments (
             id, debt_id, payment_date, amount, notes, created_at
           ) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -280,7 +283,7 @@ export async function restoreDatabaseBackup(
     // 9. Pulihkan Customer Receivables & Payments
     if (Array.isArray(data.customer_receivables)) {
       for (const row of data.customer_receivables) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO customer_receivables (
             id, customer_id, transaction_id, total_amount, paid_amount, status, due_date, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -298,7 +301,7 @@ export async function restoreDatabaseBackup(
 
     if (Array.isArray(data.receivable_payments)) {
       for (const row of data.receivable_payments) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO receivable_payments (
             id, receivable_id, payment_date, amount, notes, created_at
           ) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -315,11 +318,12 @@ export async function restoreDatabaseBackup(
     // 10. Pulihkan Transactions & Transaction Items
     if (Array.isArray(data.transactions)) {
       for (const row of data.transactions) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO transactions (
             id, total, payment_method, payment_amount, change, customer_id, is_credit,
-            discount_amount, subtotal_amount, cashier_name, shift_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            discount_amount, subtotal_amount, cashier_name, shift_id,
+            cash_received, qris_received, daily_seq, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           row.id,
           row.total,
           row.payment_method || 'tunai',
@@ -331,6 +335,9 @@ export async function restoreDatabaseBackup(
           row.subtotal_amount || row.total,
           row.cashier_name || 'Kasir',
           row.shift_id || null,
+          row.cash_received || 0,
+          row.qris_received || 0,
+          row.daily_seq || 0,
           row.created_at || new Date().toISOString()
         );
       }
@@ -338,7 +345,7 @@ export async function restoreDatabaseBackup(
 
     if (Array.isArray(data.transaction_items)) {
       for (const row of data.transaction_items) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO transaction_items (
             id, transaction_id, product_id, product_name, product_price, quantity,
             subtotal, weight_gram, price_per_kg
@@ -359,7 +366,7 @@ export async function restoreDatabaseBackup(
     // 11. Pulihkan Cash Shifts
     if (Array.isArray(data.cash_shifts)) {
       for (const row of data.cash_shifts) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO cash_shifts (
             id, cashier_name, opened_at, closed_at, starting_cash, expected_cash,
             actual_cash, difference, total_sales_cash, total_sales_non_cash,
@@ -385,7 +392,7 @@ export async function restoreDatabaseBackup(
     // 12. Pulihkan Cash Ledger & Expenses
     if (Array.isArray(data.cash_ledger)) {
       for (const row of data.cash_ledger) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO cash_ledger (
             id, date, type, category, amount, description, ref_id, account, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -404,7 +411,7 @@ export async function restoreDatabaseBackup(
 
     if (Array.isArray(data.expenses)) {
       for (const row of data.expenses) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO expenses (
             id, date, category, amount, notes, created_at
           ) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -420,7 +427,7 @@ export async function restoreDatabaseBackup(
   });
 
   return {
-    version: parsed.version || 14,
+    version: parsed.version || 16,
     app: parsed.app,
     exported_at: parsed.exported_at || '',
     counts: parsed.counts || {},

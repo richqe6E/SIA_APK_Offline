@@ -8,7 +8,7 @@ import { useProductStore, type Product } from '@/stores/productStore';
 import { useTransactionStore, type CartItem } from '@/stores/transactionStore';
 import { useCategoryStore } from '@/stores/categoryStore';
 import { usePrinterStore } from '@/stores/printerStore';
-import { useSettingsStore, BusinessMode, ViewMode } from '@/stores/settingsStore';
+import { useSettingsStore, ViewMode } from '@/stores/settingsStore';
 import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { printReceipt, formatInvoice } from '@/services/print';
 import { useShiftStore } from '@/stores/shiftStore';
@@ -37,6 +37,7 @@ import { QrisDisplayModal } from '@/components/qris-display-modal';
 import { WeightedProductModal } from '@/components/weighted-product-modal';
 import { EditCartPriceModal } from '@/components/edit-cart-price-modal';
 import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
+import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
 
 export default function TransactionScreen() {
   const router = useRouter();
@@ -64,7 +65,6 @@ export default function TransactionScreen() {
   } = useTransactionStore();
   const {
     loadSettings,
-    businessMode,
     defaultViewMode,
     setDefaultViewMode,
     qrisImagePath,
@@ -95,19 +95,21 @@ export default function TransactionScreen() {
   const [successTotal, setSuccessTotal] = useState(0);
   const [successDailySeq, setSuccessDailySeq] = useState(0);
 
-  // Pajak / Biaya Tambahan Kasir (Fleksibel: 0%, Debit 1%, PB1 10%, atau Kustom)
-  type SurchargePreset = 'none' | 'debit1' | 'tax10' | 'custom';
-  const [surchargePreset, setSurchargePreset] = useState<SurchargePreset>(
-    taxEnabled ? 'custom' : 'none'
-  );
+  // F2: Split Payment (Tunai + QRIS gabungan). splitModalVisible untuk modal input nominal.
+  const [splitModalVisible, setSplitModalVisible] = useState(false);
+  const [isSplitActive, setIsSplitActive] = useState(false);
+  const [splitCash, setSplitCash] = useState(0);
+  const [splitQris, setSplitQris] = useState(0);
+  const [splitCashInput, setSplitCashInput] = useState('');
+  const [splitQrisInput, setSplitQrisInput] = useState('');
 
-  useEffect(() => {
-    setSurchargePreset(taxEnabled ? 'custom' : 'none');
-  }, [taxEnabled]);
+  // Pajak / Biaya Tambahan Kasir (Default mati/none, kasir dapat memilih secara fleksibel di keranjang)
+  type SurchargePreset = 'none' | 'debit1' | 'tax10' | 'custom';
+  const [surchargePreset, setSurchargePreset] = useState<SurchargePreset>('none');
 
   const [lastTransaction, setLastTransaction] = useState<{
     items: CartItem[];
-    paymentMethod: 'tunai' | 'qris' | 'hutang';
+    paymentMethod: 'tunai' | 'qris' | 'hutang' | 'split';
     paymentAmount: number;
     change: number;
     customerName?: string;
@@ -119,6 +121,8 @@ export default function TransactionScreen() {
     taxType?: 'percent' | 'nominal' | 'none';
     cashierName?: string;
     shiftId?: number | null;
+    cashReceived?: number;
+    qrisReceived?: number;
   } | null>(null);
 
   // Fase 4 Modals: Barcode Scanner, Bulk Qty, QRIS Fullscreen, Diskon
@@ -167,9 +171,9 @@ export default function TransactionScreen() {
     if (defaultViewMode) {
       setViewMode(defaultViewMode);
     } else {
-      setViewMode(businessMode === 'retail' ? 'list' : 'grid');
+      setViewMode('list');
     }
-  }, [defaultViewMode, businessMode]);
+  }, [defaultViewMode]);
 
   const handleToggleViewMode = (mode: ViewMode) => {
     setViewMode(mode);
@@ -252,8 +256,58 @@ export default function TransactionScreen() {
 
   const handleCheckout = async () => {
     if (cart.length === 0) return;
-    if (paymentMethod === 'tunai' && parsedAmount < total) return;
+    if (paymentMethod === 'tunai' && parsedAmount < total) {
+      const defisit = total - parsedAmount;
+      Alert.alert(
+        'Pembayaran Kurang',
+        `Uang tunai yang diserahkan (Rp ${parsedAmount.toLocaleString('id-ID')}) kurang Rp ${defisit.toLocaleString('id-ID')} dari total tagihan (Rp ${total.toLocaleString('id-ID')}).`
+      );
+      return;
+    }
 
+    // F2: split payment validasi
+    const useSplit = isSplitActive && splitCash + splitQris >= total && splitCash >= 0 && splitQris >= 0;
+    if (isSplitActive && !useSplit) {
+      const currentSplitTotal = splitCash + splitQris;
+      const defisit = total - currentSplitTotal;
+      Alert.alert(
+        'Pembayaran Split Kurang',
+        `Kombinasi Tunai + QRIS (Rp ${currentSplitTotal.toLocaleString('id-ID')}) masih kurang Rp ${defisit.toLocaleString('id-ID')} dari total belanja (Rp ${total.toLocaleString('id-ID')}).`
+      );
+      return;
+    }
+
+    // BUG-020: Peringatan stok jika produk kelola stok melebihi stok yang ada
+    const outOfStockItems: string[] = [];
+    for (const item of cart) {
+      const prod = products.find((p) => p.id === item.product_id);
+      if (prod && prod.has_stock === 1) {
+        const requiredQty = item.is_weighted === 1
+          ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+          : item.quantity;
+        if (requiredQty > prod.stock) {
+          outOfStockItems.push(`• ${item.product_name} (butuh ${requiredQty}, sisa ${prod.stock})`);
+        }
+      }
+    }
+
+    if (outOfStockItems.length > 0) {
+      Alert.alert(
+        'Peringatan Stok Sistem Kurang',
+        `Stok di sistem tidak mencukupi untuk item berikut:\n\n${outOfStockItems.join('\n')}\n\nTetap lanjutkan penjualan? (Stok di sistem akan menjadi 0)`,
+        [
+          { text: 'Batal Periksa Kembali', style: 'cancel' },
+          { text: 'Tetap Lanjutkan', onPress: () => proceedWithCheckout() },
+        ]
+      );
+      return;
+    }
+
+    await proceedWithCheckout();
+  };
+
+  const proceedWithCheckout = async () => {
+    const useSplit = isSplitActive && splitCash + splitQris >= total && splitCash >= 0 && splitQris >= 0;
     let targetCustomerId = selectedCustomerId;
     let targetCustomerName = '';
 
@@ -274,11 +328,15 @@ export default function TransactionScreen() {
     const activeShiftId = currentShift?.id ?? null;
 
     setSuccessTotal(total);
+    const finalPaymentAmount = useSplit
+      ? (splitCash + splitQris)
+      : (paymentMethod === 'hutang' ? 0 : (parsedAmount || total));
+    const finalChange = useSplit ? Math.max(0, (splitCash + splitQris) - total) : (paymentMethod === 'hutang' ? 0 : change);
     setLastTransaction({
       items: [...cart],
-      paymentMethod,
-      paymentAmount: paymentMethod === 'hutang' ? 0 : (parsedAmount || total),
-      change: paymentMethod === 'hutang' ? 0 : change,
+      paymentMethod: useSplit ? 'split' : paymentMethod,
+      paymentAmount: finalPaymentAmount,
+      change: finalChange,
       customerName: targetCustomerName,
       subtotalAmount: subtotal,
       discountAmount: discountAmount,
@@ -288,11 +346,13 @@ export default function TransactionScreen() {
       taxType: isTaxActive ? activeTaxType : 'none',
       cashierName: activeCashierName,
       shiftId: activeShiftId,
+      cashReceived: useSplit ? splitCash : (paymentMethod === 'tunai' ? parsedAmount : 0),
+      qrisReceived: useSplit ? splitQris : (paymentMethod === 'qris' ? parsedAmount : 0),
     });
     const dailySeq = await checkout(
       db,
-      paymentMethod,
-      paymentMethod === 'hutang' ? 0 : (parsedAmount || total),
+      useSplit ? 'split' : paymentMethod,
+      finalPaymentAmount,
       targetCustomerId,
       activeCashierName,
       activeShiftId,
@@ -302,12 +362,18 @@ export default function TransactionScreen() {
         type: activeTaxType,
         rate: activeTaxRate,
         amount: taxAmount,
-      }
+      },
+      useSplit ? { cash: splitCash, qris: splitQris } : undefined,
     );
     setSuccessDailySeq(dailySeq);
     setPaymentAmount('');
     setQuickCustomerName('');
     setSelectedCustomerId(null);
+    setIsSplitActive(false);
+    setSplitCash(0);
+    setSplitQris(0);
+    setSplitCashInput('');
+    setSplitQrisInput('');
     setShowSuccess(true);
   };
 
@@ -390,7 +456,7 @@ export default function TransactionScreen() {
       setShowWeightedModal(true);
       return;
     }
-    if (businessMode === 'retail' && product.has_stock === 1) {
+    if (product.has_stock === 1) {
       const existingInCart = cart.find((item) => item.product_id === product.id);
       const currentQty = existingInCart ? existingInCart.quantity : 0;
       if (currentQty + 1 > product.stock) {
@@ -504,7 +570,6 @@ export default function TransactionScreen() {
           onSearchChange={handleSearchChange}
           viewMode={viewMode}
           onToggleViewMode={handleToggleViewMode}
-          businessMode={businessMode}
           filteredProducts={filteredProducts}
           cart={cart}
           subtotal={subtotal}
@@ -575,6 +640,18 @@ export default function TransactionScreen() {
           onOpenQrisCustomerModal={() => setShowQrisCustomerModal(true)}
           onBack={() => setStep(1)}
           onConfirm={handleCheckout}
+          // F2: Split Payment props
+          isSplitActive={isSplitActive}
+          splitCash={splitCash}
+          splitQris={splitQris}
+          onOpenSplitModal={() => setSplitModalVisible(true)}
+          onClearSplit={() => {
+            setIsSplitActive(false);
+            setSplitCash(0);
+            setSplitQris(0);
+            setSplitCashInput('');
+            setSplitQrisInput('');
+          }}
         />
       )}
 
@@ -704,6 +781,141 @@ export default function TransactionScreen() {
                 onPress={handleHoldCart}
               >
                 <ThemedText style={styles.holdConfirmBtnText}>Simpan Pending</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </ThemedView>
+        </View>
+      </Modal>
+
+      {/* F2: Modal Bayar Split (Tunai + QRIS gabungan) */}
+      {/* F2: Modal Split Payment (Campur Kas Fisik & QRIS) */}
+      <Modal
+        visible={splitModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSplitModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.holdModalCard}>
+            <ThemedText type="subtitle" style={{ fontSize: 16, marginBottom: 4 }}>
+              🔀 Campur Kas Fisik (Split Payment)
+            </ThemedText>
+            <ThemedText style={{ fontSize: 12, color: Colors.muted, marginBottom: 12 }}>
+              Cukup masukkan nominal uang tunai fisik yang diterima. Sisa tagihan otomatis diarahkan ke QRIS / Transfer bank.
+            </ThemedText>
+
+            <View style={styles.holdSummaryBox}>
+              <ThemedText style={{ fontSize: 12, color: Colors.muted }}>Total Tagihan Belanja</ThemedText>
+              <ThemedText type="defaultSemiBold" style={{ fontSize: 17, color: '#16a34a', fontWeight: '900' }}>
+                Rp {total.toLocaleString('id-ID')}
+              </ThemedText>
+            </View>
+
+            {/* Input Tunai (Kas Fisik) */}
+            <View style={[styles.holdInputBox, { borderColor: '#10b981', marginTop: 10 }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#065f46' }}>
+                  💵 Uang Tunai Fisik (Masuk ke Laci)
+                </ThemedText>
+                <TouchableOpacity
+                  onPress={() => {
+                    const half = Math.round(total / 2);
+                    setSplitCash(half);
+                    setSplitCashInput(formatRupiahInput(half));
+                    const rem = Math.max(0, total - half);
+                    setSplitQris(rem);
+                    setSplitQrisInput(formatRupiahInput(rem));
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <ThemedText style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
+                    ½ Bagi Dua
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                value={splitCashInput}
+                onChangeText={(val) => {
+                  const formatted = formatRupiahInput(val);
+                  setSplitCashInput(formatted);
+                  const cashVal = parseRupiahInput(formatted);
+                  setSplitCash(cashVal);
+                  const rem = Math.max(0, total - cashVal);
+                  setSplitQris(rem);
+                  setSplitQrisInput(formatRupiahInput(rem));
+                }}
+                placeholder="0"
+                placeholderTextColor={Colors.placeholder}
+                keyboardType="numeric"
+                style={[styles.holdTextInput, { fontSize: 17, fontWeight: '800', color: '#065f46' }]}
+              />
+              <View style={{ flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                {[10000, 20000, 50000, 100000].map((amt) => (
+                  <Pressable
+                    key={amt}
+                    style={[styles.categoryChip, { borderColor: '#10b981' }]}
+                    onPress={() => {
+                      const next = (parseRupiahInput(splitCashInput) || 0) + amt;
+                      setSplitCash(next);
+                      setSplitCashInput(formatRupiahInput(next));
+                      const rem = Math.max(0, total - next);
+                      setSplitQris(rem);
+                      setSplitQrisInput(formatRupiahInput(rem));
+                    }}
+                  >
+                    <ThemedText style={[styles.categoryChipText, { color: '#065f46' }]}>
+                      +{amt.toLocaleString('id-ID')}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Rekap Sisa QRIS Otomatis */}
+            <View style={[styles.holdSummaryBox, { backgroundColor: '#f0f9ff', borderColor: '#bae6fd', marginTop: 10 }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                <View>
+                  <ThemedText style={{ fontSize: 11, color: '#0369a1', fontWeight: '700' }}>
+                    📱 Sisa Tagihan QRIS (Masuk ke Bank)
+                  </ThemedText>
+                  <ThemedText style={{ fontSize: 9.5, color: '#64748b' }}>
+                    Dihitung otomatis oleh sistem
+                  </ThemedText>
+                </View>
+                <ThemedText type="defaultSemiBold" style={{ fontSize: 17, color: '#0284c7', fontWeight: '900' }}>
+                  Rp {Math.max(0, total - (parseRupiahInput(splitCashInput) || 0)).toLocaleString('id-ID')}
+                </ThemedText>
+              </View>
+            </View>
+
+            <View style={styles.holdModalActions}>
+              <TouchableOpacity
+                style={styles.holdCancelBtn}
+                onPress={() => {
+                  setSplitModalVisible(false);
+                }}
+              >
+                <ThemedText style={styles.holdCancelBtnText}>Batal</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.holdConfirmBtn,
+                  (parseRupiahInput(splitCashInput) <= 0 || parseRupiahInput(splitCashInput) >= total) && {
+                    backgroundColor: '#cbd5e1',
+                  },
+                ]}
+                disabled={parseRupiahInput(splitCashInput) <= 0 || parseRupiahInput(splitCashInput) >= total}
+                onPress={() => {
+                  const cashNum = parseRupiahInput(splitCashInput);
+                  const qrisNum = Math.max(0, total - cashNum);
+                  setSplitCash(cashNum);
+                  setSplitQris(qrisNum);
+                  setIsSplitActive(true);
+                  setPaymentMethod('qris');
+                  setSplitModalVisible(false);
+                }}
+              >
+                <ThemedText style={styles.holdConfirmBtnText}>Terapkan Split</ThemedText>
               </TouchableOpacity>
             </View>
           </ThemedView>
@@ -857,7 +1069,6 @@ function Step1View({
   onSearchChange,
   viewMode,
   onToggleViewMode,
-  businessMode,
   filteredProducts,
   cart,
   subtotal,
@@ -893,7 +1104,6 @@ function Step1View({
   onSearchChange: (q: string) => void;
   viewMode: ViewMode;
   onToggleViewMode: (mode: ViewMode) => void;
-  businessMode: BusinessMode;
   filteredProducts: Product[];
   cart: CartItem[];
   subtotal: number;
@@ -932,11 +1142,7 @@ function Step1View({
             <TextInput
               value={searchQuery}
               onChangeText={onSearchChange}
-              placeholder={
-                businessMode === 'retail'
-                  ? 'Cari nama barang / SKU...'
-                  : 'Cari menu makanan / minuman...'
-              }
+              placeholder="Cari nama barang / SKU..."
               placeholderTextColor={Colors.placeholder}
               style={styles.searchInput}
             />
@@ -1001,13 +1207,11 @@ function Step1View({
             viewMode === 'grid' ? (
               <ProductCard
                 product={item}
-                businessMode={businessMode}
                 onPress={() => onAddToCart(item)}
               />
             ) : (
               <ProductListItem
                 product={item}
-                businessMode={businessMode}
                 onPress={() => onAddToCart(item)}
               />
             )
@@ -1298,6 +1502,12 @@ function Step2View({
   onOpenQrisCustomerModal,
   onBack,
   onConfirm,
+  // F2: Split Payment props
+  isSplitActive,
+  splitCash,
+  splitQris,
+  onOpenSplitModal,
+  onClearSplit,
 }: {
   cart: CartItem[];
   subtotal: number;
@@ -1332,11 +1542,19 @@ function Step2View({
   onOpenQrisCustomerModal: () => void;
   onBack: () => void;
   onConfirm: () => void;
+  // F2: Split Payment props
+  isSplitActive: boolean;
+  splitCash: number;
+  splitQris: number;
+  onOpenSplitModal: () => void;
+  onClearSplit: () => void;
 }) {
   const canConfirm =
-    paymentMethod === 'qris' ||
-    (paymentMethod === 'tunai' && parsedAmount >= total && paymentAmount.length > 0) ||
-    (paymentMethod === 'hutang' && (selectedCustomerId !== null || quickCustomerName.trim().length > 0));
+    isSplitActive
+      ? splitCash + splitQris >= total
+      : (paymentMethod === 'qris' ||
+        (paymentMethod === 'tunai' && parsedAmount >= total && paymentAmount.length > 0) ||
+        (paymentMethod === 'hutang' && (selectedCustomerId !== null || quickCustomerName.trim().length > 0)));
 
   const formatRupiah = (val: string) => {
     if (!val) return '0';
@@ -1588,6 +1806,72 @@ function Step2View({
           </Pressable>
         </View>
 
+        {/* F2: Tombol Bayar Split - Hanya muncul jika metode pembayaran QRIS/Transfer dipilih */}
+        {paymentMethod === 'qris' && (
+          <>
+            <Pressable
+              style={[
+                styles.paymentBtn,
+                {
+                  marginTop: 6,
+                  borderStyle: 'dashed',
+                  borderWidth: 1.5,
+                  borderColor: isSplitActive ? '#7c3aed' : '#94a3b8',
+                  backgroundColor: isSplitActive ? '#7c3aed' : '#f8fafc',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                },
+              ]}
+              onPress={() => {
+                if (isSplitActive) {
+                  onOpenSplitModal();
+                } else {
+                  onOpenSplitModal();
+                }
+              }}
+            >
+              <ThemedText style={{ fontWeight: '700', color: isSplitActive ? '#fff' : '#475569' }}>
+                🔀 Campur Kas Fisik (Split Payment) {isSplitActive ? '✓ Aktif' : ''}
+              </ThemedText>
+            </Pressable>
+
+            {isSplitActive && (
+              <Card padding={8} style={{ marginTop: 6, backgroundColor: '#f5f3ff', borderColor: '#c4b5fd', borderWidth: 1 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#5b21b6' }}>
+                    Rincian Pembayaran Split
+                  </ThemedText>
+                  <TouchableOpacity onPress={onClearSplit} activeOpacity={0.7}>
+                    <ThemedText style={{ fontSize: 10.5, color: '#dc2626', fontWeight: '700' }}>
+                      ✕ Batalkan
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                  <ThemedText style={{ fontSize: 12, color: '#0f172a' }}>💵 Tunai (Kas Fisik)</ThemedText>
+                  <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#10b981' }}>
+                    Rp {splitCash.toLocaleString('id-ID')}
+                  </ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <ThemedText style={{ fontSize: 12, color: '#0f172a' }}>📱 QRIS / Bank</ThemedText>
+                  <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#3b82f6' }}>
+                    Rp {splitQris.toLocaleString('id-ID')}
+                  </ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderColor: '#ddd6fe', paddingTop: 4 }}>
+                  <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#5b21b6' }}>Total Tagihan</ThemedText>
+                  <ThemedText style={{ fontSize: 13, fontWeight: '900', color: '#5b21b6' }}>
+                    Rp {(splitCash + splitQris).toLocaleString('id-ID')}
+                  </ThemedText>
+                </View>
+              </Card>
+            )}
+          </>
+        )}
+
         {paymentMethod === 'hutang' ? (
           <ScrollView
             style={{ flex: 1 }}
@@ -1818,7 +2102,7 @@ function SuccessView({
   transactionId: number;
   lastTransaction: {
     items: CartItem[];
-    paymentMethod: 'tunai' | 'qris' | 'hutang';
+    paymentMethod: 'tunai' | 'qris' | 'hutang' | 'split';
     paymentAmount: number;
     change: number;
     customerName?: string;
@@ -1830,6 +2114,8 @@ function SuccessView({
     taxType?: 'percent' | 'nominal' | 'none';
     cashierName?: string;
     shiftId?: number | null;
+    cashReceived?: number;
+    qrisReceived?: number;
   } | null;
   onDone: () => void;
 }) {
@@ -1837,6 +2123,8 @@ function SuccessView({
   const { printerTarget, printerName } = usePrinterStore();
   const router = useRouter();
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+
+  const isSplit = (lastTransaction?.cashReceived ?? 0) > 0 && (lastTransaction?.qrisReceived ?? 0) > 0;
 
   const handlePrint = async () => {
     if (!printerTarget) {
@@ -1871,6 +2159,8 @@ function SuccessView({
         receiptFooter,
         cashierName: lastTransaction.cashierName,
         customerName: lastTransaction.customerName,
+        cashReceived: lastTransaction.cashReceived,
+        qrisReceived: lastTransaction.qrisReceived,
       });
       Alert.alert('Sukses', 'Struk berhasil dicetak');
     } catch {
@@ -1888,39 +2178,95 @@ function SuccessView({
         <ThemedText style={{ fontSize: 24, lineHeight: 28, fontWeight: 'bold', color: Colors.success }}>
           Rp {total.toLocaleString('id-ID')}
         </ThemedText>
-        <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
-          Metode: {lastTransaction?.paymentMethod === 'tunai' ? 'Tunai (Kas Fisik)' : lastTransaction?.paymentMethod === 'hutang' ? `Hutang (Bon) • ${lastTransaction.customerName || 'Pelanggan'}` : 'QRIS / Transfer (Kas Bank)'} • {formatInvoice(transactionId, new Date().toISOString())} • Kasir: {lastTransaction?.cashierName || 'Kasir'}
+        <ThemedText style={{ fontSize: 11, color: Colors.muted, textAlign: 'center' }}>
+          {isSplit
+            ? `🔀 Split Payment • Tunai Rp ${(lastTransaction?.cashReceived ?? 0).toLocaleString('id-ID')} + QRIS Rp ${(lastTransaction?.qrisReceived ?? 0).toLocaleString('id-ID')}`
+            : lastTransaction?.paymentMethod === 'tunai'
+            ? 'Tunai (Kas Fisik)'
+            : lastTransaction?.paymentMethod === 'hutang'
+            ? `Hutang (Bon) • ${lastTransaction.customerName || 'Pelanggan'}`
+            : 'QRIS / Transfer (Kas Bank)'} • {formatInvoice(transactionId, new Date().toISOString())} • Kasir: {lastTransaction?.cashierName || 'Kasir'}
         </ThemedText>
 
-        <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, width: '100%' }}>
-          <View style={{ flex: 1.1 }}>
-            <Button
-              title="📄 Tampilkan Struk"
-              variant="outline"
-              size="sm"
-              onPress={() => setShowReceiptModal(true)}
-            />
-          </View>
-          <View style={{ flex: 1.1 }}>
-            <Button
-              title="🖨️ Cetak Struk"
-              variant="outline"
-              size="sm"
+        {/* Tombol Aksi Kasir Utama: Besar, Taktil, dan Mudah Disentuh */}
+        <View style={{ width: '100%', gap: 10, marginTop: 16 }}>
+          <View style={{ flexDirection: 'row', gap: 10, width: '100%' }}>
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                minHeight: 52,
+                backgroundColor: '#f1f5f9',
+                borderColor: '#cbd5e1',
+                borderWidth: 1.5,
+                borderRadius: 12,
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'row',
+                gap: 8,
+                paddingHorizontal: 12,
+              }}
               onPress={handlePrint}
-            />
-          </View>
-          <View style={{ flex: 0.9 }}>
-            <Button
-              title="✅ Selesai"
-              size="sm"
+              activeOpacity={0.8}
+            >
+              <ThemedText style={{ fontSize: 20 }}>🖨️</ThemedText>
+              <ThemedText style={{ fontSize: 15, fontWeight: '800', color: '#1e293b' }}>
+                Cetak Struk
+              </ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                flex: 1.2,
+                minHeight: 52,
+                backgroundColor: Colors.tint,
+                borderRadius: 12,
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'row',
+                gap: 8,
+                paddingHorizontal: 14,
+                shadowColor: Colors.tint,
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.25,
+                shadowRadius: 6,
+                elevation: 4,
+              }}
               onPress={onDone}
-            />
+              activeOpacity={0.8}
+            >
+              <ThemedText style={{ fontSize: 20 }}>🛒</ThemedText>
+              <ThemedText style={{ fontSize: 15, fontWeight: '800', color: '#ffffff' }}>
+                Transaksi Baru
+              </ThemedText>
+            </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            style={{
+              width: '100%',
+              minHeight: 44,
+              backgroundColor: '#ffffff',
+              borderColor: '#e2e8f0',
+              borderWidth: 1,
+              borderRadius: 10,
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'row',
+              gap: 6,
+            }}
+            onPress={() => setShowReceiptModal(true)}
+            activeOpacity={0.8}
+          >
+            <ThemedText style={{ fontSize: 15 }}>📄</ThemedText>
+            <ThemedText style={{ fontSize: 13, fontWeight: '700', color: '#475569' }}>
+              Tampilkan Struk Digital di Layar
+            </ThemedText>
+          </TouchableOpacity>
         </View>
 
         {!printerName && (
-          <ThemedText style={{ fontSize: 10.5, color: Colors.placeholder, marginTop: 2 }}>
-            Printer belum terhubung. Anda dapat menggunakan tombol &quot;Tampilkan Struk&quot; untuk melihat nota di layar.
+          <ThemedText style={{ fontSize: 11, color: Colors.placeholder, marginTop: 4, textAlign: 'center' }}>
+            Printer Bluetooth belum terhubung. Anda dapat menggunakan tombol &quot;Tampilkan Struk Digital&quot; untuk melihat nota di layar.
           </ThemedText>
         )}
       </Card>
@@ -2016,27 +2362,56 @@ function SuccessView({
                 <ThemedText style={styles.receiptTotalLabel}>Total Belanja</ThemedText>
                 <ThemedText style={styles.receiptTotalVal}>Rp {total.toLocaleString('id-ID')}</ThemedText>
               </View>
-              <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
-                <ThemedText style={styles.receiptMetaText}>
-                  {lastTransaction?.paymentMethod === 'tunai'
-                    ? 'Tunai (Diterima)'
-                    : lastTransaction?.paymentMethod === 'hutang'
-                    ? `Hutang / Bon: ${lastTransaction.customerName || 'Pelanggan'}`
-                    : 'QRIS / Transfer'}
-                </ThemedText>
-                <ThemedText style={styles.receiptMetaText}>
-                  Rp {(lastTransaction?.paymentAmount ?? (lastTransaction?.paymentMethod === 'hutang' ? total : 0)).toLocaleString('id-ID')}
-                </ThemedText>
-              </View>
-              {lastTransaction?.paymentMethod === 'tunai' && (
-                <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
-                  <ThemedText style={[styles.receiptMetaText, { fontWeight: '700', color: Colors.success }]}>
-                    Kembalian
-                  </ThemedText>
-                  <ThemedText style={[styles.receiptMetaText, { fontWeight: '700', color: Colors.success }]}>
-                    Rp {(lastTransaction?.change ?? 0).toLocaleString('id-ID')}
-                  </ThemedText>
-                </View>
+              {isSplit ? (
+                <>
+                  <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                    <ThemedText style={styles.receiptMetaText}>💵 Tunai</ThemedText>
+                    <ThemedText style={styles.receiptMetaText}>
+                      Rp {(lastTransaction?.cashReceived ?? 0).toLocaleString('id-ID')}
+                    </ThemedText>
+                  </View>
+                  <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                    <ThemedText style={styles.receiptMetaText}>📱 QRIS/Transfer</ThemedText>
+                    <ThemedText style={styles.receiptMetaText}>
+                      Rp {(lastTransaction?.qrisReceived ?? 0).toLocaleString('id-ID')}
+                    </ThemedText>
+                  </View>
+                  {(lastTransaction?.change ?? 0) > 0 && (
+                    <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                      <ThemedText style={[styles.receiptMetaText, { fontWeight: '700', color: Colors.success }]}>
+                        Kembalian
+                      </ThemedText>
+                      <ThemedText style={[styles.receiptMetaText, { fontWeight: '700', color: Colors.success }]}>
+                        Rp {(lastTransaction?.change ?? 0).toLocaleString('id-ID')}
+                      </ThemedText>
+                    </View>
+                  )}
+                </>
+              ) : (
+                <>
+                  <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                    <ThemedText style={styles.receiptMetaText}>
+                      {lastTransaction?.paymentMethod === 'tunai'
+                        ? 'Tunai (Diterima)'
+                        : lastTransaction?.paymentMethod === 'hutang'
+                        ? `Hutang / Bon: ${lastTransaction.customerName || 'Pelanggan'}`
+                        : 'QRIS / Transfer'}
+                    </ThemedText>
+                    <ThemedText style={styles.receiptMetaText}>
+                      Rp {(lastTransaction?.paymentAmount ?? (lastTransaction?.paymentMethod === 'hutang' ? total : 0)).toLocaleString('id-ID')}
+                    </ThemedText>
+                  </View>
+                  {lastTransaction?.paymentMethod === 'tunai' && (
+                    <View style={[styles.receiptRowBetween, { marginVertical: 2 }]}>
+                      <ThemedText style={[styles.receiptMetaText, { fontWeight: '700', color: Colors.success }]}>
+                        Kembalian
+                      </ThemedText>
+                      <ThemedText style={[styles.receiptMetaText, { fontWeight: '700', color: Colors.success }]}>
+                        Rp {(lastTransaction?.change ?? 0).toLocaleString('id-ID')}
+                      </ThemedText>
+                    </View>
+                  )}
+                </>
               )}
 
               <View style={styles.receiptDashedLine} />
@@ -2088,17 +2463,14 @@ function SuccessView({
 // ─────────────────────────────────────────
 function ProductCard({
   product,
-  businessMode,
   onPress,
 }: {
   product: Product;
-  businessMode: BusinessMode;
   onPress: () => void;
 }) {
-  const isRetail = businessMode === 'retail';
   const isWeighted = product.is_weighted === 1;
-  const isOutOfStock = !isWeighted && isRetail && product.has_stock === 1 && product.stock === 0;
-  const isLowStock = !isWeighted && isRetail && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
+  const isOutOfStock = !isWeighted && product.has_stock === 1 && product.stock === 0;
+  const isLowStock = !isWeighted && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
 
   return (
     <Pressable
@@ -2162,17 +2534,14 @@ function ProductCard({
 // ─────────────────────────────────────────
 function ProductListItem({
   product,
-  businessMode,
   onPress,
 }: {
   product: Product;
-  businessMode: BusinessMode;
   onPress: () => void;
 }) {
-  const isRetail = businessMode === 'retail';
   const isWeighted = product.is_weighted === 1;
-  const isOutOfStock = !isWeighted && isRetail && product.has_stock === 1 && product.stock === 0;
-  const isLowStock = !isWeighted && isRetail && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
+  const isOutOfStock = !isWeighted && product.has_stock === 1 && product.stock === 0;
+  const isLowStock = !isWeighted && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
 
   return (
     <Pressable
@@ -2195,7 +2564,7 @@ function ProductListItem({
             <View style={styles.listStockBadgeWeighted}>
               <ThemedText style={styles.listStockBadgeWeightedText}>⚖️ Timbangan (kg)</ThemedText>
             </View>
-          ) : isRetail && product.has_stock === 1 ? (
+          ) : product.has_stock === 1 ? (
             <View
               style={[
                 styles.listStockBadge,

@@ -3,6 +3,14 @@ import type { SQLiteDatabase } from '@/services/database';
 import { useProductStore } from './productStore';
 import { triggerAutoSync } from '@/services/cloudSync';
 
+function localDateStr(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export interface CartItem {
   product_id: number;
   product_name: string;
@@ -32,6 +40,9 @@ export interface Transaction {
   cashier_name?: string;
   shift_id?: number | null;
   created_at: string;
+  daily_seq?: number;
+  cash_received?: number;
+  qris_received?: number;
 }
 
 export interface TaxOptions {
@@ -98,9 +109,11 @@ interface TransactionState {
     customerId?: number | null,
     cashierName?: string,
     shiftId?: number | null,
-    taxOptions?: TaxOptions
+    taxOptions?: TaxOptions,
+    splitPayment?: { cash: number; qris: number },
   ) => Promise<number>;
   loadTransactions: (db: SQLiteDatabase, period?: PeriodFilter, page?: number, pageSize?: number) => Promise<void>;
+  getDailyNotaCount: (db: SQLiteDatabase) => Promise<number>;
   loadPendingOrders: (db: SQLiteDatabase) => Promise<void>;
   holdCurrentCart: (db: SQLiteDatabase, note: string) => Promise<boolean>;
   resumePendingOrder: (db: SQLiteDatabase, orderId: number) => Promise<boolean>;
@@ -290,7 +303,8 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     customerId = null,
     cashierName = 'Kasir',
     shiftId = null,
-    taxOptions
+    taxOptions,
+    splitPayment,
   ) => {
     const { cart } = get();
     if (cart.length === 0) return 0;
@@ -303,15 +317,49 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     const taxName = taxOptions?.enabled ? (taxOptions.name || 'Pajak / PB1') : '';
     const total = Math.max(0, subtotal - discountAmount + taxAmount);
     const isCredit = paymentMethod === 'hutang' ? 1 : 0;
+
+    // F1 (BUG-004): Guardrail database - cegah kurang bayar kecuali transaksi piutang/hutang
+    if (!isCredit && paymentAmount < total) {
+      throw new Error(
+        `Nominal pembayaran (Rp ${Math.round(paymentAmount).toLocaleString('id-ID')}) kurang dari total tagihan (Rp ${Math.round(total).toLocaleString('id-ID')}).`
+      );
+    }
+
     const finalPaymentAmount = isCredit ? 0 : paymentAmount;
     const change = isCredit ? 0 : paymentAmount - total;
 
+    // F2 (BUG-002): Hitung porsi split. Simpan payment_method sebagai 'split' agar laporan metode bayar akurat
+    const splitCash = splitPayment?.cash ?? 0;
+    const splitQris = splitPayment?.qris ?? 0;
+    const hasSplit = splitCash > 0 || splitQris > 0;
+    const effectivePaymentMethod = hasSplit ? 'split' : paymentMethod;
+    const cashReceivedForLedger = hasSplit ? splitCash : (effectivePaymentMethod === 'tunai' ? finalPaymentAmount : 0);
+    const qrisReceivedForLedger = hasSplit ? splitQris : (effectivePaymentMethod === 'qris' ? finalPaymentAmount : 0);
+
     let transactionId = 0;
+    let dailySeq = 0;
     await db.withExclusiveTransactionAsync(async (txn) => {
+      // F3: increment nomor urut harian dalam transaksi yang sama
+      // agar atomic — tidak mungkin ada nota ganda atau terlewat.
+      const today = localDateStr();
+      await txn.runAsync(
+        'INSERT OR IGNORE INTO daily_counters (date, last_seq, updated_at) VALUES (?, 0, datetime(\'now\',\'localtime\'))',
+        today
+      );
+      await txn.runAsync(
+        'UPDATE daily_counters SET last_seq = last_seq + 1, updated_at = datetime(\'now\',\'localtime\') WHERE date = ?',
+        today
+      );
+      const counterRow = await txn.getFirstAsync<{ last_seq: number }>(
+        'SELECT last_seq FROM daily_counters WHERE date = ?',
+        today
+      );
+      dailySeq = counterRow?.last_seq ?? 0;
+
       const result = await txn.runAsync(
-        'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit, discount_amount, subtotal_amount, cashier_name, shift_id, tax_amount, tax_rate, tax_type, tax_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO transactions (total, payment_method, payment_amount, change, customer_id, is_credit, discount_amount, subtotal_amount, cashier_name, shift_id, tax_amount, tax_rate, tax_type, tax_name, cash_received, qris_received, daily_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         total,
-        paymentMethod,
+        effectivePaymentMethod,
         finalPaymentAmount,
         change >= 0 ? change : 0,
         customerId,
@@ -323,7 +371,10 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
         taxAmount,
         taxRate,
         taxType,
-        taxName
+        taxName,
+        cashReceivedForLedger,
+        qrisReceivedForLedger,
+        dailySeq
       );
       transactionId = result.lastInsertRowId as number;
 
@@ -388,15 +439,10 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
       await useDebtReceivableStore.getState().loadCustomers(db);
     }
 
-    // Hitung nomor urut harian untuk struk (misal: antrean #001 hari ini)
-    const countResult = await db.getFirstAsync<{ count: number }>(
-      "SELECT COUNT(*) as count FROM transactions WHERE date(created_at) = date('now','localtime')"
-    );
-
     // Otomatis sinkronkan snapshot ke cloud bridge di background
     triggerAutoSync(db);
 
-    return countResult?.count ?? 0;
+    return dailySeq;
   },
 
 
@@ -506,6 +552,18 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     await get().loadPendingOrders(db);
   },
 
+  getDailyNotaCount: async (db) => {
+    try {
+      const row = await db.getFirstAsync<{ last_seq: number }>(
+        'SELECT last_seq FROM daily_counters WHERE date = ?',
+        localDateStr()
+      );
+      return row?.last_seq ?? 0;
+    } catch {
+      return 0;
+    }
+  },
+
   cancelTransaction: async (db, transactionId) => {
     try {
       let affectedTx: Transaction | null = null;
@@ -551,6 +609,19 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
 
         await txn.runAsync('DELETE FROM transaction_items WHERE transaction_id = ?', transactionId);
         await txn.runAsync('DELETE FROM transactions WHERE id = ?', transactionId);
+
+        // BUG-014: Jika transaksi yang dibatalkan adalah nota terakhir hari ini, mundurkan last_seq agar nomor urut nota tidak loncat
+        const today = localDateStr();
+        const counterRow = await txn.getFirstAsync<{ last_seq: number }>(
+          'SELECT last_seq FROM daily_counters WHERE date = ?',
+          today
+        );
+        if (counterRow && (affectedTx as any)?.daily_seq && counterRow.last_seq === (affectedTx as any).daily_seq) {
+          await txn.runAsync(
+            'UPDATE daily_counters SET last_seq = MAX(0, last_seq - 1), updated_at = datetime(\'now\',\'localtime\') WHERE date = ?',
+            today
+          );
+        }
       });
 
       await useProductStore.getState().loadProducts(db);

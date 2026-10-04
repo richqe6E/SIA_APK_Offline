@@ -288,7 +288,6 @@ export default function DataManagementScreen() {
       // Refresh stores lokal
       await Promise.allSettled([
         useCashStore.getState().loadLedger(db),
-        useCashStore.getState().loadDenominations(db),
         useShiftStore.getState().loadActiveShift(db),
         useShiftStore.getState().loadHistoryShifts(db),
         useTransactionStore.getState().loadPendingOrders(db),

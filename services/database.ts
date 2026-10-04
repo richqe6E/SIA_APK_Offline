@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  const DATABASE_VERSION = 15;
+  const DATABASE_VERSION = 16;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -380,6 +380,22 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     currentDbVersion = 15;
   }
 
+  if (currentDbVersion === 15) {
+    // Migrasi v16: Split Payment (cash_received + qris_received) & Daily Nota Counter
+    await db.execAsync(`
+      ALTER TABLE transactions ADD COLUMN cash_received REAL NOT NULL DEFAULT 0;
+      ALTER TABLE transactions ADD COLUMN qris_received REAL NOT NULL DEFAULT 0;
+      ALTER TABLE transactions ADD COLUMN daily_seq INTEGER NOT NULL DEFAULT 0;
+
+      CREATE TABLE IF NOT EXISTS daily_counters (
+        date TEXT PRIMARY KEY,
+        last_seq INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      );
+    `);
+    currentDbVersion = 16;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }
 
@@ -404,6 +420,7 @@ export async function resetEntireDatabase(db: SQLiteDatabase): Promise<void> {
       DELETE FROM categories;
       DELETE FROM customers;
       DELETE FROM suppliers;
+      DELETE FROM daily_counters;
       DELETE FROM sqlite_sequence;
     `);
   });
@@ -427,6 +444,8 @@ export async function resetFinancialAndCashFlowData(db: SQLiteDatabase): Promise
       DELETE FROM customer_receivables;
       DELETE FROM debt_payments;
       DELETE FROM supplier_debts;
+      DELETE FROM daily_counters;
+      DELETE FROM settings WHERE key IN ('cash_denominations', 'active_shift');
       DELETE FROM sqlite_sequence WHERE name IN (
         'cash_shifts',
         'pending_orders',
@@ -438,7 +457,8 @@ export async function resetFinancialAndCashFlowData(db: SQLiteDatabase): Promise
         'receivable_payments',
         'customer_receivables',
         'debt_payments',
-        'supplier_debts'
+        'supplier_debts',
+        'daily_counters'
       );
     `);
   });

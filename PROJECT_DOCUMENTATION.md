@@ -443,4 +443,85 @@ npx expo export --platform android
 
 ---
 
-*Dokumen ini diperbarui secara resmi pada 8 September 2026 sebagai catatan riwayat lengkap dan panduan kesinambungan proyek POS Karya Riki Rivaldi.*
+## 10. Rekapitulasi Pengembangan & Pembaruan Sistem (15 September 2026)
+
+### A. Arsitektur Ekosistem 2 Aplikasi Terintegrasi
+Proyek telah berkembang menjadi ekosistem retail lengkap untuk **AGEN SOSIS AZIZAH** yang terdiri dari 2 aplikasi mandiri yang saling terintegrasi melalui Supabase Cloud Sync:
+
+1. **Aplikasi Kasir Tablet Toko (`POS-Offline-main`)**:
+   * **Package:** `com.rumahmakan.posoffline` | **Slug:** `pos-offline`
+   * **Target:** Tablet Android Kasir Toko (Orientasi Landscape & Portrait fleksibel).
+   * **Database:** SQLite Lokal Murni 100% Offline-First (`pos.db`).
+   * **Peran Pengguna:** `kasir` (akses cepat pelayanan, barcode scanner, nota, printer) & `pemilik` (akses laporan laba rugi, kas laci/bank, stok opname, reset buku baru).
+   * **Fungsi Cloud:** Bertindak sebagai *Single Source of Truth* (mengompilasi dan mengirimkan ringkasan transaksi toko ke Supabase di latar belakang secara otomatis).
+
+2. **Aplikasi Pemantau Smartphone Pemilik (`kendali-usaha-azizah`)**:
+   * **Package:** `com.azizah.kendaliusaha` | **Slug:** `kendali-usaha-azizah`
+   * **Target:** Smartphone Pribadi Pemilik Toko (Portrait Locked).
+   * **Karakter:** 100% *Read-Only* (pengawasan murni tanpa risiko salah pencet transaksi di HP).
+   * **Struktur 3 Tab Navigasi:**
+     * 📊 **Dasbor:** Omset hari ini vs kemarin, kas masuk tunai vs QRIS, kas laci vs rekening bank, status shift kasir aktif, jam paling ramai toko, margin laba kotor, dan 10 transaksi terkini.
+     * 📑 **Laporan:** Laporan laba/rugi bulanan (penjualan, HPP historis, beban operasional, laba bersih), valuasi modal stok di freezer toko, peringatan stok menipis & mendekati kadaluarsa, top 5 produk terlaris, serta peringatan piutang jatuh tempo $\le 3$ hari.
+     * ⚙️ **Pengaturan:** Status sambungan cloud toko, kode pairing toko (`AZ-7789`), pilihan interval auto-refresh data, dan informasi aplikasi.
+
+---
+
+### B. Rangkuman 15 Perbaikan & Penyempurnaan Sistem Hari Ini
+
+1. **Eliminasi Lag Layar Sukses & Penjualan Cepat 0-Lag**:
+   * Proses pengiriman data ke Supabase Cloud dipindahkan ke antrean latar belakang *debounced non-blocking* (jeda 2 detik).
+   * Layar sukses transaksi seketika muncul tanpa menunggu respon jaringan internet.
+   * Tombol aksi layar sukses (*"Cetak Struk"* & *"Transaksi Baru"*) diperbesar menjadi tinggi 52px dengan font tebal 16px untuk kemudahan penekanan kasir.
+
+2. **Penyelarasan Alur Keuangan Kasir & Pemilik**:
+   * Perhitungan kas masuk & kas keluar hari ini pada mode `kasir` dan mode `pemilik` disamakan secara presisi menggunakan kueri SQL gabungan penjualan tunai murni, split payment porsi tunai, dan entri mutasi buku kas `in`/`out`.
+
+3. **Integrasi Modal Awal Kasir ke Buku Kas Laci**:
+   * Ketika kasir membuka shift baru dan mengisi nominal saldo awal, sistem otomatis mencatatkannya ke `cash_ledger` fisik laci (`account: 'hand'`, `category: 'modal_awal'`).
+   * Saldo fisik laci kasir seketika bertambah dan tercatat di mutasi buku kas kasir maupun pemilik.
+
+4. **Guardrail Saldo Kas Laci & Bank (Anti-Saldo Negatif)**:
+   * Pengeluaran kas manual maupun pembayaran cicilan hutang supplier kini divalidasi ketat terhadap saldo kas riil yang tersedia. Jika melebihi saldo kas, sistem menampilkan pesan penolakan yang jelas.
+
+5. **Pemisahan Presisi Transaksi Split Payment (Tunai vs QRIS)**:
+   * Porsi uang tunai otomatis mengalir ke Saldo Kas Fisik Laci (`hand`).
+   * Porsi non-tunai (QRIS) otomatis mengalir ke Saldo Rekening Bank (`bank`).
+   * Sinkronisasi ke Supabase memisahkan kedua porsi tersebut sehingga rasio tunai vs non-tunai di HP pemilik 100% akurat.
+
+6. **Format Angka Pemisah Titik Ribuan Indonesia**:
+   * Input nominal pada form pendaftaran hutang supplier baru (`AddDebtModal`) dan piutang pelanggan baru (`AddReceivableModal`) otomatis berformat ribuan saat diketik (contoh: `150.000` dan `500.000`).
+   * Form pelunasan hutang/piutang dan form edit nominal tagihan terpasang pemisah titik secara konsisten.
+
+7. **Penyempurnaan Buka Buku Baru (Reset Data Kecuali Produk)**:
+   * Tabel nomor urut transaksi harian (`daily_counters`) dimasukkan ke dalam perintah pembersihan database pada fungsi `resetFinancialAndCashFlowData`.
+   * Setelah reset buku baru dilakukan:
+     * Nomor nota transaksi berikutnya **pasti dimulai kembali dari `001` (atau `0001`)**.
+     * Jumlah nota hari ini pada dasbor kasir **kembali ke `0`**.
+     * Kartu Kas Masuk & Kas Keluar Hari Ini pada menu Keuangan **seketika tampil Rp 0**.
+
+8. **Pencegahan Layar Berkedip / Refresh Berulang Riwayat Mutasi Buku Kas**:
+   * Mengubah mekanisme render FlatList menjadi *silent background update* (`loading && entries.length === 0`).
+   * Memoisasi fungsi `renderMutasiItem` menggunakan `useCallback`.
+   * Memasang `useFocusEffect` di layar Keuangan agar data kas selalu segar tanpa mengganggu scroll pengguna.
+
+9. **Penghapusan Fitur Pecahan Uang Fisik**:
+   * Tombol, modal, status rekonsiliasi, dan chip rincian pecahan lembaran uang fisik resmi dihapus dari layar kasir tablet dan aplikasi pemantau smartphone sesuai keputusan pengguna untuk menyederhanakan alur kerja kasir.
+
+10. **Verifikasi Fitur Manajemen Ekspor Data Produk & Stok**:
+    * **Export CSV Produk:** Menyediakan ekspor lengkap 9 kolom data produk kompatibel Microsoft Excel.
+    * **Export PDF Katalog:** Dokumen tabel cetak resmi untuk keperluan *stok opname* freezer fisik.
+    * **Import CSV Massal:** Mendukung deteksi otomatis delimiter koma/titik koma dan pembersihan format ribuan Indonesia.
+
+11. **Penyempurnaan Audit Keuangan, Inventaris & Integritas Transaksi (F1 - F7)**:
+    * **Pencegahan Kurang Bayar:** Fungsi `checkout` database memblokir pembayaran kurang dengan pengecekan `paymentAmount >= total` (kecuali piutang), dan UI kasir memberikan notifikasi `Alert` selisih kekurangan nominal secara presisi.
+    * **Metode Pembayaran Split:** Transaksi campuran kini disimpan resmi dengan status `payment_method = 'split'` di database, sehingga laporan metode pembayaran membedakan transaksi Tunai, QRIS, dan Split secara akurat.
+    * **Audit Trail Kulakan Kas Bank:** Pembelian kulakan dengan Kas Bank (`paymentSource === 'bank'`) kini otomatis dicatat pada `cash_ledger` bertipe akun `'bank'`, menyinkronkan saldo kas bank dengan mutasi rekening koran toko.
+    * **Perlindungan Stok Opname:** Jumlah stok fisik opname ditolak jika bernilai negatif (`< 0`), mencegah rusaknya valuasi modal freezer.
+    * **Timestamp Update Produk Kulakan:** Menambahkan `updated_at` saat penambahan stok kulakan agar Cloud Sync Supabase mendeteksi perubahan stok terkini.
+    * **Nomor Nota Batal:** Jika transaksi terakhir hari ini dibatalkan, counter `daily_counters.last_seq` dimundurkan agar nomor nota tidak loncat.
+    * **Sanitasi Form & Dialog Konfirmasi:** Menolak input diskon > 100%, membersihkan tanda minus pada input berat timbangan, dan menambahkan konfirmasi sebelum menutup modal QRIS.
+
+---
+
+*Dokumen ini diperbarui secara resmi pada 15 September 2026 sebagai catatan riwayat lengkap dan panduan kesinambungan ekosistem POS AGEN SOSIS AZIZAH.*
+

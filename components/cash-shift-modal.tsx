@@ -82,7 +82,7 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
   // 1. Handle Buka Shift Pertama Kali Hari Ini
   const handleStartTodayShift = async () => {
     const cash = parseInt(drawerAmountStr.replace(/\D/g, ''), 10) || 0;
-    const cashier = selectedCashier.trim() || newCashierName.trim() || 'Kasir 1';
+    const cashier = selectedCashier.trim() || newCashierName.trim() || 'Kasir';
 
     try {
       setLoading(true);
@@ -566,7 +566,7 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
                         onPress={() => handleSelectCashier(name)}
                         activeOpacity={0.75}
                       >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
                           <ThemedText style={{ fontSize: 14 }}>
                             {isCurrent ? '✅' : '👤'}
                           </ThemedText>
@@ -579,11 +579,29 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
                           >
                             {name}
                           </ThemedText>
+                          {isCurrent && (
+                            <ThemedText style={{ fontSize: 9.5, fontWeight: '700', color: '#15803d' }}>
+                              (Sedang Bertugas)
+                            </ThemedText>
+                          )}
                         </View>
-                        {isCurrent && (
-                          <ThemedText style={{ fontSize: 9.5, fontWeight: '700', color: '#15803d' }}>
-                            (Sedang Bertugas)
-                          </ThemedText>
+                        {!isCurrent && (
+                          <TouchableOpacity
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            onPress={() => {
+                              Alert.alert('Hapus Kasir', `Hapus "${name}" dari daftar staf kasir?`, [
+                                { text: 'Batal', style: 'cancel' },
+                                {
+                                  text: 'Hapus',
+                                  style: 'destructive',
+                                  onPress: () => removeCashierEmployee(db, name),
+                                },
+                              ]);
+                            }}
+                            style={{ padding: 4 }}
+                          >
+                            <ThemedText style={{ fontSize: 13, color: '#94a3b8', fontWeight: '700' }}>✕</ThemedText>
+                          </TouchableOpacity>
                         )}
                       </TouchableOpacity>
                     );

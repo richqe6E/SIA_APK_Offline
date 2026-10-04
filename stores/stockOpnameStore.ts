@@ -45,6 +45,10 @@ export const useStockOpnameStore = create<StockOpnameState>((set, get) => ({
   },
 
   performOpname: async (db, productId, physicalStock, notes) => {
+    if (physicalStock < 0 || isNaN(physicalStock)) {
+      return { success: false, message: 'Jumlah stok fisik riil tidak boleh bernilai negatif (kurang dari 0)!' };
+    }
+
     try {
       const product = await db.getFirstAsync<{ name: string; stock: number; cost_price: number }>(
         'SELECT name, stock, cost_price FROM products WHERE id = ?',
@@ -74,9 +78,9 @@ export const useStockOpnameStore = create<StockOpnameState>((set, get) => ({
           notes?.trim() || ''
         );
 
-        // Update stok fisik produk
+        // Update stok fisik produk beserta timestamp
         await txn.runAsync(
-          'UPDATE products SET stock = ?, has_stock = 1 WHERE id = ?',
+          'UPDATE products SET stock = ?, has_stock = 1, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?',
           physicalStock,
           productId
         );

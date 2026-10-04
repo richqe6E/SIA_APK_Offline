@@ -1,5 +1,4 @@
 import { CashShiftModal } from '@/components/cash-shift-modal';
-import { CashDenominationModal } from '@/components/cash-denomination-modal';
 import { OnboardingModal } from '@/components/onboarding-modal';
 import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
 import { ThemedText } from '@/components/themed-text';
@@ -8,12 +7,13 @@ import { Card } from '@/components/ui/card';
 import { Colors } from '@/constants/theme';
 import { useLockOrientation } from '@/hooks/use-orientation';
 import { useCashStore } from '@/stores/cashStore';
+import { useTransactionStore } from '@/stores/transactionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useShiftStore } from '@/stores/shiftStore';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -35,21 +35,20 @@ export default function DashboardScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
 
-  const { storeName, businessType, businessMode, isOnboarded, loadSettings, appOrientation, setAppOrientation, currentUserRole, logoutRole } = useSettingsStore();
+  const { storeName, businessType, isOnboarded, loadSettings, appOrientation, setAppOrientation, currentUserRole, logoutRole } = useSettingsStore();
   const {
     currentBalance,
     cashHandBalance,
     cashBankBalance,
     totalBalance,
-    denominations,
-    loadDenominations,
-    saveDenominations,
     loadLedger,
   } = useCashStore();
   const { currentShift, loadShiftData } = useShiftStore();
+  const { getDailyNotaCount } = useTransactionStore();
+
+  const [dailyNotaCount, setDailyNotaCount] = useState(0);
 
   const [shiftModalVisible, setShiftModalVisible] = useState(false);
-  const [denominationModalVisible, setDenominationModalVisible] = useState(false);
   const [expiredAlerts, setExpiredAlerts] = useState<
     { id: number; name: string; sku: string; expired_date: string; stock: number; diffDays: number }[]
   >([]);
@@ -95,12 +94,23 @@ export default function DashboardScreen() {
   });
   const [loading, setLoading] = useState(true);
 
+  const isFirstLoadRef = useRef(true);
+
   const loadSummary = useCallback(async () => {
-    setLoading(true);
+    if (isFirstLoadRef.current) {
+      setLoading(true);
+    }
     await loadSettings(db);
     await loadLedger(db);
-    await loadDenominations(db);
     await loadShiftData(db);
+
+    // F3: muat counter nota harian (reset setiap hari)
+    try {
+      const cnt = await getDailyNotaCount(db);
+      setDailyNotaCount(cnt);
+    } catch {
+      setDailyNotaCount(0);
+    }
 
     const expRows = await db.getAllAsync<{ id: number; name: string; barcode: string; expired_date: string; stock: number }>(
       "SELECT id, name, barcode, expired_date, stock FROM products WHERE expired_date IS NOT NULL AND expired_date != ''"
@@ -133,20 +143,26 @@ export default function DashboardScreen() {
     );
     setLowStockAlerts(lowRows);
 
-    // Query transaksi hari ini berdasarkan metode pembayaran
-    const todayTx = await db.getAllAsync<{ payment_method: string; total: number }>(
-      "SELECT payment_method, COALESCE(SUM(total), 0) as total FROM transactions WHERE date(created_at) = date('now','localtime') GROUP BY payment_method"
+    // Query transaksi hari ini (tunai murni, qris murni, split payment presisi)
+    const pureTunai = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
     );
-    let txTunai = 0;
-    let txNonTunai = 0;
-    for (const r of todayTx) {
-      if (r.payment_method === 'tunai') txTunai = r.total;
-      else if (r.payment_method === 'qris') txNonTunai = r.total;
-    }
+    const pureQris = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
+    );
+    const splitTx = await db.getFirstAsync<{ cashTotal: number; qrisTotal: number }>(
+      `SELECT COALESCE(SUM(cash_received), 0) as cashTotal, COALESCE(SUM(qris_received), 0) as qrisTotal FROM transactions WHERE (payment_method = 'split' OR (cash_received > 0 AND qris_received > 0)) AND date(created_at) = date('now','localtime')`
+    );
 
-    // Query mutasi buku kas hari ini
+    const txTunai = (pureTunai?.total ?? 0) + (splitTx?.cashTotal ?? 0);
+    const txNonTunai = (pureQris?.total ?? 0) + (splitTx?.qrisTotal ?? 0);
+
+    // Query mutasi buku kas hari ini (sinkron dengan Buku Kas)
     const todayLedger = await db.getAllAsync<{ type: string; account: string; category: string; total: number }>(
-      "SELECT type, account, category, COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE date(created_at) = date('now','localtime') GROUP BY type, account, category"
+      `SELECT type, account, category, COALESCE(SUM(amount), 0) as total 
+       FROM cash_ledger 
+       WHERE (date(date) = date('now','localtime') OR date(created_at) = date('now','localtime'))
+       GROUP BY type, account, category`
     );
     let ledgerInHand = 0;
     let ledgerInBank = 0;
@@ -217,6 +233,7 @@ export default function DashboardScreen() {
       itemsSoldToday: itemsSold?.total ?? 0,
       weekTrend: fullWeek,
     });
+    isFirstLoadRef.current = false;
     setLoading(false);
   }, [db, loadSettings, loadLedger]);
 
@@ -242,52 +259,15 @@ export default function DashboardScreen() {
   const { width } = useWindowDimensions();
   const isTabletOrLandscape = width >= 720 || appOrientation === 'landscape';
 
-  const DENOMINATIONS_LIST = [
-    { value: 100000, label: '100rb' },
-    { value: 50000, label: '50rb' },
-    { value: 20000, label: '20rb' },
-    { value: 10000, label: '10rb' },
-    { value: 5000, label: '5rb' },
-    { value: 2000, label: '2rb' },
-    { value: 1000, label: '1rb' },
-    { value: 500, label: '500' },
-    { value: 200, label: '200' },
-    { value: 100, label: '100' },
-  ];
-
-  const counts = denominations?.counts || {};
-  const physicalTotal = denominations?.total ?? 0;
-  const activeDenominations = DENOMINATIONS_LIST.filter((d) => (counts[d.value] || 0) > 0);
-  const denominationDiff = physicalTotal - cashHandBalance;
-  const isDenominationCounted = denominations !== null && Object.keys(counts).length > 0;
-  const isDenominationMatched = isDenominationCounted && Math.abs(denominationDiff) < 1;
-
   const renderDualCashCard = (isLandscape: boolean) => (
     <Card padding={isLandscape ? 16 : 14} style={styles.cashBalanceCard}>
       {/* Saku 1: Saldo Kas Fisik di Tangan (Laci Kasir) */}
       <View style={styles.cashPocketContainer}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <View style={{ flex: 1, paddingRight: 6 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <ThemedText style={{ fontSize: 11, color: '#334155', fontWeight: '800' }}>
-                💵 SALDO KAS FISIK DI TANGAN
-              </ThemedText>
-              {isDenominationMatched ? (
-                <View style={[styles.denomBadge, { backgroundColor: '#dcfce7', borderColor: '#bbf7d0' }]}>
-                  <ThemedText style={{ fontSize: 9.5, color: '#16a34a', fontWeight: '800' }}>✓ Fisik Sesuai</ThemedText>
-                </View>
-              ) : isDenominationCounted ? (
-                <View style={[styles.denomBadge, { backgroundColor: '#fef3c7', borderColor: '#fde68a' }]}>
-                  <ThemedText style={{ fontSize: 9.5, color: '#b45309', fontWeight: '800' }}>
-                    ⚠️ Selisih {denominationDiff > 0 ? '+' : ''}{formatRupiah(denominationDiff)}
-                  </ThemedText>
-                </View>
-              ) : (
-                <View style={[styles.denomBadge, { backgroundColor: '#f1f5f9', borderColor: '#e2e8f0' }]}>
-                  <ThemedText style={{ fontSize: 9.5, color: '#64748b', fontWeight: '600' }}>Belum Dihitung</ThemedText>
-                </View>
-              )}
-            </View>
+            <ThemedText style={{ fontSize: 11, color: '#334155', fontWeight: '800' }}>
+              💵 SALDO KAS FISIK DI TANGAN (LACI KASIR)
+            </ThemedText>
             <ThemedText
               style={{
                 fontSize: isLandscape ? 24 : 22,
@@ -299,42 +279,7 @@ export default function DashboardScreen() {
               {formatRupiah(cashHandBalance)}
             </ThemedText>
           </View>
-
-          {/* Tombol Input / Edit Pecahan Uang (Bisa diakses Kasir & Pemilik) */}
-          <TouchableOpacity
-            style={styles.denomActionBtn}
-            onPress={() => setDenominationModalVisible(true)}
-            activeOpacity={0.8}
-          >
-            <ThemedText style={{ fontSize: 11 }}>💵</ThemedText>
-            <ThemedText style={styles.denomActionText}>
-              {isDenominationCounted ? 'Edit Pecahan' : 'Hitung Pecahan'}
-            </ThemedText>
-          </TouchableOpacity>
         </View>
-
-        {/* Deretan Chips Pecahan Uang Fisik */}
-        {activeDenominations.length > 0 ? (
-          <View style={{ marginTop: 8 }}>
-            <ThemedText style={{ fontSize: 10, color: '#64748b', fontWeight: '600', marginBottom: 4 }}>
-              Rincian Pecahan di Laci (Total: {formatRupiah(physicalTotal)}):
-            </ThemedText>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 5, paddingVertical: 2 }}>
-              {activeDenominations.map((d) => (
-                <TouchableOpacity
-                  key={d.value}
-                  style={styles.denomChip}
-                  onPress={() => setDenominationModalVisible(true)}
-                  activeOpacity={0.7}
-                >
-                  <ThemedText style={styles.denomChipText}>
-                    {d.label} <ThemedText style={{ fontWeight: '800', color: Colors.tintDark }}>×{counts[d.value]}</ThemedText>
-                  </ThemedText>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        ) : null}
       </View>
 
       {/* Metrik Kas Hari Ini: Kas Masuk Tunai, Non-Tunai, Kas Keluar */}
@@ -688,6 +633,24 @@ export default function DashboardScreen() {
                     </Card>
                   </View>
 
+                  {/* F3: Counter Nota Hari Ini (reset tiap hari) */}
+                  <Card padding={12} style={{ backgroundColor: '#f0fdf4', borderColor: '#bbf7d0', marginTop: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <ThemedText style={{ fontSize: 18 }}>📋</ThemedText>
+                        <View>
+                          <ThemedText style={{ fontSize: 10, color: '#15803d', fontWeight: '700' }}>NOTA HARI INI</ThemedText>
+                          <ThemedText style={{ fontSize: 11, color: '#166534', marginTop: 1 }}>
+                            Reset otomatis setiap pukul 00:00
+                          </ThemedText>
+                        </View>
+                      </View>
+                      <ThemedText style={{ fontSize: 26, fontWeight: '800', color: '#15803d' }}>
+                        {dailyNotaCount.toString().padStart(3, '0')}
+                      </ThemedText>
+                    </View>
+                  </Card>
+
                   {/* Widget Peringatan Stok Menipis (Landscape) */}
                   {renderLowStockCard(true)}
 
@@ -973,6 +936,24 @@ export default function DashboardScreen() {
                   </Card>
                 </View>
 
+                {/* F3: Counter Nota Hari Ini (reset tiap hari) */}
+                <Card padding={12} style={{ backgroundColor: '#f0fdf4', borderColor: '#bbf7d0', marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <ThemedText style={{ fontSize: 18 }}>📋</ThemedText>
+                      <View>
+                        <ThemedText style={{ fontSize: 10, color: '#15803d', fontWeight: '700' }}>NOTA HARI INI</ThemedText>
+                        <ThemedText style={{ fontSize: 10, color: '#166534', marginTop: 1 }}>
+                          Reset otomatis pukul 00:00
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <ThemedText style={{ fontSize: 26, fontWeight: '800', color: '#15803d' }}>
+                      {dailyNotaCount.toString().padStart(3, '0')}
+                    </ThemedText>
+                  </View>
+                </Card>
+
                 {/* Widget Peringatan Stok Menipis (Portrait) */}
                 {renderLowStockCard(false)}
 
@@ -1097,16 +1078,7 @@ export default function DashboardScreen() {
         }}
       />
 
-      {/* Cash Denomination Modal (Hitung Pecahan Uang Kas Fisik) */}
-      <CashDenominationModal
-        visible={denominationModalVisible}
-        onClose={() => setDenominationModalVisible(false)}
-        currentHandBalance={cashHandBalance}
-        initialCounts={denominations?.counts}
-        onSave={async (newCounts) => {
-          await saveDenominations(db, newCounts);
-        }}
-      />
+
     </ThemedView>
   );
 }

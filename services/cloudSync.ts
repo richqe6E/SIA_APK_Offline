@@ -116,6 +116,9 @@ export interface StoreSyncPayload {
     cashier_name: string;
     items_count: number;
     created_at: string;
+    daily_seq?: number;
+    cash_received?: number;
+    qris_received?: number;
   }[];
   recentLedger: {
     id: number;
@@ -192,36 +195,27 @@ export async function compileSyncPayload(
   const transactionCount = txSummary?.tx_count || 0;
   const avgPerTransaction = transactionCount > 0 ? Math.round(omset / transactionCount) : 0;
 
-  // 1b. Cash vs Non-Cash transactions today
-  const pmSummary = await db.getAllAsync<{
-    payment_method: string;
-    cnt: number;
-    tot: number;
-  }>(
-    `SELECT 
-       payment_method,
-       COUNT(id) as cnt,
-       COALESCE(SUM(total), 0) as tot
+  // 1b. Cash vs Non-Cash transactions today (termasuk porsi split payment presisi)
+  const pureTunaiRow = await db.getFirstAsync<{ cnt: number; tot: number }>(
+    `SELECT COUNT(id) as cnt, COALESCE(SUM(total), 0) as tot
      FROM transactions
-     WHERE date(created_at) = date('now','localtime')
-     GROUP BY payment_method`
+     WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
+  );
+  const pureQrisRow = await db.getFirstAsync<{ cnt: number; tot: number }>(
+    `SELECT COUNT(id) as cnt, COALESCE(SUM(total), 0) as tot
+     FROM transactions
+     WHERE payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0) AND date(created_at) = date('now','localtime')`
+  );
+  const splitTxRow = await db.getFirstAsync<{ cnt: number; cashTot: number; qrisTot: number }>(
+    `SELECT COUNT(id) as cnt, COALESCE(SUM(cash_received), 0) as cashTot, COALESCE(SUM(qris_received), 0) as qrisTot
+     FROM transactions
+     WHERE (payment_method = 'split' OR (cash_received > 0 AND qris_received > 0)) AND date(created_at) = date('now','localtime')`
   );
 
-  let cashTxCount = 0;
-  let cashTxTotal = 0;
-  let nonCashTxCount = 0;
-  let nonCashTxTotal = 0;
-
-  for (const pm of pmSummary) {
-    const m = (pm.payment_method || '').toLowerCase().trim();
-    if (m === 'cash' || m === 'tunai') {
-      cashTxCount += pm.cnt;
-      cashTxTotal += pm.tot;
-    } else if (m !== 'hutang') {
-      nonCashTxCount += pm.cnt;
-      nonCashTxTotal += pm.tot;
-    }
-  }
+  const cashTxCount = (pureTunaiRow?.cnt || 0) + (splitTxRow?.cnt || 0);
+  const cashTxTotal = (pureTunaiRow?.tot || 0) + (splitTxRow?.cashTot || 0);
+  const nonCashTxCount = (pureQrisRow?.cnt || 0) + (splitTxRow?.cnt || 0);
+  const nonCashTxTotal = (pureQrisRow?.tot || 0) + (splitTxRow?.qrisTot || 0);
 
   // 1c. Peak hour today
   const peakHourRow = await db.getFirstAsync<{ hr: string; tx_cnt: number }>(
@@ -262,10 +256,9 @@ export async function compileSyncPayload(
   }>(
     `SELECT 
        COALESCE(SUM(ti.quantity), 0) as total_qty,
-       COALESCE(SUM(ti.quantity * COALESCE(p.cost_price, 0)), 0) as total_cogs
+       COALESCE(SUM(ti.quantity * COALESCE(ti.cost_price, 0)), 0) as total_cogs
      FROM transaction_items ti
      JOIN transactions t ON t.id = ti.transaction_id
-     LEFT JOIN products p ON p.id = ti.product_id
      WHERE date(t.created_at) = date('now','localtime')`
   );
 
@@ -274,21 +267,20 @@ export async function compileSyncPayload(
   const estimatedGrossProfit = Math.max(0, omset - cogs);
   const grossMarginPercent = omset > 0 ? Math.round((estimatedGrossProfit / omset) * 100) : 0;
 
-  // Today Operating Expenses (cash out not including setor_bank)
+  // Today Operating Expenses (dikecualikan kulakan_stok, bayar_hutang_supplier, dan setor_bank)
   const expSummary = await db.getFirstAsync<{ total_exp: number | null }>(
     `SELECT COALESCE(SUM(amount), 0) as total_exp
      FROM cash_ledger
-     WHERE type = 'out' AND category != 'setor_bank' AND date(created_at) = date('now','localtime')`
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank') AND date(date) = date('now','localtime')`
   );
   const operatingExpenses = expSummary?.total_exp || 0;
   const netProfitToday = estimatedGrossProfit - operatingExpenses;
 
-  // 3. Monthly P&L Summary
+  // 3. Monthly P&L Summary (SAK EMKM)
   const monthlyCogsRow = await db.getFirstAsync<{ m_cogs: number | null }>(
-    `SELECT COALESCE(SUM(ti.quantity * COALESCE(p.cost_price, 0)), 0) as m_cogs
+    `SELECT COALESCE(SUM(ti.quantity * COALESCE(ti.cost_price, 0)), 0) as m_cogs
      FROM transaction_items ti
      JOIN transactions t ON t.id = ti.transaction_id
-     LEFT JOIN products p ON p.id = ti.product_id
      WHERE strftime('%Y-%m', t.created_at) = strftime('%Y-%m', 'now','localtime')`
   );
   const mHpp = monthlyCogsRow?.m_cogs || 0;
@@ -297,7 +289,7 @@ export async function compileSyncPayload(
   const monthlyExpRow = await db.getFirstAsync<{ m_exp: number | null }>(
     `SELECT COALESCE(SUM(amount), 0) as m_exp
      FROM cash_ledger
-     WHERE type = 'out' AND category != 'setor_bank' AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now','localtime')`
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank') AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now','localtime')`
   );
   const mTotalBeban = monthlyExpRow?.m_exp || 0;
   const mLabaBersih = mLabaKotor - mTotalBeban;
@@ -305,7 +297,7 @@ export async function compileSyncPayload(
   const bebanBreakdown = await db.getAllAsync<{ category: string; total: number }>(
     `SELECT category, SUM(amount) as total
      FROM cash_ledger
-     WHERE type = 'out' AND category != 'setor_bank' AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now','localtime')
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank') AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now','localtime')
      GROUP BY category
      ORDER BY total DESC
      LIMIT 5`
@@ -463,14 +455,20 @@ export async function compileSyncPayload(
     cashier_name: string;
     items_count: number;
     created_at: string;
+    daily_seq: number | null;
+    cash_received: number | null;
+    qris_received: number | null;
   }>(
-    `SELECT 
+    `SELECT
        t.id,
        t.total,
        t.payment_method,
        COALESCE(t.cashier_name, 'Kasir') as cashier_name,
        (SELECT COUNT(id) FROM transaction_items WHERE transaction_id = t.id) as items_count,
-       t.created_at
+       t.created_at,
+       COALESCE(t.daily_seq, 0) as daily_seq,
+       COALESCE(t.cash_received, 0) as cash_received,
+       COALESCE(t.qris_received, 0) as qris_received
      FROM transactions t
      ORDER BY t.id DESC
      LIMIT 5`
@@ -700,7 +698,17 @@ export async function compileSyncPayload(
     inventoryValuation,
     dueSoonReceivables,
     topProducts,
-    recentTransactions,
+    recentTransactions: recentTransactions.map((r) => ({
+      id: r.id,
+      total: r.total,
+      payment_method: r.payment_method,
+      cashier_name: r.cashier_name,
+      items_count: r.items_count,
+      created_at: r.created_at,
+      daily_seq: r.daily_seq ?? 0,
+      cash_received: r.cash_received ?? 0,
+      qris_received: r.qris_received ?? 0,
+    })),
     recentLedger,
     criticalProducts,
     expiringProducts,
@@ -828,15 +836,27 @@ export async function pushSyncToCloud(
 /**
  * Automated non-blocking background sync trigger from Store Tablet
  */
+let debounceSyncTimer: any = null;
+
+/**
+ * Automated non-blocking background sync trigger from Store Tablet (Debounced 2 detik)
+ */
 export async function triggerAutoSync(db: SQLiteDatabase): Promise<void> {
   try {
     const { storePairingCode } = useSettingsStore.getState();
     if (!storePairingCode) return;
 
-    // Fire non-blocking push
-    pushSyncToCloud(db, storePairingCode).catch((err) => {
-      console.warn('Background auto-sync failed silently:', err?.message);
-    });
+    if (debounceSyncTimer) {
+      clearTimeout(debounceSyncTimer);
+    }
+
+    // Debounce background sync: tidak mengganggu alur UI / transaksi kasir
+    debounceSyncTimer = setTimeout(() => {
+      debounceSyncTimer = null;
+      pushSyncToCloud(db, storePairingCode).catch((err) => {
+        console.warn('Background auto-sync failed silently:', err?.message);
+      });
+    }, 2000);
   } catch {}
 }
 

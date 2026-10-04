@@ -39,11 +39,11 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "owner": "risgoldofficial23",
+    "owner": "yayasandevapps-team",
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "d05a03d0-578d-4e1b-b430-61fcea211f57"
+        "projectId": "5ffee25f-8baf-4e44-9ebb-fae3063360ac"
       }
     }
   }

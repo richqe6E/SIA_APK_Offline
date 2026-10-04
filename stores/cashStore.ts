@@ -18,7 +18,7 @@ export interface CashEntry {
 }
 
 export interface CashDenominationData {
-  counts: Record<number, number>;
+  counts: Record<number | string, number>;
   total: number;
   updatedAt: string;
 }
@@ -30,8 +30,9 @@ export const CASH_IN_CATEGORIES = [
   { id: 'pendapatan_lain', label: 'Pendapatan Operasional Lain' },
 ] as const;
 
-export const CASH_OUT_CATEGORIES_RETAIL = [
+export const CASH_OUT_CATEGORIES = [
   { id: 'kulakan_stok', label: 'Kulakan Stok Barang' },
+  { id: 'bayar_hutang_supplier', label: 'Pembayaran Hutang Supplier' },
   { id: 'kemasan_plastik', label: 'Kemasan & Plastik' },
   { id: 'gaji_karyawan', label: 'Gaji Karyawan' },
   { id: 'listrik_air', label: 'Listrik, Air & Internet' },
@@ -40,24 +41,6 @@ export const CASH_OUT_CATEGORIES_RETAIL = [
   { id: 'transportasi', label: 'Transportasi & Logistik' },
   { id: 'lain-lain', label: 'Beban Operasional Lain' },
 ] as const;
-
-export const CASH_OUT_CATEGORIES_KULINER = [
-  { id: 'belanja_bahan', label: 'Belanja Bahan Baku & Bumbu' },
-  { id: 'gas_energi', label: 'Gas Elpiji & Bahan Bakar' },
-  { id: 'kemasan_plastik', label: 'Kemasan Makanan & Box' },
-  { id: 'gaji_karyawan', label: 'Gaji Karyawan' },
-  { id: 'listrik_air', label: 'Listrik, Air & Internet' },
-  { id: 'sewa_tempat', label: 'Sewa Tempat / Kios' },
-  { id: 'perawatan', label: 'Perawatan Alat Dapur' },
-  { id: 'transportasi', label: 'Transportasi & Pasar' },
-  { id: 'lain-lain', label: 'Beban Operasional Lain' },
-] as const;
-
-export const CASH_OUT_CATEGORIES = CASH_OUT_CATEGORIES_RETAIL;
-
-export function getCashOutCategories(mode?: 'retail' | 'kuliner') {
-  return mode === 'kuliner' ? CASH_OUT_CATEGORIES_KULINER : CASH_OUT_CATEGORIES_RETAIL;
-}
 
 export const CASH_CATEGORY_MAP: Record<string, string> = {
   modal_awal: 'Modal Awal Kasir',
@@ -103,7 +86,7 @@ interface CashState {
 
   loadLedger: (db: SQLiteDatabase) => Promise<void>;
   loadDenominations: (db: SQLiteDatabase) => Promise<void>;
-  saveDenominations: (db: SQLiteDatabase, counts: Record<number, number>) => Promise<void>;
+  saveDenominations: (db: SQLiteDatabase, counts: Record<number | string, number>, customTotal?: number) => Promise<void>;
   clearDenominations: (db: SQLiteDatabase) => Promise<void>;
   addEntry: (
     db: SQLiteDatabase,
@@ -152,7 +135,9 @@ export const useCashStore = create<CashState>((set, get) => ({
   loading: false,
 
   loadLedger: async (db) => {
-    set({ loading: true });
+    if (get().entries.length === 0) {
+      set({ loading: true });
+    }
     try {
       const rawRows = await db.getAllAsync<any>(
         'SELECT * FROM cash_ledger ORDER BY date DESC, id DESC'
@@ -169,26 +154,37 @@ export const useCashStore = create<CashState>((set, get) => ({
         account: r.account === 'bank' ? 'bank' : 'hand',
       }));
 
-      // 1. Transaksi Penjualan Tunai (Kas di Tangan)
+      // 1. Transaksi Penjualan Tunai Murni (bukan split payment)
       const salesCashRow = await db.getFirstAsync<{ gross_in: number; gross_change: number; total: number }>(
-        `SELECT 
+        `SELECT
            COALESCE(SUM(payment_amount), 0) as gross_in,
            COALESCE(SUM(change), 0) as gross_change,
            COALESCE(SUM(total), 0) as total
-         FROM transactions 
-         WHERE payment_method = 'tunai'`
+         FROM transactions
+         WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0)`
       );
       const salesGrossIn = salesCashRow?.gross_in ?? 0;
       const salesChangeOut = salesCashRow?.gross_change ?? 0;
       const salesCash = salesCashRow?.total ?? 0;
 
-      // 2. Transaksi Penjualan QRIS / Transfer (Kas di Bank)
+      // 2. Transaksi Penjualan QRIS / Transfer Murni (bukan split payment)
       const salesQrisRow = await db.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(total), 0) as total
-         FROM transactions 
-         WHERE payment_method = 'qris'`
+         FROM transactions
+         WHERE payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0)`
       );
       const salesQris = salesQrisRow?.total ?? 0;
+
+      // 2b. Porsi Tunai & QRIS pada transaksi Split Payment (keduanya > 0)
+      const splitRow = await db.getFirstAsync<{ split_cash: number; split_qris: number }>(
+        `SELECT
+           COALESCE(SUM(cash_received), 0) as split_cash,
+           COALESCE(SUM(qris_received), 0) as split_qris
+         FROM transactions
+         WHERE (cash_received > 0 AND qris_received > 0)`
+      );
+      const splitCashPortion = splitRow?.split_cash ?? 0;
+      const splitQrisPortion = splitRow?.split_qris ?? 0;
 
       // 3. Mutasi Buku Kas Manual (Pisahkan Kas Tangan vs Kas Bank)
       let manualHandIn = 0;
@@ -223,11 +219,12 @@ export const useCashStore = create<CashState>((set, get) => ({
         }
       }
 
-      const totalIn = manualHandIn + manualBankIn + salesGrossIn + salesQris;
+      // F2: split cash portion masuk ke tangan, qris portion ke bank
+      const totalIn = manualHandIn + manualBankIn + salesGrossIn + salesQris + splitCashPortion + splitQrisPortion;
       const totalOut = manualHandOut + manualBankOut + salesChangeOut;
 
-      const handBalance = (salesGrossIn + manualHandIn) - (salesChangeOut + manualHandOut);
-      const bankBalance = (salesQris + manualBankIn) - manualBankOut;
+      const handBalance = (salesGrossIn + manualHandIn + splitCashPortion) - (salesChangeOut + manualHandOut);
+      const bankBalance = (salesQris + manualBankIn + splitQrisPortion) - manualBankOut;
       const totalBalance = handBalance + bankBalance;
 
       set({
@@ -270,13 +267,17 @@ export const useCashStore = create<CashState>((set, get) => ({
     }
   },
 
-  saveDenominations: async (db, counts) => {
-    let total = 0;
-    for (const [denomStr, count] of Object.entries(counts)) {
-      const denom = parseInt(denomStr, 10) || 0;
-      const cnt = parseInt(count as any, 10) || 0;
-      if (denom > 0 && cnt > 0) {
-        total += denom * cnt;
+  saveDenominations: async (db, counts, customTotal) => {
+    let total = typeof customTotal === 'number' ? customTotal : 0;
+    if (typeof customTotal !== 'number') {
+      for (const [denomStr, count] of Object.entries(counts)) {
+        if (/^\d+$/.test(denomStr)) {
+          const denom = parseInt(denomStr, 10) || 0;
+          const cnt = parseInt(count as any, 10) || 0;
+          if (denom > 0 && cnt > 0) {
+            total += denom * cnt;
+          }
+        }
       }
     }
     const data: CashDenominationData = {
@@ -297,6 +298,21 @@ export const useCashStore = create<CashState>((set, get) => ({
   },
 
   addEntry: async (db, type, category, description, amount, date, account = 'hand') => {
+    if (type === 'out') {
+      const currentHand = get().cashHandBalance;
+      const currentBank = get().cashBankBalance;
+      if (account === 'hand' && amount > currentHand) {
+        throw new Error(
+          `Saldo Kas Laci tidak mencukupi!\n\nSaldo Tersedia: Rp ${Math.round(currentHand).toLocaleString('id-ID')}\nPengeluaran: Rp ${Math.round(amount).toLocaleString('id-ID')}`
+        );
+      }
+      if (account === 'bank' && amount > currentBank) {
+        throw new Error(
+          `Saldo Kas Bank tidak mencukupi!\n\nSaldo Tersedia: Rp ${Math.round(currentBank).toLocaleString('id-ID')}\nPengeluaran: Rp ${Math.round(amount).toLocaleString('id-ID')}`
+        );
+      }
+    }
+
     const today = date || new Date().toISOString().split('T')[0];
     await db.runAsync(
       'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
@@ -318,33 +334,80 @@ export const useCashStore = create<CashState>((set, get) => ({
     const descIn = `Penerimaan Setoran Kas Laci (${cleanBank})${cleanNotes}`;
     const today = date || new Date().toISOString().split('T')[0];
 
-    // 1. Kurangi Kas Tangan (Laci)
-    await db.runAsync(
-      'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
-      'out',
-      'setor_bank',
-      descOut,
-      amount,
-      today,
-      'hand'
-    );
+    // MODAL-011: Atomic & guardrail — gunakan transaksi eksklusif dan cek saldo laci riil langsung dari DB
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      const salesRow = await txn.getFirstAsync<{ sales_cash: number; sales_change: number; split_cash: number }>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN cash_received > 0 THEN cash_received WHEN payment_method = 'tunai' THEN payment_amount ELSE 0 END), 0) as sales_cash,
+           COALESCE(SUM(CASE WHEN payment_method = 'tunai' THEN change ELSE 0 END), 0) as sales_change,
+           COALESCE(SUM(CASE WHEN cash_received > 0 AND qris_received > 0 THEN cash_received ELSE 0 END), 0) as split_cash
+         FROM transactions`
+      );
+      const ledgerInRow = await txn.getFirstAsync<{ total_in: number }>(
+        `SELECT COALESCE(SUM(amount), 0) as total_in FROM cash_ledger WHERE type = 'in' AND account != 'bank'`
+      );
+      const ledgerOutRow = await txn.getFirstAsync<{ total_out: number }>(
+        `SELECT COALESCE(SUM(amount), 0) as total_out FROM cash_ledger WHERE type = 'out' AND account != 'bank'`
+      );
 
-    // 2. Tambah Kas Bank (Rekening)
-    await db.runAsync(
-      'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
-      'in',
-      'setor_bank',
-      descIn,
-      amount,
-      today,
-      'bank'
-    );
+      const salesCashIn = (salesRow?.sales_cash ?? 0) + (salesRow?.split_cash ?? 0);
+      const salesCashOut = salesRow?.sales_change ?? 0;
+      const ledgerIn = ledgerInRow?.total_in ?? 0;
+      const ledgerOut = ledgerOutRow?.total_out ?? 0;
+      const currentHandBalance = (salesCashIn + ledgerIn) - (salesCashOut + ledgerOut);
+
+      if (amount > currentHandBalance) {
+        throw new Error(
+          `Saldo kas fisik di laci tidak mencukupi!\n\nSaldo Tersedia: Rp ${Math.round(currentHandBalance).toLocaleString('id-ID')}\nNominal Setor: Rp ${Math.round(amount).toLocaleString('id-ID')}`
+        );
+      }
+
+      await txn.runAsync(
+        'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
+        'out',
+        'setor_bank',
+        descOut,
+        amount,
+        today,
+        'hand',
+      );
+      await txn.runAsync(
+        'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
+        'in',
+        'setor_bank',
+        descIn,
+        amount,
+        today,
+        'bank',
+      );
+    });
 
     await get().loadLedger(db);
     triggerAutoSync(db);
   },
 
   updateEntry: async (db, id, type, category, description, amount, date, account = 'hand') => {
+    if (type === 'out') {
+      const currentHand = get().cashHandBalance;
+      const currentBank = get().cashBankBalance;
+      // Ambil entry lama untuk melihat apakah amount berubah
+      const oldEntry = get().entries.find((e) => e.id === id);
+      const oldAmount = (oldEntry && oldEntry.type === 'out' && oldEntry.account === account) ? oldEntry.amount : 0;
+      const effectiveHand = currentHand + oldAmount;
+      const effectiveBank = currentBank + oldAmount;
+
+      if (account === 'hand' && amount > effectiveHand) {
+        throw new Error(
+          `Saldo Kas Laci tidak mencukupi!\n\nSaldo Tersedia: Rp ${Math.round(effectiveHand).toLocaleString('id-ID')}\nPengeluaran: Rp ${Math.round(amount).toLocaleString('id-ID')}`
+        );
+      }
+      if (account === 'bank' && amount > effectiveBank) {
+        throw new Error(
+          `Saldo Kas Bank tidak mencukupi!\n\nSaldo Tersedia: Rp ${Math.round(effectiveBank).toLocaleString('id-ID')}\nPengeluaran: Rp ${Math.round(amount).toLocaleString('id-ID')}`
+        );
+      }
+    }
+
     const today = date || new Date().toISOString().split('T')[0];
     await db.runAsync(
       'UPDATE cash_ledger SET type = ?, category = ?, description = ?, amount = ?, date = ?, account = ? WHERE id = ?',
@@ -365,21 +428,7 @@ export const useCashStore = create<CashState>((set, get) => ({
   },
 
   getCashBalance: async (db) => {
-    const salesRow = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai'"
-    );
-    const salesCash = salesRow?.total ?? 0;
-
-    const inRow = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'in' AND (account = 'hand' OR account IS NULL)"
-    );
-    const manualIn = inRow?.total ?? 0;
-
-    const outRow = await db.getFirstAsync<{ total: number }>(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger WHERE type = 'out' AND (account = 'hand' OR account IS NULL)"
-    );
-    const manualOut = outRow?.total ?? 0;
-
-    return (salesCash + manualIn) - manualOut;
+    await get().loadLedger(db);
+    return get().cashHandBalance;
   },
 }));

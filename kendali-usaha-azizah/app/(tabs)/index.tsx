@@ -51,11 +51,6 @@ export default function DashboardScreen() {
   const cashHand = liquidity?.cashHand || 0;
   const cashBank = liquidity?.cashBank || 0;
   const totalCash = liquidity?.totalCash || (cashHand + cashBank);
-  const denomObj = liquidity?.denominations || {};
-  const denomSorted = Object.entries(denomObj)
-    .map(([d, c]) => ({ denom: Number(d), count: Number(c) }))
-    .filter((x) => x.count > 0)
-    .sort((a, b) => b.denom - a.denom);
 
   // Active Shift
   const shift = syncData?.activeShift;
@@ -233,22 +228,6 @@ export default function DashboardScreen() {
                   <ThemedText style={styles.pocketDescText}>QRIS, transfer & setoran</ThemedText>
                 </View>
               </View>
-
-              {/* Rincian Lembaran Uang Fisik Kasir jika ada */}
-              {denomSorted.length > 0 && (
-                <View style={styles.denomBox}>
-                  <ThemedText style={styles.denomTitle}>Pecahan Uang Fisik di Laci Kasir:</ThemedText>
-                  <View style={styles.denomChipsRow}>
-                    {denomSorted.map((item) => (
-                      <View key={item.denom} style={styles.denomChip}>
-                        <ThemedText style={styles.denomChipText}>
-                          {item.denom >= 1000 ? `${item.denom / 1000}k` : item.denom}: {item.count} lbr
-                        </ThemedText>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              )}
             </Card>
 
             {/* 4. STATUS KASIR DI TOKO */}
@@ -310,34 +289,50 @@ export default function DashboardScreen() {
                     const isCash =
                       (t.payment_method || '').toLowerCase() === 'cash' ||
                       (t.payment_method || '').toLowerCase() === 'tunai';
+                    const isSplit =
+                      (t.payment_method || '').toLowerCase() === 'split' ||
+                      (Number(t.cash_received || 0) > 0 && Number(t.qris_received || 0) > 0);
                     const timeOnly = t.created_at ? t.created_at.split(' ')[1] || t.created_at : '';
+                    const notaLabel =
+                      t.daily_seq && t.daily_seq > 0
+                        ? `Nota #${t.daily_seq.toString().padStart(3, '0')}`
+                        : `Nota #${t.id}`;
+
+                    let badgeLabel = 'QRIS/TF';
+                    let badgeStyle = styles.txBadgeDigital;
+                    let textStyle = styles.txTextDigital;
+                    if (isSplit) {
+                      badgeLabel = 'SPLIT';
+                      badgeStyle = styles.txBadgeCash;
+                      textStyle = styles.txTextCash;
+                    } else if (isCash) {
+                      badgeLabel = 'TUNAI';
+                      badgeStyle = styles.txBadgeCash;
+                      textStyle = styles.txTextCash;
+                    }
 
                     return (
                       <View key={t.id} style={styles.txItem}>
-                        <View
-                          style={[
-                            styles.txMethodBadge,
-                            isCash ? styles.txBadgeCash : styles.txBadgeDigital,
-                          ]}
-                        >
-                          <ThemedText
-                            style={[
-                              styles.txMethodText,
-                              isCash ? styles.txTextCash : styles.txTextDigital,
-                            ]}
-                          >
-                            {isCash ? 'TUNAI' : 'QRIS/TF'}
+                        <View style={[styles.txMethodBadge, badgeStyle]}>
+                          <ThemedText style={[styles.txMethodText, textStyle]}>
+                            {badgeLabel}
                           </ThemedText>
                         </View>
 
                         <View style={{ flex: 1 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <ThemedText style={styles.txNota}>Nota #{t.id}</ThemedText>
+                            <ThemedText style={styles.txNota}>{notaLabel}</ThemedText>
                             <ThemedText style={styles.txKasir}>• {t.cashier_name}</ThemedText>
                           </View>
                           <ThemedText style={styles.txMeta}>
                             {timeOnly} • {t.items_count || 1} produk
                           </ThemedText>
+                          {isSplit ? (
+                            <ThemedText style={styles.txMeta}>
+                              Tunai {formatRupiah(t.cash_received || 0)} + QRIS{' '}
+                              {formatRupiah(t.qris_received || 0)}
+                            </ThemedText>
+                          ) : null}
                         </View>
 
                         <ThemedText style={styles.txAmount}>{formatRupiah(t.total)}</ThemedText>

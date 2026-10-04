@@ -106,6 +106,9 @@ export interface StoreSyncPayload {
     cashier_name: string;
     items_count: number;
     created_at: string;
+    daily_seq?: number;
+    cash_received?: number;
+    qris_received?: number;
   }[];
   recentLedger: {
     id: number;

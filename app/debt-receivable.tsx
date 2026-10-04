@@ -34,6 +34,7 @@ import {
 } from '@/stores/debtReceivableStore';
 import { useCashStore } from '@/stores/cashStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
 
 type ActiveTab = 'receivable' | 'debt';
 type FilterStatus = 'all' | 'unpaid' | 'paid';
@@ -66,9 +67,13 @@ export default function DebtReceivableScreen() {
     updateSupplier,
     deleteSupplier,
     addReceivable,
+    editReceivable,
+    deleteReceivable,
     payReceivable,
     getReceivablePayments,
     addDebt,
+    editDebt,
+    deleteDebt,
     payDebt,
     getDebtPayments,
   } = useDebtReceivableStore();
@@ -106,6 +111,20 @@ export default function DebtReceivableScreen() {
     items: PaymentHistoryItem[];
   } | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // F4: Edit Modal untuk piutang/hutang (nominal + jatuh tempo)
+  const [editTarget, setEditTarget] = useState<{
+    type: 'receivable' | 'debt';
+    id: number;
+    targetName: string;
+    currentTotal: number;
+    currentDueDate: string | null;
+  } | null>(null);
+  const [editTotalInput, setEditTotalInput] = useState('');
+  const [editDueDate, setEditDueDate] = useState(new Date());
+  const [editHasDueDate, setEditHasDueDate] = useState(false);
+  const [showEditDatePicker, setShowEditDatePicker] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const reloadAll = useCallback(() => {
     loadCustomers(db);
@@ -164,7 +183,7 @@ export default function DebtReceivableScreen() {
       totalAmount,
       remainingAmount,
     });
-    setPayAmount(remainingAmount.toString());
+    setPayAmount(formatRupiahInput(remainingAmount));
     setPayAccount('hand');
     setPayNotes('');
     setPayDate(new Date());
@@ -173,7 +192,7 @@ export default function DebtReceivableScreen() {
 
   const handleConfirmPay = async () => {
     if (!payTarget) return;
-    const amt = parseFloat(payAmount.replace(/[^0-9]/g, '')) || 0;
+    const amt = parseRupiahInput(payAmount);
     if (amt <= 0) {
       Alert.alert('Error', 'Nominal pembayaran harus lebih dari 0');
       return;
@@ -216,6 +235,90 @@ export default function DebtReceivableScreen() {
       targetName,
       items,
     });
+  };
+
+  // F4: buka modal edit (nominal + jatuh tempo).
+  // editHasDueDate=false → set null (hapus jatuh tempo). true → pakai editDueDate.
+  const handleOpenEditModal = (
+    type: 'receivable' | 'debt',
+    id: number,
+    targetName: string,
+    currentTotal: number,
+    currentDueDate: string | null
+  ) => {
+    setEditTarget({ type, id, targetName, currentTotal, currentDueDate });
+    setEditTotalInput(currentTotal.toLocaleString('id-ID'));
+    if (currentDueDate) {
+      setEditHasDueDate(true);
+      setEditDueDate(new Date(currentDueDate));
+    } else {
+      setEditHasDueDate(false);
+      setEditDueDate(new Date());
+    }
+    setShowEditDatePicker(false);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editTarget) return;
+    const newTotal = parseInt(editTotalInput.replace(/\./g, ''), 10) || 0;
+    if (newTotal <= 0) {
+      Alert.alert('Error', 'Nominal harus lebih besar dari 0');
+      return;
+    }
+
+    const dueDateStr = editHasDueDate
+      ? editDueDate.toISOString().split('T')[0]
+      : null;
+
+    setSavingEdit(true);
+    let res: { success: boolean; message?: string };
+    if (editTarget.type === 'receivable') {
+      res = await editReceivable(db, editTarget.id, {
+        totalAmount: newTotal,
+        dueDate: dueDateStr,
+      });
+    } else {
+      res = await editDebt(db, editTarget.id, {
+        totalAmount: newTotal,
+        dueDate: dueDateStr,
+      });
+    }
+    setSavingEdit(false);
+
+    if (res.success) {
+      setEditTarget(null);
+      Alert.alert('Sukses', 'Data berhasil diperbarui');
+      reloadAll();
+    } else {
+      Alert.alert('Gagal', res.message || 'Gagal memperbarui data');
+    }
+  };
+
+  const handleDelete = (type: 'receivable' | 'debt', id: number, targetName: string) => {
+    const label = type === 'receivable' ? 'piutang' : 'hutang';
+    Alert.alert(
+      'Hapus ' + label.charAt(0).toUpperCase() + label.slice(1) + '?',
+      `Yakin ingin menghapus ${label} atas nama ${targetName}? Tindakan ini tidak dapat dibatalkan.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            const res =
+              type === 'receivable'
+                ? await deleteReceivable(db, id)
+                : await deleteDebt(db, id);
+            if (res.success) {
+              Alert.alert('Terhapus', `${label.charAt(0).toUpperCase() + label.slice(1)} berhasil dihapus.`);
+              reloadAll();
+            } else {
+              Alert.alert('Gagal', res.message || `Gagal menghapus ${label}`);
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -448,6 +551,33 @@ export default function DebtReceivableScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
+
+                  {/* F4: Edit & Hapus (khusus pemilik) */}
+                  {!isKasir && (
+                    <View style={[styles.itemActionRow, { marginTop: 6 }]}>
+                      <TouchableOpacity
+                        style={[styles.historyBtn, { backgroundColor: '#eff6ff', borderColor: '#3b82f6' }]}
+                        onPress={() =>
+                          handleOpenEditModal(
+                            'receivable',
+                            item.id,
+                            item.customer_name,
+                            item.total_amount,
+                            item.due_date
+                          )
+                        }
+                      >
+                        <ThemedText style={[styles.historyBtnText, { color: '#1d4ed8' }]}>✏️ Edit</ThemedText>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.payBtn, { backgroundColor: '#fef2f2', borderColor: '#ef4444' }]}
+                        onPress={() => handleDelete('receivable', item.id, item.customer_name)}
+                      >
+                        <ThemedText style={[styles.payBtnText, { color: '#b91c1c' }]}>🗑️ Hapus</ThemedText>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </Card>
               );
             }}
@@ -623,6 +753,33 @@ export default function DebtReceivableScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
+
+                  {/* F4: Edit & Hapus (khusus pemilik) */}
+                  {!isKasir && (
+                    <View style={[styles.itemActionRow, { marginTop: 6 }]}>
+                      <TouchableOpacity
+                        style={[styles.historyBtn, { backgroundColor: '#eff6ff', borderColor: '#3b82f6' }]}
+                        onPress={() =>
+                          handleOpenEditModal(
+                            'debt',
+                            item.id,
+                            item.supplier_name,
+                            item.total_amount,
+                            item.due_date
+                          )
+                        }
+                      >
+                        <ThemedText style={[styles.historyBtnText, { color: '#1d4ed8' }]}>✏️ Edit</ThemedText>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.payBtn, { backgroundColor: '#fef2f2', borderColor: '#ef4444' }]}
+                        onPress={() => handleDelete('debt', item.id, item.supplier_name)}
+                      >
+                        <ThemedText style={[styles.payBtnText, { color: '#b91c1c' }]}>🗑️ Hapus</ThemedText>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </Card>
               );
             }}
@@ -680,7 +837,7 @@ export default function DebtReceivableScreen() {
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <ThemedText style={styles.label}>Nominal Pembayaran (Rp)</ThemedText>
                     <TouchableOpacity
-                      onPress={() => setPayAmount(payTarget.remainingAmount.toString())}
+                      onPress={() => setPayAmount(formatRupiahInput(payTarget.remainingAmount))}
                     >
                       <ThemedText style={{ fontSize: 11, color: Colors.tint, fontWeight: '700' }}>
                         Bayar Lunas Semua
@@ -689,11 +846,11 @@ export default function DebtReceivableScreen() {
                   </View>
                   <TextInput
                     style={[styles.input, { fontSize: 16, fontWeight: '700', color: Colors.tintDark }]}
-                    placeholder="cth: 50000"
+                    placeholder="cth: 50.000"
                     placeholderTextColor={Colors.disabled}
                     keyboardType="numeric"
                     value={payAmount}
-                    onChangeText={setPayAmount}
+                    onChangeText={(val) => setPayAmount(formatRupiahInput(val))}
                   />
                 </View>
 
@@ -917,6 +1074,108 @@ export default function DebtReceivableScreen() {
       </Modal>
 
       {/* ───────────────────────────────────────── */}
+      {/* F4: MODAL EDIT PIUTANG / HUTANG          */}
+      {/* ───────────────────────────────────────── */}
+      <Modal visible={!!editTarget} transparent animationType="fade">
+        <ThemedView style={styles.modalOverlay}>
+          <Card padding={20} style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="subtitle" style={{ fontSize: 16 }}>
+                {editTarget?.type === 'receivable' ? '✏️ Edit Piutang' : '✏️ Edit Hutang'}
+              </ThemedText>
+              <Pressable onPress={() => setEditTarget(null)}>
+                <ThemedText style={{ fontSize: 18, color: Colors.muted }}>✕</ThemedText>
+              </Pressable>
+            </View>
+
+            {editTarget ? (
+              <>
+                <View style={styles.payTargetBox}>
+                  <ThemedText style={{ fontSize: 12, color: Colors.muted }}>
+                    {editTarget.type === 'receivable' ? 'Pelanggan' : 'Supplier'}
+                  </ThemedText>
+                  <ThemedText type="defaultSemiBold" style={{ fontSize: 14, color: '#0f172a' }}>
+                    {editTarget.targetName}
+                  </ThemedText>
+                </View>
+
+                <ThemedText style={styles.label}>
+                  Nominal {editTarget.type === 'receivable' ? 'Piutang' : 'Hutang'} (Rp)
+                </ThemedText>
+                <TextInput
+                  value={editTotalInput}
+                  onChangeText={(val) => setEditTotalInput(formatRupiahInput(val))}
+                  placeholder="0"
+                  placeholderTextColor={Colors.placeholder}
+                  keyboardType="numeric"
+                  style={styles.input}
+                />
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}>
+                  <ThemedText style={styles.label}>
+                    Atur Jatuh Tempo?
+                  </ThemedText>
+                  <Pressable
+                    onPress={() => setEditHasDueDate(!editHasDueDate)}
+                    style={{
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      borderRadius: 6,
+                      backgroundColor: editHasDueDate ? '#dbeafe' : '#f1f5f9',
+                      borderWidth: 1,
+                      borderColor: editHasDueDate ? '#3b82f6' : '#cbd5e1',
+                    }}
+                  >
+                    <ThemedText style={{ fontSize: 11, color: editHasDueDate ? '#1d4ed8' : '#64748b', fontWeight: '700' }}>
+                      {editHasDueDate ? '✓ Aktif' : 'Tidak'}
+                    </ThemedText>
+                  </Pressable>
+                </View>
+
+                {editHasDueDate && (
+                  <TouchableOpacity
+                    style={[styles.datePickerBtn, { marginTop: 8 }]}
+                    onPress={() => setShowEditDatePicker(true)}
+                  >
+                    <ThemedText style={{ fontSize: 13, color: '#0f172a' }}>
+                      📅 {editDueDate.toISOString().split('T')[0]}
+                    </ThemedText>
+                  </TouchableOpacity>
+                )}
+
+                {showEditDatePicker && (
+                  <DateTimePicker
+                    value={editDueDate}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={(event, selectedDate) => {
+                      setShowEditDatePicker(false);
+                      if (selectedDate) setEditDueDate(selectedDate);
+                    }}
+                  />
+                )}
+
+                <View style={styles.modalActions}>
+                  <Button
+                    title="Batal"
+                    variant="outline"
+                    onPress={() => setEditTarget(null)}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title={savingEdit ? 'Menyimpan...' : 'Simpan'}
+                    onPress={handleSaveEdit}
+                    disabled={savingEdit}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </>
+            ) : null}
+          </Card>
+        </ThemedView>
+      </Modal>
+
+      {/* ───────────────────────────────────────── */}
       {/* MODAL CATAT PIUTANG BARU                  */}
       {/* ───────────────────────────────────────── */}
       <AddReceivableModal
@@ -1081,11 +1340,11 @@ function AddReceivableModal({
               <ThemedText style={styles.label}>Total Nominal Piutang (Rp)</ThemedText>
               <TextInput
                 style={styles.input}
-                placeholder="cth: 150000"
+                placeholder="cth: 150.000"
                 placeholderTextColor={Colors.disabled}
                 keyboardType="numeric"
                 value={total}
-                onChangeText={setTotal}
+                onChangeText={(val) => setTotal(formatRupiahInput(val))}
               />
             </View>
 
@@ -1237,11 +1496,11 @@ function AddDebtModal({
               <ThemedText style={styles.label}>Total Nominal Hutang (Rp)</ThemedText>
               <TextInput
                 style={styles.input}
-                placeholder="cth: 500000"
+                placeholder="cth: 500.000"
                 placeholderTextColor={Colors.disabled}
                 keyboardType="numeric"
                 value={total}
-                onChangeText={setTotal}
+                onChangeText={(val) => setTotal(formatRupiahInput(val))}
               />
             </View>
 

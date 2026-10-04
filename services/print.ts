@@ -18,12 +18,14 @@ function formatDate(date: string): string {
   return `${day} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${hours}:${minutes}`;
 }
 
-export function formatInvoice(id: number, date?: Date | string): string {
+export function formatInvoice(id: number, date?: Date | string, dailySeq?: number): string {
   const d = date ? (typeof date === 'string' ? new Date(date) : date) : new Date();
   const dd = d.getDate().toString().padStart(2, '0');
   const mm = (d.getMonth() + 1).toString().padStart(2, '0');
   const yy = d.getFullYear().toString().slice(-2);
-  return `TRX-${dd}${mm}${yy}-${id.toString().padStart(3, '0')}`;
+  // F3: pakai dailySeq (reset per hari) jika tersedia, fallback ke id global.
+  const seq = dailySeq && dailySeq > 0 ? dailySeq : id;
+  return `TRX-${dd}${mm}${yy}-${seq.toString().padStart(3, '0')}`;
 }
 
 function formatRupiah(n: number): string {
@@ -116,6 +118,9 @@ export interface PrintParams {
   shiftName?: string;
   customerName?: string;
   receiptFooter?: string;
+  dailySeq?: number;
+  cashReceived?: number;
+  qrisReceived?: number;
 }
 
 export async function printReceipt(params: PrintParams): Promise<void> {
@@ -134,7 +139,7 @@ export async function printReceipt(params: PrintParams): Promise<void> {
     }
   }
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printText(formatInvoice(params.transactionId, new Date(params.createdAt)) + '\n', {});
+  await BluetoothEscposPrinter.printText(formatInvoice(params.transactionId, new Date(params.createdAt), params.dailySeq) + '\n', {});
   await BluetoothEscposPrinter.printText(formatDate(params.createdAt) + '\n', {});
   if (params.cashierName) {
     await BluetoothEscposPrinter.printText(`Kasir: ${params.cashierName}\n`, {});
@@ -169,8 +174,20 @@ export async function printReceipt(params: PrintParams): Promise<void> {
     await BluetoothEscposPrinter.printText(formatTotal('Metode', 'HUTANG / BON') + '\n', {});
     await BluetoothEscposPrinter.printText(formatTotal('Status', 'BELUM LUNAS') + '\n', {});
   } else {
-    const payLabel = params.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS/Transfer';
-    await BluetoothEscposPrinter.printText(formatTotal(payLabel, formatRupiah(params.paymentAmount)) + '\n', {});
+    const hasSplit =
+      (params.cashReceived && params.cashReceived > 0) ||
+      (params.qrisReceived && params.qrisReceived > 0);
+    if (hasSplit) {
+      if (params.cashReceived && params.cashReceived > 0) {
+        await BluetoothEscposPrinter.printText(formatTotal('Tunai', formatRupiah(params.cashReceived)) + '\n', {});
+      }
+      if (params.qrisReceived && params.qrisReceived > 0) {
+        await BluetoothEscposPrinter.printText(formatTotal('QRIS/Transfer', formatRupiah(params.qrisReceived)) + '\n', {});
+      }
+    } else {
+      const payLabel = params.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS/Transfer';
+      await BluetoothEscposPrinter.printText(formatTotal(payLabel, formatRupiah(params.paymentAmount)) + '\n', {});
+    }
     await BluetoothEscposPrinter.printText(formatTotal('Kembalian', formatRupiah(params.change)) + '\n', {});
   }
 

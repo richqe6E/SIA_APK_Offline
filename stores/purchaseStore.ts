@@ -71,16 +71,30 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
 
     const totalAmount = items.reduce((acc, item) => acc + item.subtotal, 0);
 
-    // 1. FINANCIAL GUARDRAIL: Jika pembayaran Tunai dengan Kas Toko, validasi saldo kas toko
-    if (paymentType === 'tunai' && paymentSource === 'toko') {
-      const cashBalance = await useCashStore.getState().getCashBalance(db);
-      if (cashBalance < totalAmount) {
-        const defisit = totalAmount - cashBalance;
-        const fmt = (n: number) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
-        return {
-          success: false,
-          message: `Saldo kas laci toko tidak mencukupi untuk pembayaran tunai!\n\nSaldo Kas Laci: ${fmt(cashBalance)}\nTotal Pembelian: ${fmt(totalAmount)}\nKekurangan: ${fmt(defisit)}\n\nSilakan gunakan opsi Kas Bank, Kredit (Hutang Supplier), atau tambah modal kas terlebih dahulu.`,
-        };
+    // 1. FINANCIAL GUARDRAIL: Jika pembayaran Tunai dengan Kas Toko atau Kas Bank, validasi saldo kas
+    if (paymentType === 'tunai') {
+      const cashStore = useCashStore.getState();
+      await cashStore.loadLedger(db);
+      if (paymentSource === 'toko') {
+        const cashBalance = cashStore.cashHandBalance;
+        if (cashBalance < totalAmount) {
+          const defisit = totalAmount - cashBalance;
+          const fmt = (n: number) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
+          return {
+            success: false,
+            message: `Saldo kas laci toko tidak mencukupi untuk pembayaran tunai!\n\nSaldo Kas Laci: ${fmt(cashBalance)}\nTotal Pembelian: ${fmt(totalAmount)}\nKekurangan: ${fmt(defisit)}\n\nSilakan gunakan opsi Kas Bank, Kredit (Hutang Supplier), atau tambah modal kas terlebih dahulu.`,
+          };
+        }
+      } else if (paymentSource === 'bank') {
+        const bankBalance = cashStore.cashBankBalance;
+        if (bankBalance < totalAmount) {
+          const defisit = totalAmount - bankBalance;
+          const fmt = (n: number) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
+          return {
+            success: false,
+            message: `Saldo kas bank tidak mencukupi untuk pembayaran via rekening bank!\n\nSaldo Kas Bank: ${fmt(bankBalance)}\nTotal Pembelian: ${fmt(totalAmount)}\nKekurangan: ${fmt(defisit)}\n\nSilakan gunakan opsi Kredit (Hutang Supplier) atau lakukan setor kas terlebih dahulu.`,
+          };
+        }
       }
     }
 
@@ -123,7 +137,7 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
         );
         const purchaseId = result.lastInsertRowId;
 
-        // Simpan item pembelian & update stok produk
+        // Simpan item pembelian & update stok produk (BUG-006: update juga updated_at)
         for (const item of items) {
           await txn.runAsync(
             'INSERT INTO purchase_items (purchase_id, product_id, product_name, cost_price, quantity, subtotal) VALUES (?, ?, ?, ?, ?, ?)',
@@ -135,9 +149,9 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
             item.subtotal
           );
 
-          // Update stok & harga beli di tabel produk
+          // Update stok & harga beli di tabel produk beserta timestamp updated_at
           await txn.runAsync(
-            'UPDATE products SET stock = stock + ?, cost_price = ?, has_stock = 1 WHERE id = ?',
+            'UPDATE products SET stock = stock + ?, cost_price = ?, has_stock = 1, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?',
             item.quantity,
             item.costPrice,
             item.productId
@@ -145,17 +159,16 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
         }
 
         if (paymentType === 'tunai') {
-          // Hanya catat pengeluaran kas di Buku Kas jika menggunakan Kas Toko (Laci Kasir)
-          if (paymentSource === 'toko') {
-            await txn.runAsync(
-              'INSERT INTO cash_ledger (type, category, description, amount, date) VALUES (?, ?, ?, ?, ?)',
-              'out',
-              'kulakan_stok',
-              `Kulakan Stok Nota #${invoiceNo} (${cleanSupplierName})`,
-              totalAmount,
-              today
-            );
-          }
+          // BUG-016: Catat pengeluaran kas di Buku Kas sesuai sumber dana (Laci Kasir 'hand' atau Rekening Toko 'bank')
+          await txn.runAsync(
+            'INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)',
+            'out',
+            'kulakan_stok',
+            `Kulakan Stok Nota #${invoiceNo} (${cleanSupplierName})`,
+            totalAmount,
+            today,
+            paymentSource === 'bank' ? 'bank' : 'hand'
+          );
         } else {
           // Catat hutang supplier di tabel supplier_debts (tanpa memotong kas toko)
           await txn.runAsync(

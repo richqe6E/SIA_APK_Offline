@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Alert,
   Image,
   Modal,
   Pressable,
@@ -29,8 +30,19 @@ export function QrisDisplayModal({
   totalAmount,
   onConfirmPayment,
 }: QrisDisplayModalProps) {
+  const handleRequestClose = () => {
+    Alert.alert(
+      'Batalkan Tampilan QRIS?',
+      'Pastikan pembeli belum mentransfer dana atau pembayaran memang ingin dibatalkan.',
+      [
+        { text: 'Kembali ke QRIS', style: 'cancel' },
+        { text: 'Tutup / Batal', style: 'destructive', onPress: onClose },
+      ]
+    );
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleRequestClose}>
       <ThemedView style={styles.overlay}>
         <Card style={styles.modalCard} padding={20}>
           {/* Header */}
@@ -94,7 +106,7 @@ export function QrisDisplayModal({
               variant="secondary"
               size="sm"
               style={{ flex: 1 }}
-              onPress={onClose}
+              onPress={handleRequestClose}
             />
             {onConfirmPayment && (
               <Button

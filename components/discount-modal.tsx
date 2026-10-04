@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
+  Alert,
   Modal,
   StyleSheet,
   TextInput,
@@ -11,6 +12,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
 import { Colors } from '@/constants/theme';
 import type { TransactionDiscount } from '@/stores/transactionStore';
+import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
 
 interface DiscountModalProps {
   visible: boolean;
@@ -36,7 +38,11 @@ export function DiscountModal({
     if (visible) {
       if (currentDiscount) {
         setDiscountType(currentDiscount.type);
-        setInputValue(currentDiscount.value.toString());
+        setInputValue(
+          currentDiscount.type === 'percent'
+            ? currentDiscount.value.toString()
+            : formatRupiahInput(currentDiscount.value),
+        );
       } else {
         setDiscountType('nominal');
         setInputValue('');
@@ -44,7 +50,7 @@ export function DiscountModal({
     }
   }, [visible, currentDiscount]);
 
-  const numValue = parseInt(inputValue.replace(/\D/g, ''), 10) || 0;
+  const numValue = parseRupiahInput(inputValue);
   const calculatedDiscount =
     discountType === 'percent'
       ? Math.round((subtotal * Math.min(100, numValue)) / 100)
@@ -54,6 +60,17 @@ export function DiscountModal({
   const nominalPresets = [2000, 5000, 10000, 20000, 50000];
 
   const handleApply = () => {
+    if (discountType === 'percent' && numValue > 100) {
+      Alert.alert('Diskon Melebihi Batas', 'Diskon persentase tidak boleh lebih dari 100%.');
+      return;
+    }
+    if (discountType === 'nominal' && numValue > subtotal) {
+      Alert.alert(
+        'Diskon Melebihi Subtotal',
+        `Diskon nominal (Rp ${numValue.toLocaleString('id-ID')}) tidak boleh lebih besar dari total belanja (Rp ${subtotal.toLocaleString('id-ID')}).`
+      );
+      return;
+    }
     if (numValue <= 0) {
       onClearDiscount();
     } else {
@@ -121,7 +138,7 @@ export function DiscountModal({
                   <TouchableOpacity
                     key={n}
                     style={[styles.presetChip, numValue === n && styles.presetChipActive]}
-                    onPress={() => setInputValue(n.toString())}
+                    onPress={() => setInputValue(formatRupiahInput(n))}
                   >
                     <ThemedText
                       style={[styles.presetChipText, numValue === n && styles.presetChipTextActive]}
@@ -141,7 +158,13 @@ export function DiscountModal({
               style={styles.textInput}
               keyboardType="number-pad"
               value={inputValue}
-              onChangeText={(text) => setInputValue(text.replace(/\D/g, ''))}
+              onChangeText={(text) => {
+                if (discountType === 'nominal') {
+                  setInputValue(formatRupiahInput(text));
+                } else {
+                  setInputValue(text.replace(/\D/g, ''));
+                }
+              }}
               placeholder={discountType === 'nominal' ? '0' : '0 - 100'}
               placeholderTextColor={Colors.placeholder}
               autoFocus

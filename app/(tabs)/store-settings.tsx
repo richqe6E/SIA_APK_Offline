@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useLockOrientation } from '@/hooks/use-orientation';
-import { useSettingsStore, BusinessMode, ViewMode, AppOrientation } from '@/stores/settingsStore';
+import { useSettingsStore, ViewMode, AppOrientation } from '@/stores/settingsStore';
 import { useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -34,7 +34,6 @@ export default function StoreSettingsScreen() {
   const {
     storeName,
     businessType,
-    businessMode,
     adminPin,
     defaultViewMode,
     storeAddress,
@@ -50,7 +49,6 @@ export default function StoreSettingsScreen() {
     setTaxSettings,
     loadSettings,
     saveSettings,
-    setBusinessMode,
     setAdminPin,
     setDefaultViewMode,
     setAppOrientation,
@@ -60,7 +58,6 @@ export default function StoreSettingsScreen() {
 
   const [name, setName] = useState(storeName);
   const [type, setType] = useState(businessType);
-  const [mode, setMode] = useState<BusinessMode>(businessMode);
   const [viewMode, setViewMode] = useState<ViewMode>(defaultViewMode);
   const [orientation, setOrientation] = useState<AppOrientation>(appOrientation);
   const [pin, setPin] = useState(adminPin);
@@ -84,7 +81,6 @@ export default function StoreSettingsScreen() {
   useEffect(() => {
     setName(storeName);
     setType(businessType);
-    setMode(businessMode);
     setViewMode(defaultViewMode);
     setOrientation(appOrientation);
     setPin(adminPin);
@@ -97,7 +93,7 @@ export default function StoreSettingsScreen() {
     setTaxLabel(taxName);
     setTaxCalcType(taxType);
     setTaxRateVal(taxRate.toString());
-  }, [storeName, businessType, businessMode, defaultViewMode, appOrientation, adminPin, storeAddress, storePhone, storePhone2, receiptFooter, qrisImagePath, taxEnabled, taxName, taxType, taxRate]);
+  }, [storeName, businessType, defaultViewMode, appOrientation, adminPin, storeAddress, storePhone, storePhone2, receiptFooter, qrisImagePath, taxEnabled, taxName, taxType, taxRate]);
 
   const pickQrisImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -695,32 +691,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     width: 200,
     alignSelf: 'center',
-  },
-  modeCard: {
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    padding: 14,
-    backgroundColor: '#ffffff',
-  },
-  modeCardActive: {
-    borderColor: Colors.tint,
-    backgroundColor: '#faf5ff',
-  },
-  modeCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  modeTitle: {
-    fontSize: 14,
-    color: '#1e293b',
-  },
-  modeDesc: {
-    fontSize: 11.5,
-    color: '#64748b',
-    marginTop: 3,
-    lineHeight: 16,
   },
   viewChoiceBtn: {
     flex: 1,

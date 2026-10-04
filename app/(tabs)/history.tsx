@@ -154,6 +154,9 @@ export default function HistoryScreen() {
         receiptFooter,
         cashierName: t.cashier_name || 'Kasir',
         customerName: t.customer_name ?? undefined,
+        dailySeq: t.daily_seq,
+        cashReceived: t.cash_received,
+        qrisReceived: t.qris_received,
       });
       Alert.alert('Sukses', 'Struk berhasil dicetak');
     } catch {
@@ -164,7 +167,7 @@ export default function HistoryScreen() {
   const handleEditToCart = (t: Transaction) => {
     Alert.alert(
       'Edit & Masukkan ke Keranjang',
-      `Transaksi ${formatInvoice(t.id, t.created_at)} akan dibatalkan, stok barang otomatis dikembalikan, dan ${items.length} item akan dimasukkan kembali ke keranjang kasir untuk diperbaiki.\n\nLanjutkan?`,
+      `Transaksi ${formatInvoice(t.id, t.created_at, t.daily_seq)} akan dibatalkan, stok barang otomatis dikembalikan, dan ${items.length} item akan dimasukkan kembali ke keranjang kasir untuk diperbaiki.\n\nLanjutkan?`,
       [
         { text: 'Batal', style: 'cancel' },
         {
@@ -186,7 +189,7 @@ export default function HistoryScreen() {
   const handleCancelTransaction = (t: Transaction) => {
     Alert.alert(
       'Batalkan / Retur Transaksi',
-      `Transaksi ${formatInvoice(t.id, t.created_at)} senilai Rp ${t.total.toLocaleString('id-ID')} akan dibatalkan dan seluruh stok produk akan dikembalikan ke toko.\n\nYakin ingin membatalkan transaksi ini?`,
+      `Transaksi ${formatInvoice(t.id, t.created_at, t.daily_seq)} senilai Rp ${t.total.toLocaleString('id-ID')} akan dibatalkan dan seluruh stok produk akan dikembalikan ke toko.\n\nYakin ingin membatalkan transaksi ini?`,
       [
         { text: 'Batal', style: 'cancel' },
         {
@@ -209,19 +212,60 @@ export default function HistoryScreen() {
   const handleDelete = (t: Transaction) => {
     Alert.alert(
       'Hapus Transaksi',
-      `Yakin ingin menghapus catatan riwayat transaksi ${formatInvoice(t.id, t.created_at)}? Data yang dihapus tidak dapat dipulihkan.`,
+      `Yakin ingin menghapus catatan riwayat transaksi ${formatInvoice(t.id, t.created_at, t.daily_seq)}? Data yang dihapus tidak dapat dipulihkan.\n\nStok produk akan dikembalikan dan piutang terkait (jika transaksi hutang) akan dihapus.`,
       [
         { text: 'Batal', style: 'cancel' },
         {
           text: 'Hapus',
           style: 'destructive',
           onPress: async () => {
-            await db.withExclusiveTransactionAsync(async (txn) => {
-              await txn.runAsync('DELETE FROM transaction_items WHERE transaction_id = ?', t.id);
-              await txn.runAsync('DELETE FROM transactions WHERE id = ?', t.id);
-            });
-            loadTransactions(db, period, page);
-            setSelected(null);
+            try {
+              // K1 fix: hapus harus restore stok produk + hapus receivable hutang
+              // dalam satu transaksi atomik. Tanpa ini, stok akan terkurangi selamanya
+              // dan piutang orphan akan menggantung di customer_receivables.
+              await db.withExclusiveTransactionAsync(async (txn) => {
+                const items = await txn.getAllAsync<any>(
+                  'SELECT product_id, quantity, weight_gram FROM transaction_items WHERE transaction_id = ?',
+                  t.id
+                );
+
+                for (const item of items) {
+                  const prod = await txn.getFirstAsync<{ has_stock: number }>(
+                    'SELECT has_stock FROM products WHERE id = ?',
+                    item.product_id
+                  );
+                  if (prod?.has_stock === 1) {
+                    const qtyToRestore = item.weight_gram
+                      ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+                      : item.quantity;
+                    await txn.runAsync(
+                      `UPDATE products SET stock = stock + ?, updated_at = datetime('now','localtime') WHERE id = ?`,
+                      qtyToRestore,
+                      item.product_id
+                    );
+                  }
+                }
+
+                if (t.is_credit === 1) {
+                  const rec = await txn.getFirstAsync<{ id: number }>(
+                    'SELECT id FROM customer_receivables WHERE transaction_id = ?',
+                    t.id
+                  );
+                  if (rec) {
+                    await txn.runAsync('DELETE FROM receivable_payments WHERE receivable_id = ?', rec.id);
+                    await txn.runAsync('DELETE FROM customer_receivables WHERE id = ?', rec.id);
+                  }
+                }
+
+                await txn.runAsync('DELETE FROM transaction_items WHERE transaction_id = ?', t.id);
+                await txn.runAsync('DELETE FROM transactions WHERE id = ?', t.id);
+              });
+              loadTransactions(db, period, page);
+              setSelected(null);
+              Alert.alert('Sukses', 'Transaksi dihapus. Stok produk telah dikembalikan.');
+            } catch (e: any) {
+              Alert.alert('Gagal', e?.message || 'Gagal menghapus transaksi');
+            }
           },
         },
       ]
@@ -267,12 +311,12 @@ export default function HistoryScreen() {
                 NO. TRANSAKSI
               </ThemedText>
               <ThemedText type="title" style={{ fontSize: 16 }}>
-                {formatInvoice(selected.id, selected.created_at)}
+                {formatInvoice(selected.id, selected.created_at, selected.daily_seq)}
               </ThemedText>
             </View>
             <Badge
-              label={selected.payment_method === 'qris' ? 'QRIS / TRANSFER' : selected.payment_method.toUpperCase()}
-              variant={selected.payment_method === 'qris' ? 'info' : 'success'}
+              label={selected.payment_method === 'qris' ? 'QRIS / TRANSFER' : selected.payment_method === 'split' ? 'SPLIT (TUNAI + QRIS)' : selected.payment_method.toUpperCase()}
+              variant={selected.payment_method === 'qris' ? 'info' : selected.payment_method === 'split' ? 'warning' : 'success'}
             />
           </View>
 
@@ -556,11 +600,11 @@ export default function HistoryScreen() {
                               color: isSelected ? Colors.tintDark : Colors.text,
                             }}
                           >
-                            {formatInvoice(item.id, item.created_at)}
+                            {formatInvoice(item.id, item.created_at, item.daily_seq)}
                           </ThemedText>
                           <Badge
-                            label={item.payment_method === 'qris' ? 'QRIS' : item.payment_method.toUpperCase()}
-                            variant={item.payment_method === 'qris' ? 'info' : 'success'}
+                            label={item.payment_method === 'qris' ? 'QRIS' : item.payment_method === 'split' ? 'SPLIT' : item.payment_method.toUpperCase()}
+                            variant={item.payment_method === 'qris' ? 'info' : item.payment_method === 'split' ? 'warning' : 'success'}
                           />
                         </View>
 
@@ -679,10 +723,10 @@ export default function HistoryScreen() {
                         gap: 6,
                       }}
                     >
-                      <ThemedText type="defaultSemiBold">{formatInvoice(item.id, item.created_at)}</ThemedText>
+                      <ThemedText type="defaultSemiBold">{formatInvoice(item.id, item.created_at, item.daily_seq)}</ThemedText>
                       <Badge
-                        label={item.payment_method === 'qris' ? 'QRIS / TRANSFER' : item.payment_method.toUpperCase()}
-                        variant={item.payment_method === 'qris' ? 'info' : 'success'}
+                        label={item.payment_method === 'qris' ? 'QRIS / TRANSFER' : item.payment_method === 'split' ? 'SPLIT (TUNAI + QRIS)' : item.payment_method.toUpperCase()}
+                        variant={item.payment_method === 'qris' ? 'info' : item.payment_method === 'split' ? 'warning' : 'success'}
                       />
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

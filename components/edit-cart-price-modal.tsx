@@ -11,6 +11,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Colors } from '@/constants/theme';
+import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
 
 interface EditCartPriceModalProps {
   visible: boolean;
@@ -37,11 +38,11 @@ export function EditCartPriceModal({
 
   useEffect(() => {
     if (visible) {
-      setPriceStr(currentPrice.toString());
+      setPriceStr(formatRupiahInput(currentPrice));
     }
   }, [visible, currentPrice]);
 
-  const parsedPrice = parseFloat(priceStr.replace(/[^0-9]/g, '')) || 0;
+  const parsedPrice = parseRupiahInput(priceStr);
   const newSubtotal = isWeighted
     ? Math.round((weightGram / 1000) * parsedPrice)
     : quantity * parsedPrice;
@@ -90,7 +91,7 @@ export function EditCartPriceModal({
               placeholderTextColor={Colors.disabled}
               keyboardType="numeric"
               value={priceStr}
-              onChangeText={setPriceStr}
+              onChangeText={(text) => setPriceStr(formatRupiahInput(text))}
               autoFocus
             />
           </View>

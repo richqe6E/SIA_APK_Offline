@@ -127,12 +127,12 @@ export default function ProductsScreen() {
     useProductStore();
   const { categories, loadCategories, addCategory, deleteCategory } =
     useCategoryStore();
-  const { businessMode, loadSettings } = useSettingsStore();
+  const { loadSettings } = useSettingsStore();
   const { createPurchase } = usePurchaseStore();
   const { performOpname } = useStockOpnameStore();
   const { currentBalance, loadLedger } = useCashStore();
 
-  const isRetail = businessMode === 'retail';
+  const isRetail = true;
 
   // Modal Produk
   const [modalVisible, setModalVisible] = useState(false);

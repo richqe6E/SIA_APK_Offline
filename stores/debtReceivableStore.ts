@@ -85,6 +85,15 @@ interface DebtReceivableState {
     dueDate?: string,
     transactionId?: number
   ) => Promise<void>;
+  editReceivable: (
+    db: SQLiteDatabase,
+    receivableId: number,
+    updates: { totalAmount?: number; dueDate?: string | null }
+  ) => Promise<{ success: boolean; message?: string }>;
+  deleteReceivable: (
+    db: SQLiteDatabase,
+    receivableId: number
+  ) => Promise<{ success: boolean; message?: string }>;
   payReceivable: (
     db: SQLiteDatabase,
     receivableId: number,
@@ -104,6 +113,15 @@ interface DebtReceivableState {
     dueDate?: string,
     purchaseId?: number
   ) => Promise<void>;
+  editDebt: (
+    db: SQLiteDatabase,
+    debtId: number,
+    updates: { totalAmount?: number; dueDate?: string | null }
+  ) => Promise<{ success: boolean; message?: string }>;
+  deleteDebt: (
+    db: SQLiteDatabase,
+    debtId: number
+  ) => Promise<{ success: boolean; message?: string }>;
   payDebt: (
     db: SQLiteDatabase,
     debtId: number,
@@ -305,6 +323,98 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
     triggerAutoSync(db);
   },
 
+  // F4: Edit piutang. Pertahankan paid_amount; recalculate status.
+  // Tolak jika new total < paid_amount (tidak boleh kurang dari yang sudah dibayar).
+  editReceivable: async (db, receivableId, updates) => {
+    try {
+      const rec = await db.getFirstAsync<{ total_amount: number; paid_amount: number }>(
+        'SELECT total_amount, paid_amount FROM customer_receivables WHERE id = ?',
+        receivableId
+      );
+      if (!rec) {
+        return { success: false, message: 'Catatan piutang tidak ditemukan' };
+      }
+
+      const newTotal = updates.totalAmount !== undefined ? updates.totalAmount : rec.total_amount;
+
+      if (newTotal <= 0) {
+        return { success: false, message: 'Nominal piutang harus lebih besar dari 0' };
+      }
+
+      if (newTotal < rec.paid_amount) {
+        return {
+          success: false,
+          message: `Nominal piutang baru (Rp ${newTotal.toLocaleString('id-ID')}) lebih kecil dari yang sudah dibayar (Rp ${rec.paid_amount.toLocaleString('id-ID')}).`,
+        };
+      }
+
+      const newStatus =
+        rec.paid_amount >= newTotal ? 'paid' : rec.paid_amount > 0 ? 'partial' : 'unpaid';
+
+      const newDueDate =
+        updates.dueDate !== undefined ? updates.dueDate : undefined;
+
+      if (newDueDate !== undefined) {
+        await db.runAsync(
+          'UPDATE customer_receivables SET total_amount = ?, status = ?, due_date = ? WHERE id = ?',
+          newTotal,
+          newStatus,
+          newDueDate,
+          receivableId
+        );
+      } else {
+        await db.runAsync(
+          'UPDATE customer_receivables SET total_amount = ?, status = ? WHERE id = ?',
+          newTotal,
+          newStatus,
+          receivableId
+        );
+      }
+
+      await get().loadReceivables(db);
+      triggerAutoSync(db);
+      return { success: true };
+    } catch (e: any) {
+      console.error('editReceivable error:', e);
+      return { success: false, message: e?.message || 'Gagal mengedit piutang' };
+    }
+  },
+
+  // F4: Hapus piutang. Tolak jika sudah ada cicilan (paid_amount > 0).
+  // Hapus row + payments terkait secara atomic. Tidak restore kas (uang sudah pernah masuk).
+  deleteReceivable: async (db, receivableId) => {
+    try {
+      const rec = await db.getFirstAsync<{ paid_amount: number }>(
+        'SELECT paid_amount FROM customer_receivables WHERE id = ?',
+        receivableId
+      );
+      if (!rec) {
+        return { success: false, message: 'Catatan piutang tidak ditemukan' };
+      }
+
+      if (rec.paid_amount > 0) {
+        return {
+          success: false,
+          message: `Piutang sudah ada cicilan Rp ${rec.paid_amount.toLocaleString('id-ID')}. Hapus cicilan terlebih dahulu jika ingin menghapus piutang.`,
+        };
+      }
+
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        // Hapus payment history (seharusnya kosong jika paid_amount=0, tapi cascade untuk safety)
+        await txn.runAsync('DELETE FROM receivable_payments WHERE receivable_id = ?', receivableId);
+        // Hapus piutang
+        await txn.runAsync('DELETE FROM customer_receivables WHERE id = ?', receivableId);
+      });
+
+      await get().loadReceivables(db);
+      triggerAutoSync(db);
+      return { success: true };
+    } catch (e: any) {
+      console.error('deleteReceivable error:', e);
+      return { success: false, message: e?.message || 'Gagal menghapus piutang' };
+    }
+  },
+
   payReceivable: async (db, receivableId, amount, notes = '', paymentDate, paymentSource = 'hand') => {
     if (amount <= 0) {
       return { success: false, message: 'Nominal pembayaran harus lebih besar dari 0' };
@@ -471,6 +581,94 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
     );
     await get().loadDebts(db);
     triggerAutoSync(db);
+  },
+
+  // F4: Edit hutang supplier. Pertahankan paid_amount; recalculate status.
+  editDebt: async (db, debtId, updates) => {
+    try {
+      const debt = await db.getFirstAsync<{ total_amount: number; paid_amount: number }>(
+        'SELECT total_amount, paid_amount FROM supplier_debts WHERE id = ?',
+        debtId
+      );
+      if (!debt) {
+        return { success: false, message: 'Catatan hutang tidak ditemukan' };
+      }
+
+      const newTotal = updates.totalAmount !== undefined ? updates.totalAmount : debt.total_amount;
+
+      if (newTotal <= 0) {
+        return { success: false, message: 'Nominal hutang harus lebih besar dari 0' };
+      }
+
+      if (newTotal < debt.paid_amount) {
+        return {
+          success: false,
+          message: `Nominal hutang baru (Rp ${newTotal.toLocaleString('id-ID')}) lebih kecil dari yang sudah dibayar (Rp ${debt.paid_amount.toLocaleString('id-ID')}).`,
+        };
+      }
+
+      const newStatus =
+        debt.paid_amount >= newTotal ? 'paid' : debt.paid_amount > 0 ? 'partial' : 'unpaid';
+
+      const newDueDate = updates.dueDate !== undefined ? updates.dueDate : undefined;
+
+      if (newDueDate !== undefined) {
+        await db.runAsync(
+          'UPDATE supplier_debts SET total_amount = ?, status = ?, due_date = ? WHERE id = ?',
+          newTotal,
+          newStatus,
+          newDueDate,
+          debtId
+        );
+      } else {
+        await db.runAsync(
+          'UPDATE supplier_debts SET total_amount = ?, status = ? WHERE id = ?',
+          newTotal,
+          newStatus,
+          debtId
+        );
+      }
+
+      await get().loadDebts(db);
+      triggerAutoSync(db);
+      return { success: true };
+    } catch (e: any) {
+      console.error('editDebt error:', e);
+      return { success: false, message: e?.message || 'Gagal mengedit hutang' };
+    }
+  },
+
+  // F4: Hapus hutang supplier. Tolak jika sudah ada cicilan.
+  // Hapus row + payments terkait secara atomic. Tidak restore saldo kas.
+  deleteDebt: async (db, debtId) => {
+    try {
+      const debt = await db.getFirstAsync<{ paid_amount: number }>(
+        'SELECT paid_amount FROM supplier_debts WHERE id = ?',
+        debtId
+      );
+      if (!debt) {
+        return { success: false, message: 'Catatan hutang tidak ditemukan' };
+      }
+
+      if (debt.paid_amount > 0) {
+        return {
+          success: false,
+          message: `Hutang sudah ada cicilan Rp ${debt.paid_amount.toLocaleString('id-ID')}. Hapus cicilan terlebih dahulu jika ingin menghapus hutang.`,
+        };
+      }
+
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        await txn.runAsync('DELETE FROM debt_payments WHERE debt_id = ?', debtId);
+        await txn.runAsync('DELETE FROM supplier_debts WHERE id = ?', debtId);
+      });
+
+      await get().loadDebts(db);
+      triggerAutoSync(db);
+      return { success: true };
+    } catch (e: any) {
+      console.error('deleteDebt error:', e);
+      return { success: false, message: e?.message || 'Gagal menghapus hutang' };
+    }
   },
 
   payDebt: async (db, debtId, amount, notes = '', paymentDate, paymentSource = 'hand') => {
