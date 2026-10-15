@@ -68,12 +68,13 @@ Proyek ini terdiri dari **2 Aplikasi Mandiri** yang saling terintegrasi melalui 
 * **Akun EAS Aktif Terverifikasi**: `rikire` (`rikyrivaldi369@gmail.com`)
 * **Project ID EAS**: `97d847aa-a65d-4eb8-9d21-33f936cce00e` (`@rikire/pos-offline`)
 * **Keystore Digital**: `Build Credentials w2ACOjmW8I (default)` (Wajib dipertahankan agar update APK tidak menghapus data SQLite lokal pengguna).
-* **Build Terkini (Tahap 14: Kompatibilitas Penuh Tablet, Eliminasi Crash Crop Kamera/Galeri, Cadangan Database Permanen & Anti-Logout Sesi, v1.0.4 / Code 8)**:
-  - **Build ID**: `c45d19a5-d22b-4d5f-94d3-eeb6d29bce93`
+* **Build Terkini (Tahap 15: Perbaikan Audit Agen Argon, Presisi Stok Timbangan Desimal, HPP Weighted Moving Average, Anti-Crash SQLite Tablet Xiaomi & Robust Camera/Gallery Picker, v1.0.5 / Code 9)**:
+  - **Build ID**: `3629d8cb-a3f7-4980-afc8-03bd6f836d27`
   - **Status**: FINISHED (Sukses)
-  - **Direct APK URL**: https://expo.dev/artifacts/eas/gvqCC4VseIhbvRKHM7kP9sC399Vu4K3j7YXaC8z3IBs.apk
-  - **Live URL**: https://expo.dev/accounts/rikires-team/projects/pos-offline/builds/c45d19a5-d22b-4d5f-94d3-eeb6d29bce93
+  - **Direct APK URL**: https://expo.dev/artifacts/eas/lTgaW9RfwLZywe1NmDpP5Xme0Z3NuQ-cfHyuI0ewVxQ.apk
+  - **Live URL**: https://expo.dev/accounts/rikires-team/projects/pos-offline/builds/3629d8cb-a3f7-4980-afc8-03bd6f836d27
 * **Build Sebelumnya**:
+  - **Tahap 14**: `c45d19a5-d22b-4d5f-94d3-eeb6d29bce93` (v1.0.4 / Code 8)
   - **Tahap 13**: `851403dc-0450-4219-975c-d2e6f51caa94` (v1.0.3 / Code 7)
   - **Tahap 12**: `9a44d59d-d7bb-4589-80b2-f7a67cb2ad12` (v1.0.2 / Code 6)
   - **Tahap 11.1**: `7e7bad55-8106-4788-be69-20fadb327721`
