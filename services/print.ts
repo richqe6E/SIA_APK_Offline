@@ -125,98 +125,122 @@ export interface PrintParams {
   qrisReceived?: number;
 }
 
-export async function printReceipt(params: PrintParams): Promise<void> {
-  const storeName = params.storeName ?? 'POS Offline';
+export function withBluetoothTimeout<T>(
+  action: () => Promise<T>,
+  ms: number = 7000,
+  errorMsg: string = 'Koneksi ke printer Bluetooth timeout (7 detik). Pastikan printer menyala dan terhubung.'
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(errorMsg));
+    }, ms);
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-
-  // Cetak Logo Toko jika tersedia
-  const logoBase64 = params.storeLogoBase64 || useSettingsStore.getState().storeLogoBase64;
-  if (logoBase64 && logoBase64.trim()) {
-    try {
-      const cleanBase64 = logoBase64.replace(/^data:image\/[a-z]+;base64,/, '');
-      await BluetoothEscposPrinter.printPic(cleanBase64, {
-        width: 240,
-        center: true,
-        autoCut: false,
-        paperSize: 58,
+    action()
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
       });
-      await BluetoothEscposPrinter.printAndFeed(1);
-    } catch (err) {
-      console.warn('Gagal cetak logo struk:', err);
-    }
-  }
+  });
+}
 
-  await BluetoothEscposPrinter.printText(storeName + '\n', {});
-  if (params.storeAddress) {
-    await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
-  }
-  if (params.storePhone) {
-    if (params.storePhone2 && params.storePhone2.trim()) {
-      await BluetoothEscposPrinter.printText(`Telp: ${params.storePhone} | WA: ${params.storePhone2}\n`, {});
-    } else {
-      await BluetoothEscposPrinter.printText('Telp/WA: ' + params.storePhone + '\n', {});
-    }
-  }
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printText(formatInvoice(params.transactionId, new Date(params.createdAt), params.dailySeq) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatDate(params.createdAt) + '\n', {});
-  if (params.cashierName) {
-    await BluetoothEscposPrinter.printText(`Kasir: ${params.cashierName}\n`, {});
-  }
-  if (params.customerName) {
-    await BluetoothEscposPrinter.printText(`Pelanggan: ${params.customerName}\n`, {});
-  }
+export async function printReceipt(params: PrintParams): Promise<void> {
+  return withBluetoothTimeout(async () => {
+    const storeName = params.storeName ?? 'POS Offline';
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
 
-  for (const item of params.items) {
-    const wrappedName = wrapText(item.product_name, W);
-    for (const nameLine of wrappedName) {
-      await BluetoothEscposPrinter.printText(nameLine + '\n', {});
-    }
-    await BluetoothEscposPrinter.printText(formatItemDetail(item) + '\n', {});
-  }
-
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  if (params.discountAmount && params.discountAmount > 0) {
-    const subtotalCalc = params.subtotalAmount || (params.total + params.discountAmount - (params.taxAmount || 0));
-    await BluetoothEscposPrinter.printText(formatTotal('Subtotal', formatRupiah(subtotalCalc)) + '\n', {});
-    await BluetoothEscposPrinter.printText(formatTotal('Diskon', '-' + formatRupiah(params.discountAmount)) + '\n', {});
-  }
-  if (params.taxAmount && params.taxAmount > 0) {
-    const taxLabel = params.taxName || 'Pajak / PB1';
-    await BluetoothEscposPrinter.printText(formatTotal(taxLabel, '+' + formatRupiah(params.taxAmount)) + '\n', {});
-  }
-  await BluetoothEscposPrinter.printText(formatTotal('Total', formatRupiah(params.total)) + '\n', {});
-  if (params.paymentMethod === 'hutang') {
-    await BluetoothEscposPrinter.printText(formatTotal('Metode', 'HUTANG / BON') + '\n', {});
-    await BluetoothEscposPrinter.printText(formatTotal('Status', 'BELUM LUNAS') + '\n', {});
-  } else {
-    const hasSplit =
-      (params.cashReceived && params.cashReceived > 0) ||
-      (params.qrisReceived && params.qrisReceived > 0);
-    if (hasSplit) {
-      if (params.cashReceived && params.cashReceived > 0) {
-        await BluetoothEscposPrinter.printText(formatTotal('Tunai', formatRupiah(params.cashReceived)) + '\n', {});
+    // Cetak Logo Toko jika tersedia
+    const logoBase64 = params.storeLogoBase64 || useSettingsStore.getState().storeLogoBase64;
+    if (logoBase64 && logoBase64.trim()) {
+      try {
+        const cleanBase64 = logoBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+        await BluetoothEscposPrinter.printPic(cleanBase64, {
+          width: 240,
+          center: true,
+          autoCut: false,
+          paperSize: 58,
+        });
+        await BluetoothEscposPrinter.printAndFeed(1);
+      } catch (err) {
+        console.warn('Gagal cetak logo struk:', err);
       }
-      if (params.qrisReceived && params.qrisReceived > 0) {
-        await BluetoothEscposPrinter.printText(formatTotal('QRIS/Transfer', formatRupiah(params.qrisReceived)) + '\n', {});
-      }
-    } else {
-      const payLabel = params.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS/Transfer';
-      await BluetoothEscposPrinter.printText(formatTotal(payLabel, formatRupiah(params.paymentAmount)) + '\n', {});
     }
-    await BluetoothEscposPrinter.printText(formatTotal('Kembalian', formatRupiah(params.change)) + '\n', {});
-  }
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printText((params.receiptFooter || 'Terima Kasih Atas Kunjungan Anda!') + '\n', {});
+    await BluetoothEscposPrinter.printText(storeName + '\n', {});
+    if (params.storeAddress) {
+      await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
+    }
+    if (params.storePhone) {
+      if (params.storePhone2 && params.storePhone2.trim()) {
+        await BluetoothEscposPrinter.printText(`Telp: ${params.storePhone} | WA: ${params.storePhone2}\n`, {});
+      } else {
+        await BluetoothEscposPrinter.printText('Telp/WA: ' + params.storePhone + '\n', {});
+      }
+    }
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    await BluetoothEscposPrinter.printText(formatInvoice(params.transactionId, new Date(params.createdAt), params.dailySeq) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatDate(params.createdAt) + '\n', {});
+    if (params.cashierName) {
+      await BluetoothEscposPrinter.printText(`Kasir: ${params.cashierName}\n`, {});
+    }
+    if (params.customerName) {
+      await BluetoothEscposPrinter.printText(`Pelanggan: ${params.customerName}\n`, {});
+    }
 
-  await BluetoothEscposPrinter.printAndFeed(7);
-  BluetoothEscposPrinter.cutOnePoint();
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
+
+    for (const item of params.items) {
+      const wrappedName = wrapText(item.product_name, W);
+      for (const nameLine of wrappedName) {
+        await BluetoothEscposPrinter.printText(nameLine + '\n', {});
+      }
+      await BluetoothEscposPrinter.printText(formatItemDetail(item) + '\n', {});
+    }
+
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
+    if (params.discountAmount && params.discountAmount > 0) {
+      const subtotalCalc = params.subtotalAmount || (params.total + params.discountAmount - (params.taxAmount || 0));
+      await BluetoothEscposPrinter.printText(formatTotal('Subtotal', formatRupiah(subtotalCalc)) + '\n', {});
+      await BluetoothEscposPrinter.printText(formatTotal('Diskon', '-' + formatRupiah(params.discountAmount)) + '\n', {});
+    }
+    if (params.taxAmount && params.taxAmount > 0) {
+      const taxLabel = params.taxName || 'Pajak / PB1';
+      await BluetoothEscposPrinter.printText(formatTotal(taxLabel, '+' + formatRupiah(params.taxAmount)) + '\n', {});
+    }
+    await BluetoothEscposPrinter.printText(formatTotal('Total', formatRupiah(params.total)) + '\n', {});
+    if (params.paymentMethod === 'hutang') {
+      await BluetoothEscposPrinter.printText(formatTotal('Metode', 'HUTANG / BON') + '\n', {});
+      await BluetoothEscposPrinter.printText(formatTotal('Status', 'BELUM LUNAS') + '\n', {});
+    } else {
+      const hasSplit =
+        (params.cashReceived && params.cashReceived > 0) ||
+        (params.qrisReceived && params.qrisReceived > 0);
+      if (hasSplit) {
+        if (params.cashReceived && params.cashReceived > 0) {
+          await BluetoothEscposPrinter.printText(formatTotal('Tunai', formatRupiah(params.cashReceived)) + '\n', {});
+        }
+        if (params.qrisReceived && params.qrisReceived > 0) {
+          await BluetoothEscposPrinter.printText(formatTotal('QRIS/Transfer', formatRupiah(params.qrisReceived)) + '\n', {});
+        }
+      } else {
+        const payLabel = params.paymentMethod === 'tunai' ? 'Tunai' : 'QRIS/Transfer';
+        await BluetoothEscposPrinter.printText(formatTotal(payLabel, formatRupiah(params.paymentAmount)) + '\n', {});
+      }
+      await BluetoothEscposPrinter.printText(formatTotal('Kembalian', formatRupiah(params.change)) + '\n', {});
+    }
+
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    await BluetoothEscposPrinter.printText((params.receiptFooter || 'Terima Kasih Atas Kunjungan Anda!') + '\n', {});
+
+    await BluetoothEscposPrinter.printAndFeed(7);
+    BluetoothEscposPrinter.cutOnePoint();
+  }, 7000, 'Koneksi ke printer Bluetooth timeout (7 detik). Pastikan printer menyala.');
 }
 
 export interface PrintZReportParams {
@@ -239,58 +263,60 @@ export interface PrintZReportParams {
 }
 
 export async function printZReport(params: PrintZReportParams): Promise<void> {
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText(params.storeName + '\n', {});
-  if (params.storeAddress) {
-    await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
-  }
-  if (params.storePhone) {
-    if (params.storePhone2 && params.storePhone2.trim()) {
-      await BluetoothEscposPrinter.printText(`Telp: ${params.storePhone} | WA: ${params.storePhone2}\n`, {});
-    } else {
-      await BluetoothEscposPrinter.printText('Telp: ' + params.storePhone + '\n', {});
+  return withBluetoothTimeout(async () => {
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+    await BluetoothEscposPrinter.printText(params.storeName + '\n', {});
+    if (params.storeAddress) {
+      await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
     }
-  }
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printText('LAPORAN PENUTUPAN SHIFT\n', {});
-  await BluetoothEscposPrinter.printText('(Z-REPORT KASIR)\n', {});
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    if (params.storePhone) {
+      if (params.storePhone2 && params.storePhone2.trim()) {
+        await BluetoothEscposPrinter.printText(`Telp: ${params.storePhone} | WA: ${params.storePhone2}\n`, {});
+      } else {
+        await BluetoothEscposPrinter.printText('Telp: ' + params.storePhone + '\n', {});
+      }
+    }
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    await BluetoothEscposPrinter.printText('LAPORAN PENUTUPAN SHIFT\n', {});
+    await BluetoothEscposPrinter.printText('(Z-REPORT KASIR)\n', {});
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
-  await BluetoothEscposPrinter.printText(formatTotal('Shift ID', `#${params.shiftId}`) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatTotal('Kasir', params.cashierName) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatTotal('Buka', formatDate(params.openedAt)) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatTotal('Tutup', formatDate(params.closedAt)) + '\n', {});
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-
-  await BluetoothEscposPrinter.printText(formatTotal('Modal Kas Awal', formatRupiah(params.startingCash)) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatTotal('Penjualan Tunai (+)', formatRupiah(params.totalSalesCash)) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatTotal('Penjualan QRIS', formatRupiah(params.totalSalesNonCash)) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatTotal('Total Transaksi', `${params.totalTransactions} nota`) + '\n', {});
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-
-  await BluetoothEscposPrinter.printText(formatTotal('Kas Diharapkan', formatRupiah(params.expectedCash)) + '\n', {});
-  await BluetoothEscposPrinter.printText(formatTotal('Kas Fisik Dihitung', formatRupiah(params.actualCash)) + '\n', {});
-
-  const diffLabel =
-    params.difference === 0
-      ? 'PAS (Rp 0)'
-      : params.difference > 0
-      ? `LEBIH (+${formatRupiah(params.difference)})`
-      : `KURANG (${formatRupiah(params.difference)})`;
-  await BluetoothEscposPrinter.printText(formatTotal('Selisih Kas', diffLabel) + '\n', {});
-
-  if (params.notes && params.notes.trim()) {
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
+    await BluetoothEscposPrinter.printText(formatTotal('Shift ID', `#${params.shiftId}`) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Kasir', params.cashierName) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Buka', formatDate(params.openedAt)) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Tutup', formatDate(params.closedAt)) + '\n', {});
     await BluetoothEscposPrinter.printText(THIN + '\n', {});
-    await BluetoothEscposPrinter.printText(`Catatan: ${params.notes.trim()}\n`, {});
-  }
 
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText('Dicetak Otomatis oleh Sistem\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Modal Kas Awal', formatRupiah(params.startingCash)) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Penjualan Tunai (+)', formatRupiah(params.totalSalesCash)) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Penjualan QRIS', formatRupiah(params.totalSalesNonCash)) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Total Transaksi', `${params.totalTransactions} nota`) + '\n', {});
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
 
-  await BluetoothEscposPrinter.printAndFeed(7);
-  BluetoothEscposPrinter.cutOnePoint();
+    await BluetoothEscposPrinter.printText(formatTotal('Kas Diharapkan', formatRupiah(params.expectedCash)) + '\n', {});
+    await BluetoothEscposPrinter.printText(formatTotal('Kas Fisik Dihitung', formatRupiah(params.actualCash)) + '\n', {});
+
+    const diffLabel =
+      params.difference === 0
+        ? 'PAS (Rp 0)'
+        : params.difference > 0
+        ? `LEBIH (+${formatRupiah(params.difference)})`
+        : `KURANG (${formatRupiah(params.difference)})`;
+    await BluetoothEscposPrinter.printText(formatTotal('Selisih Kas', diffLabel) + '\n', {});
+
+    if (params.notes && params.notes.trim()) {
+      await BluetoothEscposPrinter.printText(THIN + '\n', {});
+      await BluetoothEscposPrinter.printText(`Catatan: ${params.notes.trim()}\n`, {});
+    }
+
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+    await BluetoothEscposPrinter.printText('Dicetak Otomatis oleh Sistem\n', {});
+
+    await BluetoothEscposPrinter.printAndFeed(7);
+    BluetoothEscposPrinter.cutOnePoint();
+  }, 7000, 'Koneksi ke printer Bluetooth timeout (7 detik). Pastikan printer menyala.');
 }
 
 // ─────────────────────────────────────────
@@ -332,58 +358,60 @@ export async function printLaporanLabaRugi(params: {
     jumlahTransaksi: number;
   };
 }): Promise<void> {
-  const { storeName, businessType, data } = params;
+  return withBluetoothTimeout(async () => {
+    const { storeName, businessType, data } = params;
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText('LAPORAN LABA / RUGI\n', {});
-  await BluetoothEscposPrinter.printText(storeName + '\n', {});
-  await BluetoothEscposPrinter.printText('Periode: ' + data.periodeLabel + '\n', {});
-  await BluetoothEscposPrinter.printText('SAK EMKM\n', {});
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+    await BluetoothEscposPrinter.printText('LAPORAN LABA / RUGI\n', {});
+    await BluetoothEscposPrinter.printText(storeName + '\n', {});
+    await BluetoothEscposPrinter.printText('Periode: ' + data.periodeLabel + '\n', {});
+    await BluetoothEscposPrinter.printText('SAK EMKM\n', {});
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
-  await BluetoothEscposPrinter.printText('A. PENDAPATAN\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Penjualan Bruto', data.penjualanBruto) + '\n', {});
-  if (data.potonganPenjualan && data.potonganPenjualan > 0) {
-    await BluetoothEscposPrinter.printText(formatLRRow('Potongan Penjualan', -data.potonganPenjualan) + '\n', {});
-  }
-  const netSales = data.penjualanBersih ?? data.penjualanBruto;
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Total Pendapatan', netSales) + '\n', {});
-  await BluetoothEscposPrinter.printText('\n', {});
-
-  await BluetoothEscposPrinter.printText('B. HPP\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('HPP Barang Terjual', data.hpp) + '\n', {});
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Total HPP', data.hpp) + '\n', {});
-  await BluetoothEscposPrinter.printText('\n', {});
-
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('LABA KOTOR', data.labaKotor) + '\n', {});
-  await BluetoothEscposPrinter.printText('\n', {});
-
-  await BluetoothEscposPrinter.printText('C. BEBAN OPERASIONAL\n', {});
-  for (const b of data.bebanByCategory) {
-    const label = EXPENSE_CATEGORY_LABELS[b.category] ?? b.category.replace(/_/g, ' ');
-    await BluetoothEscposPrinter.printText(formatLRRow(label, b.total, true) + '\n', {});
-  }
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('Total Beban', data.totalBeban) + '\n', {});
-  await BluetoothEscposPrinter.printText('\n', {});
-
-  if (data.pendapatanLain && data.pendapatanLain > 0) {
-    await BluetoothEscposPrinter.printText('D. PENDAPATAN LAIN-LAIN\n', {});
-    await BluetoothEscposPrinter.printText(formatLRRow('Pendapatan Lain', data.pendapatanLain) + '\n', {});
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
+    await BluetoothEscposPrinter.printText('A. PENDAPATAN\n', {});
+    await BluetoothEscposPrinter.printText(formatLRRow('Penjualan Bruto', data.penjualanBruto) + '\n', {});
+    if (data.potonganPenjualan && data.potonganPenjualan > 0) {
+      await BluetoothEscposPrinter.printText(formatLRRow('Potongan Penjualan', -data.potonganPenjualan) + '\n', {});
+    }
+    const netSales = data.penjualanBersih ?? data.penjualanBruto;
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
+    await BluetoothEscposPrinter.printText(formatLRRow('Total Pendapatan', netSales) + '\n', {});
     await BluetoothEscposPrinter.printText('\n', {});
-  }
 
-  const finalLaba = data.labaBersih !== undefined ? data.labaBersih : data.labaOperasional;
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
-  await BluetoothEscposPrinter.printText(formatLRRow('LABA BERSIH', finalLaba) + '\n', {});
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    await BluetoothEscposPrinter.printText('B. HPP\n', {});
+    await BluetoothEscposPrinter.printText(formatLRRow('HPP Barang Terjual', data.hpp) + '\n', {});
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
+    await BluetoothEscposPrinter.printText(formatLRRow('Total HPP', data.hpp) + '\n', {});
+    await BluetoothEscposPrinter.printText('\n', {});
 
-  await BluetoothEscposPrinter.printAndFeed(7);
-  BluetoothEscposPrinter.cutOnePoint();
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
+    await BluetoothEscposPrinter.printText(formatLRRow('LABA KOTOR', data.labaKotor) + '\n', {});
+    await BluetoothEscposPrinter.printText('\n', {});
+
+    await BluetoothEscposPrinter.printText('C. BEBAN OPERASIONAL\n', {});
+    for (const b of data.bebanByCategory) {
+      const label = EXPENSE_CATEGORY_LABELS[b.category] ?? b.category.replace(/_/g, ' ');
+      await BluetoothEscposPrinter.printText(formatLRRow(label, b.total, true) + '\n', {});
+    }
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
+    await BluetoothEscposPrinter.printText(formatLRRow('Total Beban', data.totalBeban) + '\n', {});
+    await BluetoothEscposPrinter.printText('\n', {});
+
+    if (data.pendapatanLain && data.pendapatanLain > 0) {
+      await BluetoothEscposPrinter.printText('D. PENDAPATAN LAIN-LAIN\n', {});
+      await BluetoothEscposPrinter.printText(formatLRRow('Pendapatan Lain', data.pendapatanLain) + '\n', {});
+      await BluetoothEscposPrinter.printText('\n', {});
+    }
+
+    const finalLaba = data.labaBersih !== undefined ? data.labaBersih : data.labaOperasional;
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    await BluetoothEscposPrinter.printText(formatLRRow('LABA BERSIH', finalLaba) + '\n', {});
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+
+    await BluetoothEscposPrinter.printAndFeed(7);
+    BluetoothEscposPrinter.cutOnePoint();
+  }, 7000, 'Koneksi ke printer Bluetooth timeout (7 detik). Pastikan printer menyala.');
 }
 
 export async function printBankDepositReceipt(params: {
@@ -395,89 +423,91 @@ export async function printBankDepositReceipt(params: {
   cashierName?: string;
   date?: Date;
 }): Promise<void> {
-  const {
-    storeName,
-    depositAmount,
-    remainingCash,
-    bankTarget,
-    notes,
-    cashierName = 'Kasir',
-    date = new Date(),
-  } = params;
+  return withBluetoothTimeout(async () => {
+    const {
+      storeName,
+      depositAmount,
+      remainingCash,
+      bankTarget,
+      notes,
+      cashierName = 'Kasir',
+      date = new Date(),
+    } = params;
 
-  const dateStr = date.toLocaleDateString('id-ID', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-  const timeStr = date.toLocaleTimeString('id-ID', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+    const dateStr = date.toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    const timeStr = date.toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText(storeName.toUpperCase() + '\n', {});
-  await BluetoothEscposPrinter.printText('BUKTI SETORAN KAS LACI\n', {});
-  await BluetoothEscposPrinter.printText(`${dateStr} ${timeStr}\n`, {});
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+    await BluetoothEscposPrinter.printText(storeName.toUpperCase() + '\n', {});
+    await BluetoothEscposPrinter.printText('BUKTI SETORAN KAS LACI\n', {});
+    await BluetoothEscposPrinter.printText(`${dateStr} ${timeStr}\n`, {});
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
-  await BluetoothEscposPrinter.printColumn(
-    [14, 18],
-    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-    ['Petugas/Kasir', cashierName],
-    {}
-  );
-  await BluetoothEscposPrinter.printColumn(
-    [14, 18],
-    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-    ['Tujuan Setor', bankTarget],
-    {}
-  );
-
-  if (notes) {
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
     await BluetoothEscposPrinter.printColumn(
       [14, 18],
       [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-      ['Keterangan', notes],
+      ['Petugas/Kasir', cashierName],
       {}
     );
-  }
+    await BluetoothEscposPrinter.printColumn(
+      [14, 18],
+      [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+      ['Tujuan Setor', bankTarget],
+      {}
+    );
 
-  await BluetoothEscposPrinter.printText(THIN + '\n', {});
-  await BluetoothEscposPrinter.printColumn(
-    [14, 18],
-    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-    ['NOMINAL SETOR', 'Rp ' + depositAmount.toLocaleString('id-ID')],
-    {}
-  );
-  await BluetoothEscposPrinter.printColumn(
-    [14, 18],
-    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-    ['Sisa Kas Laci', 'Rp ' + remainingCash.toLocaleString('id-ID')],
-    {}
-  );
-  await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
+    if (notes) {
+      await BluetoothEscposPrinter.printColumn(
+        [14, 18],
+        [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+        ['Keterangan', notes],
+        {}
+      );
+    }
 
-  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText('Tanda Tangan Serah Terima:\n\n\n\n', {});
-  await BluetoothEscposPrinter.printColumn(
-    [16, 16],
-    [BluetoothEscposPrinter.ALIGN.CENTER, BluetoothEscposPrinter.ALIGN.CENTER],
-    ['( ____________ )', '( ____________ )'],
-    {}
-  );
-  await BluetoothEscposPrinter.printColumn(
-    [16, 16],
-    [BluetoothEscposPrinter.ALIGN.CENTER, BluetoothEscposPrinter.ALIGN.CENTER],
-    ['Penyetor / Kasir', 'Penerima / Owner'],
-    {}
-  );
+    await BluetoothEscposPrinter.printText(THIN + '\n', {});
+    await BluetoothEscposPrinter.printColumn(
+      [14, 18],
+      [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+      ['NOMINAL SETOR', 'Rp ' + depositAmount.toLocaleString('id-ID')],
+      {}
+    );
+    await BluetoothEscposPrinter.printColumn(
+      [14, 18],
+      [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+      ['Sisa Kas Laci', 'Rp ' + remainingCash.toLocaleString('id-ID')],
+      {}
+    );
+    await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
 
-  await BluetoothEscposPrinter.printText('\nSimpan bukti ini sebagai arsip mutasi kas.\n', {});
-  await BluetoothEscposPrinter.printAndFeed(7);
-  BluetoothEscposPrinter.cutOnePoint();
+    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+    await BluetoothEscposPrinter.printText('Tanda Tangan Serah Terima:\n\n\n\n', {});
+    await BluetoothEscposPrinter.printColumn(
+      [16, 16],
+      [BluetoothEscposPrinter.ALIGN.CENTER, BluetoothEscposPrinter.ALIGN.CENTER],
+      ['( ____________ )', '( ____________ )'],
+      {}
+    );
+    await BluetoothEscposPrinter.printColumn(
+      [16, 16],
+      [BluetoothEscposPrinter.ALIGN.CENTER, BluetoothEscposPrinter.ALIGN.CENTER],
+      ['Penyetor / Kasir', 'Penerima / Owner'],
+      {}
+    );
+
+    await BluetoothEscposPrinter.printText('\nSimpan bukti ini sebagai arsip mutasi kas.\n', {});
+    await BluetoothEscposPrinter.printAndFeed(7);
+    BluetoothEscposPrinter.cutOnePoint();
+  }, 7000, 'Koneksi ke printer Bluetooth timeout (7 detik). Pastikan printer menyala.');
 }
 
 

@@ -109,6 +109,7 @@ export default function StoreSettingsScreen() {
         mediaTypes: ['images'],
         allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
         quality: 0.75,
+        legacy: true, // Kompatibel penuh tablet Xiaomi / Android
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
@@ -118,7 +119,7 @@ export default function StoreSettingsScreen() {
       }
     } catch (e: any) {
       console.warn('pickQrisImage error:', e);
-      Alert.alert('Error', 'Gagal memuat gambar QRIS dari galeri.');
+      Alert.alert('Perhatian', `Gagal memuat gambar QRIS dari galeri: ${e?.message || 'Gangguan sistem galeri'}`);
     }
   };
 
@@ -142,6 +143,7 @@ export default function StoreSettingsScreen() {
         allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
         quality: 0.7,
         base64: true,
+        legacy: true, // Kompatibel penuh tablet Xiaomi / Android
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
@@ -155,7 +157,7 @@ export default function StoreSettingsScreen() {
       }
     } catch (e: any) {
       console.warn('pickLogoImage error:', e);
-      Alert.alert('Error', 'Gagal memuat logo usaha dari galeri.');
+      Alert.alert('Perhatian', `Gagal memuat logo usaha dari galeri: ${e?.message || 'Gangguan sistem galeri'}`);
     }
   };
 

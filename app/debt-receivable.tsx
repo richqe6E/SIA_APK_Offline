@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { pickImageFromGallery, capturePhotoFromCamera } from '@/utils/imagePickerHelper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -377,45 +378,18 @@ export default function DebtReceivableScreen() {
   };
 
   const handlePickEditImage = async () => {
-    try {
-      try {
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      } catch {
-        // Toleran terhadap Android 13+ Photo Picker
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-        quality: 0.75,
-      });
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const savedUri = await saveImageLocally(result.assets[0].uri, 'debts');
-        setEditInvoiceImage(savedUri);
-      }
-    } catch (e) {
-      console.warn('Pick edit invoice image error:', e);
-      Alert.alert('Error', 'Gagal memuat gambar dari galeri');
+    const uri = await pickImageFromGallery();
+    if (uri) {
+      const savedUri = await saveImageLocally(uri, 'debts');
+      setEditInvoiceImage(savedUri);
     }
   };
 
   const handleTakeEditPhoto = async () => {
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Izin Kamera', 'Izin kamera diperlukan untuk memotret faktur/nota secara langsung.');
-        return;
-      }
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-        quality: 0.75,
-      });
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const savedUri = await saveImageLocally(result.assets[0].uri, 'debts');
-        setEditInvoiceImage(savedUri);
-      }
-    } catch (e) {
-      console.warn('Take edit invoice photo error:', e);
-      Alert.alert('Error', 'Gagal mengambil foto dari kamera');
+    const uri = await capturePhotoFromCamera();
+    if (uri) {
+      const savedUri = await saveImageLocally(uri, 'debts');
+      setEditInvoiceImage(savedUri);
     }
   };
 
@@ -1889,45 +1863,18 @@ function AddDebtModal({
   };
 
   const handlePickImage = async () => {
-    try {
-      try {
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      } catch {
-        // Toleran terhadap Android 13+ Photo Picker
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-        quality: 0.75,
-      });
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const savedUri = await saveImageLocally(result.assets[0].uri, 'debts');
-        setInvoiceImage(savedUri);
-      }
-    } catch (e) {
-      console.warn('Pick invoice image error:', e);
-      Alert.alert('Error', 'Gagal memuat gambar dari galeri');
+    const uri = await pickImageFromGallery();
+    if (uri) {
+      const savedUri = await saveImageLocally(uri, 'debts');
+      setInvoiceImage(savedUri);
     }
   };
 
   const handleTakePhoto = async () => {
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Izin Kamera', 'Izin kamera diperlukan untuk memotret faktur/nota secara langsung.');
-        return;
-      }
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-        quality: 0.75,
-      });
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const savedUri = await saveImageLocally(result.assets[0].uri, 'debts');
-        setInvoiceImage(savedUri);
-      }
-    } catch (e) {
-      console.warn('Take invoice photo error:', e);
-      Alert.alert('Error', 'Gagal mengambil foto dari kamera');
+    const uri = await capturePhotoFromCamera();
+    if (uri) {
+      const savedUri = await saveImageLocally(uri, 'debts');
+      setInvoiceImage(savedUri);
     }
   };
 

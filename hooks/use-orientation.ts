@@ -10,20 +10,37 @@ export function useLockOrientation(
   const currentUserRole = useSettingsStore((s) => s.currentUserRole);
 
   useEffect(() => {
+    let isApplying = false;
     const applyLock = async () => {
-      if (AppState.currentState !== 'active') return;
+      if (AppState.currentState !== 'active' || isApplying) return;
+      isApplying = true;
       try {
-        if (appOrientation === 'landscape') {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        } else if (appOrientation === 'portrait') {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-        } else if (defaultOverride) {
-          await ScreenOrientation.lockAsync(defaultOverride);
-        } else {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        const targetLock =
+          appOrientation === 'landscape'
+            ? ScreenOrientation.OrientationLock.LANDSCAPE
+            : appOrientation === 'portrait'
+            ? ScreenOrientation.OrientationLock.PORTRAIT_UP
+            : defaultOverride || ScreenOrientation.OrientationLock.PORTRAIT_UP;
+
+        const currentOrientation = await ScreenOrientation.getOrientationAsync();
+        const isAlreadyLandscape =
+          currentOrientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
+          currentOrientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
+        const isAlreadyPortrait =
+          currentOrientation === ScreenOrientation.Orientation.PORTRAIT_UP ||
+          currentOrientation === ScreenOrientation.Orientation.PORTRAIT_DOWN;
+
+        const isTargetLandscape = targetLock === ScreenOrientation.OrientationLock.LANDSCAPE;
+        const isTargetPortrait = targetLock === ScreenOrientation.OrientationLock.PORTRAIT_UP;
+
+        // Hanya jalankan lockAsync jika orientasi layar fisik saat ini berbeda dengan target
+        if ((isTargetLandscape && !isAlreadyLandscape) || (isTargetPortrait && !isAlreadyPortrait)) {
+          await ScreenOrientation.lockAsync(targetLock);
         }
       } catch {
         // Safe catch on Android Activity transitions
+      } finally {
+        isApplying = false;
       }
     };
 

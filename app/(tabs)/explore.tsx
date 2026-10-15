@@ -1,4 +1,5 @@
 import { saveImageLocally } from '@/utils/imageStorage';
+import { pickImageFromGallery, capturePhotoFromCamera } from '@/utils/imagePickerHelper';
 import * as ImagePicker from 'expo-image-picker';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -223,51 +224,18 @@ export default function ProductsScreen() {
   );
 
   const pickImage = async () => {
-    try {
-      try {
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      } catch {
-        // Toleran terhadap Android 13+ Photo Picker
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-        quality: 0.75,
-      });
-
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const uri = result.assets[0].uri;
-        const savedUri = await saveImageLocally(uri, 'products');
-        setImagePath(savedUri);
-      }
-    } catch (e: any) {
-      console.warn('pickImage error:', e);
-      Alert.alert('Perhatian', 'Gagal memuat foto dari galeri. Pastikan galeri foto diizinkan.');
+    const uri = await pickImageFromGallery();
+    if (uri) {
+      const savedUri = await saveImageLocally(uri, 'products');
+      setImagePath(savedUri);
     }
   };
 
   const takePhoto = async () => {
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Izin Kamera', 'Izin kamera diperlukan untuk memotret produk secara langsung.');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-        quality: 0.75,
-      });
-
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const uri = result.assets[0].uri;
-        const savedUri = await saveImageLocally(uri, 'products');
-        setImagePath(savedUri);
-      }
-    } catch (e: any) {
-      console.warn('takePhoto error:', e);
-      Alert.alert('Perhatian', 'Gagal membuka kamera perangkat. Periksa izin kamera perangkat.');
+    const uri = await capturePhotoFromCamera();
+    if (uri) {
+      const savedUri = await saveImageLocally(uri, 'products');
+      setImagePath(savedUri);
     }
   };
 

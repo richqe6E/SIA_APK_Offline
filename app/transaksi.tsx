@@ -322,7 +322,7 @@ export default function TransactionScreen() {
       const prod = products.find((p) => p.id === item.product_id);
       if (prod && prod.has_stock === 1) {
         const requiredQty = item.is_weighted === 1
-          ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+          ? Number(((item.weight_gram ?? 1000) / 1000).toFixed(3))
           : item.quantity;
         if (requiredQty > prod.stock) {
           outOfStockItems.push(`• ${item.product_name} (butuh ${requiredQty}, sisa ${prod.stock})`);

@@ -425,7 +425,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
           // Pengurangan stok otomatis jika produk mengaktifkan kelola stok
           if (prod?.has_stock === 1) {
             const qtyToDeduct = item.is_weighted === 1
-              ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+              ? Number(((item.weight_gram ?? 1000) / 1000).toFixed(3))
               : item.quantity;
             await txn.runAsync(
               `UPDATE products SET stock = MAX(0, stock - ?), updated_at = datetime('now','localtime') WHERE id = ?`,
@@ -457,7 +457,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
           const item = purchasedItems.find((it) => it.product_id === p.id);
           if (!item || p.has_stock !== 1) return p;
           const qtyToDeduct = item.is_weighted === 1
-            ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+            ? Number(((item.weight_gram ?? 1000) / 1000).toFixed(3))
             : item.quantity;
           return { ...p, stock: Math.max(0, p.stock - qtyToDeduct) };
         }),
@@ -627,7 +627,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
           );
           if (prod?.has_stock === 1) {
             const qtyToRestore = item.weight_gram
-              ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+              ? Number(((item.weight_gram ?? 1000) / 1000).toFixed(3))
               : item.quantity;
             await txn.runAsync(
               `UPDATE products SET stock = stock + ?, updated_at = datetime('now','localtime') WHERE id = ?`,
@@ -714,7 +714,7 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
           );
           if (prod?.has_stock === 1) {
             const qtyToRestore = item.weight_gram
-              ? Math.ceil((item.weight_gram ?? 1000) / 1000)
+              ? Number(((item.weight_gram ?? 1000) / 1000).toFixed(3))
               : item.quantity;
             await txn.runAsync(
               `UPDATE products SET stock = stock + ?, updated_at = datetime('now','localtime') WHERE id = ?`,

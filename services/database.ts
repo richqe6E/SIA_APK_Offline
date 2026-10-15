@@ -3,11 +3,17 @@ import * as SQLite from 'expo-sqlite';
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  // Selalu aktifkan WAL mode dan Foreign Keys enforcement di setiap koneksi
-  await db.execAsync(`
-    PRAGMA journal_mode = 'wal';
-    PRAGMA foreign_keys = ON;
-  `);
+  try {
+    // BUG-03 / FIX-XIAOMI: Atur busy_timeout 5000ms dan synchronous NORMAL untuk mencegah SQLITE_BUSY crash saat warm restart
+    await db.execAsync(`
+      PRAGMA busy_timeout = 5000;
+      PRAGMA journal_mode = 'wal';
+      PRAGMA synchronous = NORMAL;
+      PRAGMA foreign_keys = ON;
+    `);
+  } catch (initPragmaErr) {
+    console.warn('Initial PRAGMA warning:', initPragmaErr);
+  }
 
   const DATABASE_VERSION = 20;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(

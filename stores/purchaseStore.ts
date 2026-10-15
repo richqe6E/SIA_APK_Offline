@@ -149,11 +149,25 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
             item.subtotal
           );
 
-          // Update stok & harga beli di tabel produk beserta timestamp updated_at
+          // BUG-02: Update stok & harga pokok (HPP) produk dengan Weighted Moving Average
+          const prodRow = await txn.getFirstAsync<{ stock: number; cost_price: number }>(
+            'SELECT stock, cost_price FROM products WHERE id = ?',
+            item.productId
+          );
+          const curStock = Math.max(0, prodRow?.stock || 0);
+          const curCost = prodRow?.cost_price || 0;
+          const inQty = item.quantity;
+          const inCost = item.costPrice;
+          const totalQty = curStock + inQty;
+
+          const newMovingAvgCost = (curStock > 0 && curCost > 0 && totalQty > 0)
+            ? Math.round(((curStock * curCost) + (inQty * inCost)) / totalQty)
+            : inCost;
+
           await txn.runAsync(
             'UPDATE products SET stock = stock + ?, cost_price = ?, has_stock = 1, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?',
             item.quantity,
-            item.costPrice,
+            newMovingAvgCost,
             item.productId
           );
         }
