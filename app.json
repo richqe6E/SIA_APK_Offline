@@ -2,7 +2,7 @@
   "expo": {
     "name": "POS AZIZAH",
     "slug": "pos-offline",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "posoffline",
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.rumahmakan.posoffline",
-      "versionCode": 8,
+      "versionCode": 9,
       "permissions": [
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.BLUETOOTH_CONNECT",
