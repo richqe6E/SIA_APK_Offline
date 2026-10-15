@@ -41,7 +41,7 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
     setErrorMsg('');
     setPin('');
     setPinMode(false);
-    loginAsKasir();
+    loginAsKasir(db);
   };
 
   const handleOpenPin = () => {
@@ -62,7 +62,7 @@ export function RoleLoginModal({ visible }: RoleLoginModalProps) {
     setPin(nextPin);
 
     if (nextPin.length === 6) {
-      const ok = loginAsPemilik(nextPin);
+      const ok = loginAsPemilik(nextPin, db);
       if (ok) {
         setPin('');
         setPinMode(false);

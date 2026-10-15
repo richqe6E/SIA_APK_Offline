@@ -9,7 +9,7 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     PRAGMA foreign_keys = ON;
   `);
 
-  const DATABASE_VERSION = 18;
+  const DATABASE_VERSION = 20;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version'
   );
@@ -250,6 +250,8 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
         paid_amount REAL NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'unpaid', -- 'unpaid' | 'partial' | 'paid'
         due_date TEXT,
+        invoice_image TEXT,
+        notes TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
         FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE SET NULL
@@ -452,6 +454,53 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     currentDbVersion = 18;
   }
 
+  if (currentDbVersion === 18) {
+    // Migrasi v19: Normalisasi akun pembayaran utang supplier historis (dari kas laci ke kas bank)
+    // dan indeks pencarian akuntansi
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_cash_ledger_type_cat_acc ON cash_ledger(type, category, account);
+    `);
+
+    try {
+      // Alihkan pembayaran hutang supplier historis yang keliru tercatat sebagai 'hand' ke 'bank'
+      await db.runAsync(`
+        UPDATE cash_ledger
+        SET account = 'bank'
+        WHERE type = 'out' AND category = 'bayar_hutang_supplier' AND account = 'hand'
+      `);
+      await db.runAsync(`
+        UPDATE debt_payments
+        SET payment_source = 'bank'
+        WHERE payment_source = 'hand'
+      `);
+    } catch (e) {
+      console.warn('Migration v19 debt payment normalization warning:', e);
+    }
+
+    currentDbVersion = 19;
+  }
+
+  if (currentDbVersion === 19) {
+    // Migrasi v20: Kolom foto faktur (invoice_image) dan catatan pada hutang supplier
+    try {
+      await db.execAsync(`
+        ALTER TABLE supplier_debts ADD COLUMN invoice_image TEXT;
+      `);
+    } catch (e) {
+      // Abaikan jika kolom sudah ada
+    }
+
+    try {
+      await db.execAsync(`
+        ALTER TABLE supplier_debts ADD COLUMN notes TEXT;
+      `);
+    } catch (e) {
+      // Abaikan jika kolom sudah ada
+    }
+
+    currentDbVersion = 20;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }
 
@@ -477,6 +526,7 @@ export async function resetEntireDatabase(db: SQLiteDatabase): Promise<void> {
       DELETE FROM customers;
       DELETE FROM suppliers;
       DELETE FROM daily_counters;
+      DELETE FROM settings WHERE key IN ('daily_drawer_date', 'daily_drawer_amount', 'cash_denominations', 'active_shift', 'current_user_role');
       DELETE FROM sqlite_sequence;
     `);
   });
@@ -501,7 +551,7 @@ export async function resetFinancialAndCashFlowData(db: SQLiteDatabase): Promise
       DELETE FROM debt_payments;
       DELETE FROM supplier_debts;
       DELETE FROM daily_counters;
-      DELETE FROM settings WHERE key IN ('cash_denominations', 'active_shift');
+      DELETE FROM settings WHERE key IN ('daily_drawer_date', 'daily_drawer_amount', 'cash_denominations', 'active_shift', 'current_user_role');
       DELETE FROM sqlite_sequence WHERE name IN (
         'cash_shifts',
         'pending_orders',

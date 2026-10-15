@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Alert,
+  Image,
   Modal,
   Platform,
   ScrollView,
@@ -85,6 +86,7 @@ export function ReceiptPreviewModal({
         storeAddress,
         storePhone,
         storePhone2,
+        storeLogoBase64: settings.storeLogoBase64,
         cashierName: 'Kasir Utama',
         receiptFooter,
       });
@@ -116,6 +118,25 @@ export function ReceiptPreviewModal({
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
             {/* Thermal Receipt Paper */}
             <View style={styles.paper}>
+              {/* Store Logo */}
+              {settings.storeLogoPath ? (
+                <View style={styles.paperLogoContainer}>
+                  <Image
+                    source={{ uri: settings.storeLogoPath }}
+                    style={styles.paperLogo}
+                    resizeMode="contain"
+                  />
+                </View>
+              ) : settings.storeLogoBase64 ? (
+                <View style={styles.paperLogoContainer}>
+                  <Image
+                    source={{ uri: `data:image/png;base64,${settings.storeLogoBase64}` }}
+                    style={styles.paperLogo}
+                    resizeMode="contain"
+                  />
+                </View>
+              ) : null}
+
               {/* Store Header */}
               <ThemedText style={styles.paperStoreName}>{storeName.toUpperCase()}</ThemedText>
               {storeAddress ? (
@@ -252,6 +273,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 10,
     elevation: 6,
+  },
+  paperLogoContainer: {
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  paperLogo: {
+    width: 56,
+    height: 56,
+    borderRadius: 6,
   },
   paperStoreName: {
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',

@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
-import { triggerAutoSync } from '@/services/cloudSync';
 
 export interface CashShift {
   id: number;
@@ -24,6 +23,7 @@ export interface ShiftSummary {
   salesNonCash: number;
   transactionCount: number;
   expectedCash: number;
+  cumulativeHandBalance?: number;
 }
 
 function getTodayDateStr(): string {
@@ -42,6 +42,7 @@ interface ShiftState {
   todayDrawerAmount: number;
   isDrawerSetToday: boolean;
   cashierList: string[];
+  resetShiftStore: () => void;
   loadActiveShift: (db: SQLiteDatabase) => Promise<CashShift | null>;
   loadShiftData: (db: SQLiteDatabase) => Promise<void>;
   saveDailyDrawerAmount: (db: SQLiteDatabase, amount: number) => Promise<void>;
@@ -59,6 +60,9 @@ interface ShiftState {
   loadHistoryShifts: (db: SQLiteDatabase) => Promise<void>;
 }
 
+let openShiftMutex = false;
+let closeShiftMutex = false;
+
 export const useShiftStore = create<ShiftState>((set, get) => ({
   currentShift: null,
   historyShifts: [],
@@ -68,13 +72,23 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
   isDrawerSetToday: false,
   cashierList: [],
 
+  resetShiftStore: () => {
+    set({
+      currentShift: null,
+      todayDrawerDate: '',
+      todayDrawerAmount: 0,
+      isDrawerSetToday: false,
+      historyShifts: [],
+    });
+  },
+
   loadShiftData: async (db) => {
     try {
       set({ isLoading: true });
       const today = getTodayDateStr();
 
       const rows = await db.getAllAsync<{ key: string; value: string }>(
-        `SELECT key, value FROM settings WHERE key IN ('daily_drawer_date', 'daily_drawer_amount', 'cashier_employees')`
+        "SELECT key, value FROM settings WHERE key IN ('daily_drawer_date', 'daily_drawer_amount', 'cashier_employees')"
       );
       const map = new Map(rows.map((r) => [r.key, r.value]));
 
@@ -121,13 +135,60 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
 
     const current = get().currentShift;
     if (current) {
-      await db.runAsync(
-        "UPDATE cash_shifts SET starting_cash = ?, expected_cash = starting_cash + total_sales_cash WHERE id = ?",
-        amount,
+      const salesRow = await db.getFirstAsync<{ sales_cash: number }>(
+        `SELECT COALESCE(SUM(CASE 
+          WHEN payment_method = 'split' OR (cash_received > 0 AND qris_received > 0) THEN cash_received 
+          WHEN payment_method = 'tunai' THEN total 
+          ELSE 0 
+        END), 0) as sales_cash
+        FROM transactions WHERE shift_id = ?`,
         current.id
       );
+      const activeSalesCash = salesRow?.sales_cash || 0;
+
+      await db.runAsync(
+        "UPDATE cash_shifts SET starting_cash = ?, expected_cash = ? + ? WHERE id = ?",
+        amount,
+        amount,
+        activeSalesCash,
+        current.id
+      );
+
+      // Sinkronkan ke cash_ledger kategori modal_awal agar uang fisik laci di buku kas ikut terupdate
+      const existingLedger = await db.getFirstAsync<{ id: number }>(
+        `SELECT id FROM cash_ledger WHERE type = 'in' AND category = 'modal_awal' AND description LIKE ? LIMIT 1`,
+        `%Shift #${current.id}%`
+      );
+
+      if (existingLedger) {
+        await db.runAsync(
+          "UPDATE cash_ledger SET amount = ? WHERE id = ?",
+          amount,
+          existingLedger.id
+        );
+      } else if (amount > 0) {
+        await db.runAsync(
+          `INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)`,
+          'in',
+          'modal_awal',
+          `Modal Awal Kasir Shift #${current.id} (${current.cashier_name})`,
+          amount,
+          today,
+          'hand'
+        );
+      }
+
+      try {
+        const { useCashStore } = await import('@/stores/cashStore');
+        await useCashStore.getState().loadLedger(db);
+      } catch {}
+
       set({
-        currentShift: { ...current, starting_cash: amount },
+        currentShift: {
+          ...current,
+          starting_cash: amount,
+          expected_cash: amount + activeSalesCash,
+        },
       });
     }
 
@@ -136,7 +197,6 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       todayDrawerAmount: amount,
       isDrawerSetToday: true,
     });
-    triggerAutoSync(db);
   },
 
   switchCashier: async (db, cashierName) => {
@@ -164,7 +224,6 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
     } else {
       await get().openShift(db, trimmed, get().todayDrawerAmount);
     }
-    triggerAutoSync(db);
   },
 
   addCashierEmployee: async (db, name) => {
@@ -195,6 +254,14 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       const row = await db.getFirstAsync<CashShift>(
         `SELECT * FROM cash_shifts WHERE status = 'open' ORDER BY id DESC LIMIT 1`
       );
+      if (row) {
+        await db.runAsync(
+          `UPDATE transactions SET shift_id = ? WHERE shift_id IS NULL AND (date(created_at) = date(?) OR created_at >= ?)`,
+          row.id,
+          row.opened_at,
+          row.opened_at
+        );
+      }
       set({ currentShift: row || null });
       return row || null;
     } catch {
@@ -204,49 +271,87 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
   },
 
   openShift: async (db, cashierName, startingCash) => {
-    const cleanName = cashierName.trim() || 'Kasir';
-    const result = await db.runAsync(
-      `INSERT INTO cash_shifts (
-        cashier_name, starting_cash, expected_cash, status
-      ) VALUES (?, ?, ?, 'open')`,
-      cleanName,
-      startingCash,
-      startingCash
-    );
-
-    const newShift = await db.getFirstAsync<CashShift>(
-      `SELECT * FROM cash_shifts WHERE id = ?`,
-      result.lastInsertRowId
-    );
-
-    if (!newShift) {
-      throw new Error('Gagal membuka shift kasir');
+    if (openShiftMutex) {
+      const active = get().currentShift;
+      if (active) return active;
     }
+    openShiftMutex = true;
+    try {
+      const existingOpen = await db.getFirstAsync<CashShift>(
+        `SELECT * FROM cash_shifts WHERE status = 'open' ORDER BY id DESC LIMIT 1`
+      );
+      if (existingOpen) {
+        set({ currentShift: existingOpen });
+        return existingOpen;
+      }
 
-    // Integrasikan modal awal ke cash_ledger agar masuk ke saldo laci fisik kasir
-    if (startingCash > 0) {
+      const cleanName = cashierName.trim() || 'Kasir';
+      const result = await db.runAsync(
+        `INSERT INTO cash_shifts (
+          cashier_name, starting_cash, expected_cash, status
+        ) VALUES (?, ?, ?, 'open')`,
+        cleanName,
+        startingCash,
+        startingCash
+      );
+
+      const newShift = await db.getFirstAsync<CashShift>(
+        `SELECT * FROM cash_shifts WHERE id = ?`,
+        result.lastInsertRowId
+      );
+
+      if (!newShift) {
+        throw new Error('Gagal membuka shift kasir');
+      }
+
+      // Integrasikan modal awal ke cash_ledger agar masuk ke saldo laci fisik kasir
       const today = getTodayDateStr();
       await db.runAsync(
-        `INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)`,
-        'in',
-        'modal_awal',
-        `Modal Awal Kasir Shift #${newShift.id} (${cleanName})`,
-        startingCash,
-        today,
-        'hand'
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('daily_drawer_date', ?)",
+        today
       );
-      try {
-        const { useCashStore } = await import('@/stores/cashStore');
-        await useCashStore.getState().loadLedger(db);
-      } catch {}
-    }
+      await db.runAsync(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('daily_drawer_amount', ?)",
+        String(startingCash)
+      );
 
-    set({ currentShift: newShift });
-    triggerAutoSync(db);
-    return newShift;
+      if (startingCash > 0) {
+        await db.runAsync(
+          `INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)`,
+          'in',
+          'modal_awal',
+          `Modal Awal Kasir Shift #${newShift.id} (${cleanName})`,
+          startingCash,
+          today,
+          'hand'
+        );
+        try {
+          const { useCashStore } = await import('@/stores/cashStore');
+          await useCashStore.getState().loadLedger(db);
+        } catch {}
+      }
+
+      set({
+        currentShift: newShift,
+        todayDrawerDate: today,
+        todayDrawerAmount: startingCash,
+        isDrawerSetToday: true,
+      });
+      return newShift;
+    } finally {
+      openShiftMutex = false;
+    }
   },
 
   getShiftSummary: async (db, shift) => {
+    // Pastikan transaksi yang tercatat selama shift aktif tanpa shift_id teratribusi ke shift ini
+    await db.runAsync(
+      `UPDATE transactions SET shift_id = ? WHERE shift_id IS NULL AND (date(created_at) = date(?) OR created_at >= ?)`,
+      shift.id,
+      shift.opened_at,
+      shift.opened_at
+    );
+
     const row = await db.getFirstAsync<{
       tx_count: number;
       sales_cash: number;
@@ -254,12 +359,19 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
     }>(
       `SELECT
         COUNT(*) as tx_count,
-        COALESCE(SUM(CASE WHEN cash_received > 0 THEN cash_received WHEN payment_method = 'tunai' THEN total ELSE 0 END), 0) as sales_cash,
-        COALESCE(SUM(CASE WHEN qris_received > 0 THEN qris_received WHEN payment_method = 'qris' THEN total ELSE 0 END), 0) as sales_non_cash
+        COALESCE(SUM(CASE 
+          WHEN payment_method = 'split' OR (cash_received > 0 AND qris_received > 0) THEN cash_received 
+          WHEN payment_method = 'tunai' THEN total 
+          ELSE 0 
+        END), 0) as sales_cash,
+        COALESCE(SUM(CASE 
+          WHEN payment_method = 'split' OR (cash_received > 0 AND qris_received > 0) THEN qris_received 
+          WHEN payment_method = 'qris' THEN total 
+          ELSE 0 
+        END), 0) as sales_non_cash
        FROM transactions
-       WHERE shift_id = ? OR (shift_id IS NULL AND created_at >= ?)`,
-      shift.id,
-      shift.opened_at
+       WHERE shift_id = ?`,
+      shift.id
     );
 
     // Hitung pemasukan kas fisik non-penjualan (misal: cicilan piutang pelanggan atau penerimaan kas lain)
@@ -285,27 +397,58 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
     const cashOut = expRow?.total_out ?? 0;
     const expectedCash = Math.max(0, shift.starting_cash + salesCash + otherCashIn - cashOut);
 
+    // Hitung total kas fisik laci toko kumulatif (all-time) untuk transparansi rekonsiliasi kasir
+    const totSalesRow = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(total), 0) as total FROM transactions WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0)`
+    );
+    const totSplitRow = await db.getFirstAsync<{ split_cash: number }>(
+      `SELECT COALESCE(SUM(cash_received), 0) as split_cash FROM transactions WHERE (cash_received > 0 AND qris_received > 0)`
+    );
+    const totInRow = await db.getFirstAsync<{ total_in: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total_in FROM cash_ledger WHERE type = 'in' AND (account = 'hand' OR account IS NULL)`
+    );
+    const totOutRow = await db.getFirstAsync<{ total_out: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total_out FROM cash_ledger WHERE type = 'out' AND (account = 'hand' OR account IS NULL)`
+    );
+    const cumulativeHandBalance = ((totSalesRow?.total ?? 0) + (totSplitRow?.split_cash ?? 0) + (totInRow?.total_in ?? 0)) - (totOutRow?.total_out ?? 0);
+
     return {
       startingCash: shift.starting_cash,
       salesCash,
       salesNonCash,
       transactionCount,
       expectedCash,
+      cumulativeHandBalance,
     };
   },
 
   closeShift: async (db, shiftId, actualCash, notes = '') => {
-    const shift = await db.getFirstAsync<CashShift>(
-      `SELECT * FROM cash_shifts WHERE id = ?`,
-      shiftId
-    );
-
-    if (!shift) {
-      throw new Error('Data shift tidak ditemukan');
+    if (closeShiftMutex) {
+      throw new Error('Proses tutup shift sedang berjalan.');
     }
+    closeShiftMutex = true;
+    try {
+      const shift = await db.getFirstAsync<CashShift>(
+        `SELECT * FROM cash_shifts WHERE id = ?`,
+        shiftId
+      );
+
+      if (!shift) {
+        throw new Error('Data shift tidak ditemukan');
+      }
+
+      if (shift.status !== 'open') {
+        throw new Error('Shift ini sudah ditutup sebelumnya.');
+      }
 
     const summary = await get().getShiftSummary(db, shift);
     const difference = actualCash - summary.expectedCash;
+    const cumulative = summary.cumulativeHandBalance ?? summary.expectedCash;
+    // Jika kasir menginput nominal yang cocok dengan saldo kas laci toko kumulatif,
+    // maka kelebihan tersebut adalah sisa kas toko sebelumnya (sudah ada di buku kas),
+    // bukan kas lebih riil baru, sehingga dicegah dari pencatatan dobel di cash_ledger.
+    const isMatchingCumulative = Math.abs(actualCash - cumulative) < 1;
+    const ledgerDiff = isMatchingCumulative ? 0 : difference;
 
     await db.runAsync(
       `UPDATE cash_shifts SET
@@ -338,9 +481,30 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
       throw new Error('Gagal memproses penutupan shift');
     }
 
-    // Pelepasan modal awal shift saat ditutup agar saldo kas laci kumulatif tidak menggembung
+    const today = getTodayDateStr();
+
+    // 1. Integrasi Selisih Fisik Kasir Tutup Shift ke cash_ledger agar saldo kas laci sinkron dengan uang fisik riil
+    if (ledgerDiff !== 0) {
+      const isShortage = ledgerDiff < 0;
+      const absDiff = Math.abs(ledgerDiff);
+      const diffType = isShortage ? 'out' : 'in';
+      const descLabel = isShortage
+        ? `Tutup Shift Kasir #${shift.id} (${shift.cashier_name}) - Penyesuaian Kas Tekor/Kurang`
+        : `Tutup Shift Kasir #${shift.id} (${shift.cashier_name}) - Penyesuaian Kas Lebih`;
+
+      await db.runAsync(
+        `INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)`,
+        diffType,
+        'selisih_kas',
+        descLabel,
+        absDiff,
+        today,
+        'hand'
+      );
+    }
+
+    // 2. Pelepasan modal awal shift saat ditutup agar saldo kas laci kumulatif tidak menggembung
     if (shift.starting_cash > 0) {
-      const today = getTodayDateStr();
       await db.runAsync(
         `INSERT INTO cash_ledger (type, category, description, amount, date, account) VALUES (?, ?, ?, ?, ?, ?)`,
         'out',
@@ -350,16 +514,19 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
         today,
         'hand'
       );
-      try {
-        const { useCashStore } = await import('@/stores/cashStore');
-        await useCashStore.getState().loadLedger(db);
-      } catch {}
     }
 
-    set({ currentShift: null });
-    await get().loadHistoryShifts(db);
-    triggerAutoSync(db);
-    return closedShift;
+    try {
+      const { useCashStore } = await import('@/stores/cashStore');
+      await useCashStore.getState().loadLedger(db);
+    } catch {}
+
+      set({ currentShift: null });
+      await get().loadHistoryShifts(db);
+      return closedShift;
+    } finally {
+      closeShiftMutex = false;
+    }
   },
 
   loadHistoryShifts: async (db) => {

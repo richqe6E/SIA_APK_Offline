@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
 import { useCashStore } from '@/stores/cashStore';
-import { triggerAutoSync } from '@/services/cloudSync';
 
 export interface Customer {
   id: number;
@@ -43,6 +42,8 @@ export interface SupplierDebt {
   remaining_amount: number;
   status: 'unpaid' | 'partial' | 'paid';
   due_date: string | null;
+  invoice_image?: string | null;
+  notes?: string | null;
   created_at: string;
 }
 
@@ -111,12 +112,19 @@ interface DebtReceivableState {
     supplierId: number,
     totalAmount: number,
     dueDate?: string,
-    purchaseId?: number
+    purchaseId?: number,
+    invoiceImage?: string,
+    notes?: string
   ) => Promise<void>;
   editDebt: (
     db: SQLiteDatabase,
     debtId: number,
-    updates: { totalAmount?: number; dueDate?: string | null }
+    updates: {
+      totalAmount?: number;
+      dueDate?: string | null;
+      invoiceImage?: string | null;
+      notes?: string | null;
+    }
   ) => Promise<{ success: boolean; message?: string }>;
   deleteDebt: (
     db: SQLiteDatabase,
@@ -132,6 +140,9 @@ interface DebtReceivableState {
   ) => Promise<{ success: boolean; message?: string }>;
   getDebtPayments: (db: SQLiteDatabase, debtId: number) => Promise<PaymentHistoryItem[]>;
 }
+
+let payReceivableMutex = false;
+let payDebtMutex = false;
 
 export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => ({
   customers: [],
@@ -193,7 +204,6 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       await db.runAsync('DELETE FROM customers WHERE id = ?', id);
       await get().loadCustomers(db);
       await get().loadReceivables(db);
-      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       return { success: false, message: e?.message || 'Gagal menghapus pelanggan' };
@@ -252,7 +262,6 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       await db.runAsync('DELETE FROM suppliers WHERE id = ?', id);
       await get().loadSuppliers(db);
       await get().loadDebts(db);
-      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       return { success: false, message: e?.message || 'Gagal menghapus supplier' };
@@ -320,7 +329,6 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       dueDate ?? null
     );
     await get().loadReceivables(db);
-    triggerAutoSync(db);
   },
 
   // F4: Edit piutang. Pertahankan paid_amount; recalculate status.
@@ -372,7 +380,6 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       }
 
       await get().loadReceivables(db);
-      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       console.error('editReceivable error:', e);
@@ -407,7 +414,6 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       });
 
       await get().loadReceivables(db);
-      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       console.error('deleteReceivable error:', e);
@@ -419,6 +425,11 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
     if (amount <= 0) {
       return { success: false, message: 'Nominal pembayaran harus lebih besar dari 0' };
     }
+
+    if (payReceivableMutex) {
+      return { success: false, message: 'Sedang memproses pembayaran...' };
+    }
+    payReceivableMutex = true;
 
     try {
       const rec = await db.getFirstAsync<{
@@ -484,11 +495,12 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
 
       await get().loadReceivables(db);
       await useCashStore.getState().loadLedger(db);
-      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       console.error('payReceivable error:', e);
       return { success: false, message: e?.message || 'Gagal memproses pembayaran' };
+    } finally {
+      payReceivableMutex = false;
     }
   },
 
@@ -534,6 +546,8 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
         paid_amount: number;
         status: string;
         due_date: string | null;
+        invoice_image: string | null;
+        notes: string | null;
         created_at: string;
       }>(`
         SELECT 
@@ -546,6 +560,8 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
           sd.paid_amount,
           sd.status,
           sd.due_date,
+          sd.invoice_image,
+          sd.notes,
           sd.created_at
         FROM supplier_debts sd
         LEFT JOIN suppliers s ON sd.supplier_id = s.id
@@ -570,17 +586,18 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
     }
   },
 
-  addDebt: async (db, supplierId, totalAmount, dueDate, purchaseId) => {
+  addDebt: async (db, supplierId, totalAmount, dueDate, purchaseId, invoiceImage, notes) => {
     await db.runAsync(
-      `INSERT INTO supplier_debts (supplier_id, purchase_id, total_amount, paid_amount, status, due_date)
-       VALUES (?, ?, ?, 0, 'unpaid', ?)`,
+      `INSERT INTO supplier_debts (supplier_id, purchase_id, total_amount, paid_amount, status, due_date, invoice_image, notes)
+       VALUES (?, ?, ?, 0, 'unpaid', ?, ?, ?)`,
       supplierId,
       purchaseId ?? null,
       totalAmount,
-      dueDate ?? null
+      dueDate ?? null,
+      invoiceImage ?? null,
+      notes ?? null
     );
     await get().loadDebts(db);
-    triggerAutoSync(db);
   },
 
   // F4: Edit hutang supplier. Pertahankan paid_amount; recalculate status.
@@ -612,25 +629,29 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
 
       const newDueDate = updates.dueDate !== undefined ? updates.dueDate : undefined;
 
+      const setClauses: string[] = ['total_amount = ?', 'status = ?'];
+      const params: any[] = [newTotal, newStatus];
+
       if (newDueDate !== undefined) {
-        await db.runAsync(
-          'UPDATE supplier_debts SET total_amount = ?, status = ?, due_date = ? WHERE id = ?',
-          newTotal,
-          newStatus,
-          newDueDate,
-          debtId
-        );
-      } else {
-        await db.runAsync(
-          'UPDATE supplier_debts SET total_amount = ?, status = ? WHERE id = ?',
-          newTotal,
-          newStatus,
-          debtId
-        );
+        setClauses.push('due_date = ?');
+        params.push(newDueDate);
+      }
+      if (updates.invoiceImage !== undefined) {
+        setClauses.push('invoice_image = ?');
+        params.push(updates.invoiceImage);
+      }
+      if (updates.notes !== undefined) {
+        setClauses.push('notes = ?');
+        params.push(updates.notes);
       }
 
+      params.push(debtId);
+      await db.runAsync(
+        `UPDATE supplier_debts SET ${setClauses.join(', ')} WHERE id = ?`,
+        ...params
+      );
+
       await get().loadDebts(db);
-      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       console.error('editDebt error:', e);
@@ -663,7 +684,6 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
       });
 
       await get().loadDebts(db);
-      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       console.error('deleteDebt error:', e);
@@ -671,10 +691,15 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
     }
   },
 
-  payDebt: async (db, debtId, amount, notes = '', paymentDate, paymentSource = 'hand') => {
+  payDebt: async (db, debtId, amount, notes = '', paymentDate, paymentSource = 'bank') => {
     if (amount <= 0) {
       return { success: false, message: 'Nominal pembayaran harus lebih besar dari 0' };
     }
+
+    if (payDebtMutex) {
+      return { success: false, message: 'Sedang memproses pembayaran hutang...' };
+    }
+    payDebtMutex = true;
 
     try {
       const debt = await db.getFirstAsync<{
@@ -755,11 +780,12 @@ export const useDebtReceivableStore = create<DebtReceivableState>((set, get) => 
 
       await get().loadDebts(db);
       await useCashStore.getState().loadLedger(db);
-      triggerAutoSync(db);
       return { success: true };
     } catch (e: any) {
       console.error('payDebt error:', e);
       return { success: false, message: e?.message || 'Gagal memproses pembayaran hutang' };
+    } finally {
+      payDebtMutex = false;
     }
   },
 

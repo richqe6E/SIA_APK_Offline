@@ -1,4 +1,4 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { saveImageLocally } from '@/utils/imageStorage';
 import * as ImagePicker from 'expo-image-picker';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -9,6 +9,7 @@ import {
   FlatList,
   Image,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -223,25 +224,26 @@ export default function ProductsScreen() {
 
   const pickImage = async () => {
     try {
+      try {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      } catch {
+        // Toleran terhadap Android 13+ Photo Picker
+      }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
+        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
+        quality: 0.75,
       });
 
-      if (!result.canceled && result.assets[0]) {
+      if (!result.canceled && result.assets && result.assets[0]) {
         const uri = result.assets[0].uri;
-        const ext = uri.split('.').pop() ?? 'jpg';
-        const dir = new Directory(Paths.document, 'products');
-        dir.create({ intermediates: true, idempotent: true });
-        const file = new File(dir, `${Date.now()}.${ext}`);
-        const source = new File(uri);
-        source.copy(file);
-        setImagePath(file.uri);
+        const savedUri = await saveImageLocally(uri, 'products');
+        setImagePath(savedUri);
       }
-    } catch {
-      Alert.alert('Perhatian', 'Gagal memuat foto dari galeri.');
+    } catch (e: any) {
+      console.warn('pickImage error:', e);
+      Alert.alert('Perhatian', 'Gagal memuat foto dari galeri. Pastikan galeri foto diizinkan.');
     }
   };
 
@@ -254,23 +256,18 @@ export default function ProductsScreen() {
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
+        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
+        quality: 0.75,
       });
 
-      if (!result.canceled && result.assets[0]) {
+      if (!result.canceled && result.assets && result.assets[0]) {
         const uri = result.assets[0].uri;
-        const ext = uri.split('.').pop() ?? 'jpg';
-        const dir = new Directory(Paths.document, 'products');
-        dir.create({ intermediates: true, idempotent: true });
-        const file = new File(dir, `${Date.now()}.${ext}`);
-        const source = new File(uri);
-        source.copy(file);
-        setImagePath(file.uri);
+        const savedUri = await saveImageLocally(uri, 'products');
+        setImagePath(savedUri);
       }
-    } catch {
-      Alert.alert('Perhatian', 'Gagal membuka kamera perangkat.');
+    } catch (e: any) {
+      console.warn('takePhoto error:', e);
+      Alert.alert('Perhatian', 'Gagal membuka kamera perangkat. Periksa izin kamera perangkat.');
     }
   };
 

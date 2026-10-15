@@ -270,11 +270,11 @@ export async function compileSyncPayload(
   const estimatedGrossProfit = Math.max(0, omset - cogs);
   const grossMarginPercent = omset > 0 ? Math.round((estimatedGrossProfit / omset) * 100) : 0;
 
-  // Today Operating Expenses (dikecualikan kulakan_stok, bayar_hutang_supplier, setor_bank, dan modal_awal)
+  // Today Operating Expenses (dikecualikan kulakan_stok, bayar_hutang_supplier, setor_bank, modal_awal, prive, bayar_pinjaman)
   const expSummary = await db.getFirstAsync<{ total_exp: number | null }>(
     `SELECT COALESCE(SUM(amount), 0) as total_exp
      FROM cash_ledger
-     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal', 'prive', 'bayar_pinjaman')
      AND date >= date('now','localtime') AND date < date('now','localtime', '+1 day')`
   );
   const operatingExpenses = expSummary?.total_exp || 0;
@@ -293,7 +293,7 @@ export async function compileSyncPayload(
   const monthlyExpRow = await db.getFirstAsync<{ m_exp: number | null }>(
     `SELECT COALESCE(SUM(amount), 0) as m_exp
      FROM cash_ledger
-     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal', 'prive', 'bayar_pinjaman')
      AND date >= strftime('%Y-%m-01', 'now','localtime')`
   );
   const mTotalBeban = monthlyExpRow?.m_exp || 0;
@@ -302,7 +302,7 @@ export async function compileSyncPayload(
   const bebanBreakdown = await db.getAllAsync<{ category: string; total: number }>(
     `SELECT category, SUM(amount) as total
      FROM cash_ledger
-     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+     WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal', 'prive', 'bayar_pinjaman')
      AND date >= strftime('%Y-%m-01', 'now','localtime')
      GROUP BY category
      ORDER BY total DESC
@@ -843,30 +843,10 @@ export async function pushSyncToCloud(
 }
 
 /**
- * Automated non-blocking background sync trigger from Store Tablet
+ * Automated non-blocking background sync trigger from Store Tablet (Dinonaktifkan: Mode Full Offline Murni)
  */
-let debounceSyncTimer: any = null;
-
-/**
- * Automated non-blocking background sync trigger from Store Tablet (Debounced 2 detik)
- */
-export async function triggerAutoSync(db: SQLiteDatabase): Promise<void> {
-  try {
-    const { storePairingCode } = useSettingsStore.getState();
-    if (!storePairingCode) return;
-
-    if (debounceSyncTimer) {
-      clearTimeout(debounceSyncTimer);
-    }
-
-    // Debounce background sync: tidak mengganggu alur UI / transaksi kasir
-    debounceSyncTimer = setTimeout(() => {
-      debounceSyncTimer = null;
-      pushSyncToCloud(db, storePairingCode).catch((err) => {
-        console.warn('Background auto-sync failed silently:', err?.message);
-      });
-    }, 2000);
-  } catch {}
+export async function triggerAutoSync(_db?: SQLiteDatabase): Promise<void> {
+  // Mode Full Offline: Tidak ada pemrosesan latar belakang atau pengiriman data
 }
 
 /**

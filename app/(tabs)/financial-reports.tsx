@@ -41,11 +41,12 @@ import { useDebtReceivableStore } from '@/stores/debtReceivableStore';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { BankDepositModal } from '@/components/bank-deposit-modal';
 import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
+import { LaporanLainnyaTab } from '@/components/laporan-lainnya-tab';
 
 // ─────────────────────────────────────────
 // Types & Constants
 // ─────────────────────────────────────────
-type ActiveTab = 'labarugi' | 'bukukas';
+type ActiveTab = 'labarugi' | 'bukukas' | 'laporanlain';
 type FilterMode = 'month' | 'year';
 
 interface LabaRugiData {
@@ -80,6 +81,9 @@ const CATEGORY_ICONS: Record<string, string> = {
   kulakan_stok: '🛒',
   'lain-lain': '📝',
   setor_bank: '🏦',
+  selisih_kas: '⚖️',
+  bayar_hutang_supplier: '💳',
+  pelunasan_piutang: '📥',
   gaji: '👤',
   sewa: '🏠',
   listrik: '⚡',
@@ -148,16 +152,20 @@ export default function FinancialReportsScreen() {
   );
 
   useEffect(() => {
-    if (isKasir && activeTab !== 'bukukas') {
+    if (isKasir && activeTab === 'labarugi') {
       setActiveTab('bukukas');
     }
   }, [isKasir, activeTab]);
 
   const tabs: { key: ActiveTab; label: string; icon: string }[] = isKasir
-    ? [{ key: 'bukukas', label: 'Buku Kas Operasional', icon: '📒' }]
+    ? [
+        { key: 'bukukas', label: 'Buku Kas', icon: '📒' },
+        { key: 'laporanlain', label: 'Laporan Lainnya', icon: '📑' },
+      ]
     : [
         { key: 'labarugi', label: 'Laba / Rugi', icon: '📊' },
         { key: 'bukukas', label: 'Buku Kas', icon: '📒' },
+        { key: 'laporanlain', label: 'Laporan Lainnya', icon: '📑' },
       ];
 
   const handleTabChange = (tab: ActiveTab) => {
@@ -171,12 +179,12 @@ export default function FinancialReportsScreen() {
       <View style={styles.headerTopRow}>
         <View style={{ flex: 1 }}>
           <ThemedText type="title" style={{ marginBottom: 2 }}>
-            {isKasir ? 'Buku Kas Toko' : 'Laporan Keuangan'}
+            {isKasir ? 'Laporan & Kas Toko' : 'Laporan Keuangan'}
           </ThemedText>
           <ThemedText style={{ fontSize: 11, color: Colors.muted }}>
             {isKasir
-              ? 'Buku Kas Operasional & Pelunasan Piutang Pelanggan'
-              : 'Standar Akuntansi POS Mikro (Mode Retail)'}
+              ? 'Buku Kas Operasional & Stok (Akun Kasir • Masuk PIN Pemilik untuk Laba/Rugi)'
+              : 'Standar Akuntansi POS Mikro (Akun Pemilik Toko)'}
           </ThemedText>
         </View>
 
@@ -202,8 +210,8 @@ export default function FinancialReportsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Tab Bar (Hanya tampil untuk Pemilik Toko dengan banyak tab) */}
-      {!isKasir && (
+      {/* Tab Bar (Tampil untuk Pemilik Toko & Kasir) */}
+      {tabs.length > 1 && (
         <View style={styles.tabBar}>
           {tabs.map((t) => (
             <Pressable
@@ -238,6 +246,14 @@ export default function FinancialReportsScreen() {
         <BukuKasTab
           db={db}
           onMutate={() => setRefreshTrigger((prev) => prev + 1)}
+          isTabletOrLandscape={isTabletOrLandscape}
+        />
+      )}
+      {activeTab === 'laporanlain' && (
+        <LaporanLainnyaTab
+          db={db}
+          isKasir={isKasir}
+          refreshKey={refreshTrigger}
           isTabletOrLandscape={isTabletOrLandscape}
         />
       )}
@@ -360,10 +376,10 @@ function LabaRugiTab({
         endDate
       );
 
-      // 3. Beban Operasional Usaha: Single Source of Truth dari cash_ledger (eksklusif stok, hutang supplier, setor bank, dan modal awal)
+      // 3. Beban Operasional Usaha: Single Source of Truth dari cash_ledger (eksklusif stok, hutang supplier, setor bank, modal awal, prive, dan bayar pinjaman)
       const expenseResult = await db.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger
-         WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+         WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal', 'prive', 'bayar_pinjaman')
          AND date >= ? AND date < ?`,
         startDay,
         endDay
@@ -371,7 +387,7 @@ function LabaRugiTab({
 
       const bebanByCategory = await db.getAllAsync<{ category: string; total: number }>(
         `SELECT category, COALESCE(SUM(amount), 0) as total FROM cash_ledger
-         WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal')
+         WHERE type = 'out' AND category NOT IN ('kulakan_stok', 'bayar_hutang_supplier', 'setor_bank', 'modal_awal', 'prive', 'bayar_pinjaman')
          AND date >= ? AND date < ?
          GROUP BY category ORDER BY total DESC`,
         startDay,
@@ -381,7 +397,7 @@ function LabaRugiTab({
       // 4. Pendapatan Non-Operasional & Jasa dari cash_ledger
       const otherIncomeResult = await db.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger
-         WHERE type = 'in' AND category IN ('pendapatan_lain', 'pendapatan_jasa')
+         WHERE type = 'in' AND category IN ('pendapatan_lain', 'pendapatan_jasa', 'pendapatan_komisi')
          AND date >= ? AND date < ?`,
         startDay,
         endDay
@@ -1137,7 +1153,8 @@ function BukuKasTab({
       // Mutasi kas masuk & keluar hari ini (Memanfaatkan idx_cash_ledger_type_date)
       const lIn = await db.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger
-         WHERE type = 'in' AND date >= date('now','localtime') AND date < date('now','localtime', '+1 day')`
+         WHERE type = 'in' AND category NOT IN ('setor_bank', 'modal_awal')
+         AND date >= date('now','localtime') AND date < date('now','localtime', '+1 day')`
       );
       const lOut = await db.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(amount), 0) as total FROM cash_ledger
@@ -1156,7 +1173,8 @@ function BukuKasTab({
   const [showBankDepositModal, setShowBankDepositModal] = useState(false);
   const [editingEntry, setEditingEntry] = useState<CashEntry | null>(null);
   const [entryType, setEntryType] = useState<CashTransactionType>('in');
-  const [category, setCategory] = useState<string>('setoran_modal');
+  const [categoryTab, setCategoryTab] = useState<'profit_loss' | 'non_profit_loss'>('profit_loss');
+  const [category, setCategory] = useState<string>('pendapatan_komisi');
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [entryAccount, setEntryAccount] = useState<'hand' | 'bank'>('hand');
@@ -1205,7 +1223,8 @@ function BukuKasTab({
   const openModal = (type: CashTransactionType) => {
     setEditingEntry(null);
     setEntryType(type);
-    setCategory(type === 'in' ? 'setoran_modal' : 'listrik_air');
+    setCategoryTab('profit_loss');
+    setCategory(type === 'in' ? 'pendapatan_komisi' : 'operasional');
     setDescription('');
     setAmount('');
     setEntryAccount('hand');
@@ -1216,6 +1235,9 @@ function BukuKasTab({
   const openEditModal = (entry: CashEntry) => {
     setEditingEntry(entry);
     setEntryType(entry.type);
+    const catList = entry.type === 'in' ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES;
+    const matched = catList.find((c) => c.id === entry.category);
+    setCategoryTab(matched ? (matched.isProfitLoss ? 'profit_loss' : 'non_profit_loss') : 'profit_loss');
     setCategory(entry.category);
     setDescription(entry.description);
     setAmount(formatRupiahInput(entry.amount));
@@ -1361,11 +1383,8 @@ function BukuKasTab({
     );
   }, [openEditModal, handleDelete]);
 
-  const rawCategoriesToPick: readonly { id: string; label: string }[] =
+  const categoriesToPick: readonly { id: string; label: string }[] =
     entryType === 'in' ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES;
-  const categoriesToPick = isKasir
-    ? rawCategoriesToPick.filter((c) => c.id !== 'bayar_hutang_supplier' && c.id !== 'kulakan_stok')
-    : rawCategoriesToPick;
 
   // Komponen Kartu Saldo Kas Toko (Dual-Pocket untuk Pemilik, Ringkasan Hari Ini untuk Kasir)
   const renderSaldoCard = () => {
@@ -1816,7 +1835,7 @@ function BukuKasTab({
 
   const filteredEntries = entries.filter((e) => {
     if (isKasir) {
-      if (e.category === 'setor_bank' || e.category === 'bayar_hutang_supplier') {
+      if (e.category === 'setor_bank') {
         return false;
       }
       return true;
@@ -2023,29 +2042,112 @@ function BukuKasTab({
               </View>
             )}
 
-            <View style={{ marginBottom: 10 }}>
-              <ThemedText style={styles.formLabel}>Kategori</ThemedText>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                {categoriesToPick.map((c: { id: string; label: string }) => (
-                  <Pressable
-                    key={c.id}
+            <View style={{ marginBottom: 12 }}>
+              <ThemedText style={styles.formLabel}>Kelompok Kategori</ThemedText>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                <TouchableOpacity
+                  style={[
+                    styles.segmentedTabBtn,
+                    categoryTab === 'profit_loss' && styles.segmentedTabBtnActive,
+                  ]}
+                  onPress={() => {
+                    setCategoryTab('profit_loss');
+                    const firstItem = (entryType === 'in' ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES).find((c) => c.isProfitLoss);
+                    if (firstItem) setCategory(firstItem.id);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <ThemedText
                     style={[
-                      styles.categoryChipBtn,
-                      category === c.id && styles.categoryChipBtnActive,
+                      styles.segmentedTabBtnText,
+                      categoryTab === 'profit_loss' && styles.segmentedTabBtnTextActive,
                     ]}
-                    onPress={() => setCategory(c.id)}
                   >
-                    <ThemedText
-                      style={[
-                        styles.categoryChipBtnText,
-                        category === c.id && styles.categoryChipBtnTextActive,
-                      ]}
-                    >
-                      {c.label}
-                    </ThemedText>
-                  </Pressable>
-                ))}
+                    📊 Terkait Laba/Rugi
+                  </ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.segmentedTabBtn,
+                    categoryTab === 'non_profit_loss' && styles.segmentedTabBtnActive,
+                  ]}
+                  onPress={() => {
+                    setCategoryTab('non_profit_loss');
+                    const firstItem = (entryType === 'in' ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES).find((c) => !c.isProfitLoss);
+                    if (firstItem) setCategory(firstItem.id);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <ThemedText
+                    style={[
+                      styles.segmentedTabBtnText,
+                      categoryTab === 'non_profit_loss' && styles.segmentedTabBtnTextActive,
+                    ]}
+                  >
+                    💼 Non-Laba/Rugi (Prive/Modal)
+                  </ThemedText>
+                </TouchableOpacity>
               </View>
+
+              {/* List Tombol Kategori Vertikal Scrollable */}
+              <ScrollView
+                style={{
+                  maxHeight: 145,
+                  borderWidth: 1,
+                  borderColor: '#cbd5e1',
+                  borderRadius: 8,
+                  backgroundColor: '#f8fafc',
+                  padding: 4,
+                }}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={true}
+              >
+                {(entryType === 'in' ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES)
+                  .filter((c) => (categoryTab === 'profit_loss' ? c.isProfitLoss : !c.isProfitLoss))
+                  .map((c) => {
+                    const isSelected = category === c.id;
+                    return (
+                      <TouchableOpacity
+                        key={c.id}
+                        style={[
+                          styles.categoryVerticalItem,
+                          isSelected && styles.categoryVerticalItemActive,
+                        ]}
+                        onPress={() => setCategory(c.id)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                          <ThemedText style={{ fontSize: 16 }}>{c.icon}</ThemedText>
+                          <View style={{ flex: 1 }}>
+                            <ThemedText
+                              style={[
+                                styles.categoryVerticalTitle,
+                                isSelected && styles.categoryVerticalTitleActive,
+                              ]}
+                            >
+                              {c.label}
+                            </ThemedText>
+                            <ThemedText
+                              style={[
+                                styles.categoryVerticalDesc,
+                                isSelected && styles.categoryVerticalDescActive,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {c.description}
+                            </ThemedText>
+                          </View>
+                        </View>
+                        {isSelected && (
+                          <ThemedText style={{ color: Colors.tint, fontWeight: '800', fontSize: 14 }}>
+                            ✓
+                          </ThemedText>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+              </ScrollView>
             </View>
 
             <View style={{ marginBottom: 10 }}>
@@ -2101,7 +2203,7 @@ function BukuKasTab({
               <ThemedText style={styles.formLabel}>Nominal (Rp)</ThemedText>
               <TextInput
                 style={styles.formInput}
-                placeholder="Contoh: 150.000"
+                placeholder="Contoh: 100.000"
                 placeholderTextColor={Colors.disabled}
                 keyboardType="numeric"
                 value={amount}
@@ -2957,6 +3059,60 @@ const styles = StyleSheet.create({
   formAccountChipTextActive: {
     color: '#1d4ed8',
     fontWeight: '700',
+  },
+  segmentedTabBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+  },
+  segmentedTabBtnActive: {
+    backgroundColor: '#e0f2fe',
+    borderColor: '#0284c7',
+  },
+  segmentedTabBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  segmentedTabBtnTextActive: {
+    color: '#0369a1',
+  },
+  categoryVerticalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 6,
+    marginBottom: 4,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  categoryVerticalItemActive: {
+    backgroundColor: '#f0f9ff',
+    borderColor: '#38bdf8',
+  },
+  categoryVerticalTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  categoryVerticalTitleActive: {
+    color: '#0369a1',
+  },
+  categoryVerticalDesc: {
+    fontSize: 10,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  categoryVerticalDescActive: {
+    color: '#0284c7',
   },
 });
 

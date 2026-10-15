@@ -19,7 +19,6 @@ import { useCashStore } from '@/stores/cashStore';
 import { usePrinterStore } from '@/stores/printerStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { printBankDepositReceipt } from '@/services/print';
-import { submitRemoteBankDeposit } from '@/services/cloudSync';
 
 const POPULAR_BANKS = [
   'BCA',
@@ -137,8 +136,8 @@ export function BankDepositModal({
       onClose();
 
       Alert.alert(
-        'Setoran Berhasil Dicatat & Terhubung',
-        `Uang kas sebesar Rp ${numAmount.toLocaleString('id-ID')} telah dipindahkan ke ${targetBank}.\n\nData telah tersinkronisasi secara otomatis antara HP Pemilik dan Tablet Kasir di toko.`
+        'Setoran Berhasil Dicatat',
+        `Uang kas sebesar Rp ${numAmount.toLocaleString('id-ID')} telah dipindahkan ke ${targetBank}.`
       );
     } catch (err: any) {
       setSubmitting(false);

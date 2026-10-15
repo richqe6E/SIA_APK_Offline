@@ -1,5 +1,4 @@
 import { AdminPinModal } from '@/components/admin-pin-modal';
-import { DevicePairingModal } from '@/components/device-pairing-modal';
 import { ReceiptPreviewModal } from '@/components/receipt-preview-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -37,8 +36,6 @@ export default function SettingsScreen() {
     setAppOrientation,
     currentUserRole,
     logoutRole,
-    storePairingCode,
-    isCloudConnected,
   } = useSettingsStore();
 
   const { width } = useWindowDimensions();
@@ -66,7 +63,6 @@ export default function SettingsScreen() {
 
   const [pinModalVisible, setPinModalVisible] = useState(false);
   const [receiptPreviewVisible, setReceiptPreviewVisible] = useState(false);
-  const [pairingModalVisible, setPairingModalVisible] = useState(false);
   const [pendingRoute, setPendingRoute] = useState<string | null>(null);
 
   useEffect(() => {
@@ -80,15 +76,6 @@ export default function SettingsScreen() {
     route: any;
     requiresPin: boolean;
   }[] = [
-    {
-      label: 'Sambungkan Perangkat (Cloud Sync)',
-      icon: '🔗',
-      desc: isCloudConnected
-        ? `🟢 Terhubung (${storePairingCode}) • Ketuk untuk opsi sync`
-        : 'Hubungkan tablet toko & smartphone pemilik usaha',
-      route: null,
-      requiresPin: false,
-    },
     {
       label: 'Atur Toko',
       icon: '🏪',
@@ -127,10 +114,6 @@ export default function SettingsScreen() {
   ];
 
   const handleMenuPress = (item: (typeof menuItems)[0]) => {
-    if (!item.route) {
-      setPairingModalVisible(true);
-      return;
-    }
     if (item.requiresPin) {
       setPendingRoute(item.route);
       setPinModalVisible(true);
@@ -361,7 +344,7 @@ export default function SettingsScreen() {
                       {
                         text: 'Keluar Peran',
                         style: 'destructive',
-                        onPress: () => logoutRole(),
+                        onPress: () => logoutRole(db),
                       },
                     ]
                   );
@@ -395,12 +378,6 @@ export default function SettingsScreen() {
         storeAddress={storeAddress}
         storePhone={storePhone}
         receiptFooter={receiptFooter}
-      />
-
-      {/* Device Cloud Pairing Modal */}
-      <DevicePairingModal
-        visible={pairingModalVisible}
-        onClose={() => setPairingModalVisible(false)}
       />
     </ThemedView>
   );

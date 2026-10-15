@@ -52,6 +52,7 @@ interface ProductState {
   deleteProduct: (db: SQLiteDatabase, id: number) => Promise<void>;
   adjustStock: (db: SQLiteDatabase, productId: number, delta: number) => Promise<void>;
   findProductByBarcode: (code: string) => Product | undefined;
+  findProductByExactBarcode: (code: string) => Product | undefined;
 }
 
 let barcodeProductMap = new Map<string, Product>();
@@ -187,5 +188,28 @@ export const useProductStore = create<ProductState>((set, get) => ({
 
     const lower = cleanCode.toLowerCase();
     return get().products.find((p) => p.name.toLowerCase() === lower);
+  },
+
+  findProductByExactBarcode: (code: string) => {
+    const cleanCode = code.trim();
+    if (!cleanCode) return undefined;
+    // O(1) in-memory hash map lookup
+    const directHit = barcodeProductMap.get(cleanCode);
+    if (directHit) return directHit;
+
+    // Fallback: periksa case-insensitive HANYA pada barcode utama dan multi-barcode (BUKAN nama produk)
+    const lower = cleanCode.toLowerCase();
+    return get().products.find((p) => {
+      if (p.barcode && p.barcode.trim().toLowerCase() === lower) return true;
+      if (p.barcodes) {
+        try {
+          const list = JSON.parse(p.barcodes);
+          if (Array.isArray(list) && list.some((b) => b && String(b).trim().toLowerCase() === lower)) {
+            return true;
+          }
+        } catch {}
+      }
+      return false;
+    });
   },
 }));

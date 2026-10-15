@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -12,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -34,7 +36,9 @@ import {
 } from '@/stores/debtReceivableStore';
 import { useCashStore } from '@/stores/cashStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useTransactionStore } from '@/stores/transactionStore';
 import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
+import { saveImageLocally } from '@/utils/imageStorage';
 
 type ActiveTab = 'receivable' | 'debt';
 type FilterStatus = 'all' | 'unpaid' | 'paid';
@@ -112,19 +116,121 @@ export default function DebtReceivableScreen() {
   } | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // F4: Edit Modal untuk piutang/hutang (nominal + jatuh tempo)
+  // F4: Edit Modal untuk piutang/hutang (nominal + jatuh tempo + foto faktur & catatan untuk hutang)
   const [editTarget, setEditTarget] = useState<{
     type: 'receivable' | 'debt';
     id: number;
     targetName: string;
     currentTotal: number;
     currentDueDate: string | null;
+    currentInvoiceImage?: string | null;
+    currentNotes?: string | null;
   } | null>(null);
   const [editTotalInput, setEditTotalInput] = useState('');
   const [editDueDate, setEditDueDate] = useState(new Date());
   const [editHasDueDate, setEditHasDueDate] = useState(false);
   const [showEditDatePicker, setShowEditDatePicker] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editInvoiceImage, setEditInvoiceImage] = useState<string | null>(null);
+  const [editNotes, setEditNotes] = useState('');
+
+  // Fullscreen Image Modal (Foto Faktur Supplier)
+  const [fullscreenImage, setFullscreenImage] = useState<{ uri: string; title: string } | null>(null);
+
+  // Rincian Produk Modal (Piutang Pelanggan)
+  const [receivableItemsModal, setReceivableItemsModal] = useState<{
+    customerName: string;
+    totalAmount: number;
+    items: {
+      product_name: string;
+      quantity: number;
+      product_price: number;
+      subtotal: number;
+      weight_gram?: number;
+    }[];
+    hasTransaction: boolean;
+  } | null>(null);
+  const [loadingReceivableItems, setLoadingReceivableItems] = useState(false);
+
+  const { revertAndEditTransaction } = useTransactionStore();
+
+  const handleViewReceivableItems = async (item: CustomerReceivable) => {
+    if (!item.transaction_id) {
+      setReceivableItemsModal({
+        customerName: item.customer_name,
+        totalAmount: item.total_amount,
+        items: [],
+        hasTransaction: false,
+      });
+      return;
+    }
+    setLoadingReceivableItems(true);
+    try {
+      const rows = await db.getAllAsync<{
+        product_name: string;
+        quantity: number;
+        product_price: number;
+        subtotal: number;
+        weight_gram: number | null;
+      }>(
+        `SELECT product_name, quantity, product_price, subtotal, weight_gram 
+         FROM transaction_items 
+         WHERE transaction_id = ?`,
+        item.transaction_id
+      );
+      setReceivableItemsModal({
+        customerName: item.customer_name,
+        totalAmount: item.total_amount,
+        items: rows.map((r) => ({
+          product_name: r.product_name,
+          quantity: r.quantity,
+          product_price: r.product_price,
+          subtotal: r.subtotal,
+          weight_gram: r.weight_gram ?? undefined,
+        })),
+        hasTransaction: true,
+      });
+    } catch (e) {
+      console.error('handleViewReceivableItems error:', e);
+      Alert.alert('Error', 'Gagal memuat rincian produk piutang');
+    } finally {
+      setLoadingReceivableItems(false);
+    }
+  };
+
+  const handleEditReceivable = async (item: CustomerReceivable) => {
+    if (item.transaction_id) {
+      if (item.paid_amount > 0) {
+        Alert.alert(
+          'Perhatian',
+          `Piutang ini sudah memiliki riwayat cicilan terbayar (Rp ${item.paid_amount.toLocaleString('id-ID')}). Batalkan pembayaran cicilan terlebih dahulu di riwayat sebelum mengedit transaksi ini.`
+        );
+        return;
+      }
+      Alert.alert(
+        'Edit & Buka di Keranjang Kasir',
+        `Transaksi piutang ${item.customer_name} senilai Rp ${item.total_amount.toLocaleString('id-ID')} akan dibatalkan, stok barang otomatis dikembalikan ke freezer, dan seluruh produk akan dimasukkan kembali ke keranjang kasir untuk disesuaikan.\n\nLanjutkan?`,
+        [
+          { text: 'Batal', style: 'cancel' },
+          {
+            text: 'Ya, Buka di Kasir',
+            onPress: async () => {
+              const res = await revertAndEditTransaction(db, item.transaction_id!);
+              if (res.success) {
+                reloadAll();
+                router.push('/transaksi');
+              } else {
+                Alert.alert('Gagal', res.message || 'Gagal memulihkan transaksi ke keranjang');
+              }
+            },
+          },
+        ]
+      );
+    } else {
+      // Piutang dicatat manual tanpa transaksi kasir
+      handleOpenEditModal('receivable', item.id, item.customer_name, item.total_amount, item.due_date);
+    }
+  };
 
   const reloadAll = useCallback(() => {
     loadCustomers(db);
@@ -184,7 +290,7 @@ export default function DebtReceivableScreen() {
       remainingAmount,
     });
     setPayAmount(formatRupiahInput(remainingAmount));
-    setPayAccount('hand');
+    setPayAccount(type === 'debt' ? 'bank' : 'hand');
     setPayNotes('');
     setPayDate(new Date());
     setShowPayDatePicker(false);
@@ -244,9 +350,19 @@ export default function DebtReceivableScreen() {
     id: number,
     targetName: string,
     currentTotal: number,
-    currentDueDate: string | null
+    currentDueDate: string | null,
+    currentInvoiceImage?: string | null,
+    currentNotes?: string | null
   ) => {
-    setEditTarget({ type, id, targetName, currentTotal, currentDueDate });
+    setEditTarget({
+      type,
+      id,
+      targetName,
+      currentTotal,
+      currentDueDate,
+      currentInvoiceImage,
+      currentNotes,
+    });
     setEditTotalInput(currentTotal.toLocaleString('id-ID'));
     if (currentDueDate) {
       setEditHasDueDate(true);
@@ -256,6 +372,51 @@ export default function DebtReceivableScreen() {
       setEditDueDate(new Date());
     }
     setShowEditDatePicker(false);
+    setEditInvoiceImage(currentInvoiceImage ?? null);
+    setEditNotes(currentNotes ?? '');
+  };
+
+  const handlePickEditImage = async () => {
+    try {
+      try {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      } catch {
+        // Toleran terhadap Android 13+ Photo Picker
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
+        quality: 0.75,
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const savedUri = await saveImageLocally(result.assets[0].uri, 'debts');
+        setEditInvoiceImage(savedUri);
+      }
+    } catch (e) {
+      console.warn('Pick edit invoice image error:', e);
+      Alert.alert('Error', 'Gagal memuat gambar dari galeri');
+    }
+  };
+
+  const handleTakeEditPhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Izin Kamera', 'Izin kamera diperlukan untuk memotret faktur/nota secara langsung.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
+        quality: 0.75,
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const savedUri = await saveImageLocally(result.assets[0].uri, 'debts');
+        setEditInvoiceImage(savedUri);
+      }
+    } catch (e) {
+      console.warn('Take edit invoice photo error:', e);
+      Alert.alert('Error', 'Gagal mengambil foto dari kamera');
+    }
   };
 
   const handleSaveEdit = async () => {
@@ -281,6 +442,8 @@ export default function DebtReceivableScreen() {
       res = await editDebt(db, editTarget.id, {
         totalAmount: newTotal,
         dueDate: dueDateStr,
+        invoiceImage: editInvoiceImage,
+        notes: editNotes.trim() ? editNotes.trim() : null,
       });
     }
     setSavingEdit(false);
@@ -528,10 +691,17 @@ export default function DebtReceivableScreen() {
 
                   <View style={styles.itemActionRow}>
                     <TouchableOpacity
+                      style={[styles.historyBtn, { backgroundColor: '#f0fdf4', borderColor: '#86efac' }]}
+                      onPress={() => handleViewReceivableItems(item)}
+                    >
+                      <ThemedText style={[styles.historyBtnText, { color: '#15803d' }]}>🔍 Rincian Produk</ThemedText>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
                       style={styles.historyBtn}
                       onPress={() => handleViewHistory('receivable', item.id, item.customer_name)}
                     >
-                      <ThemedText style={styles.historyBtnText}>📜 Riwayat Pembayaran</ThemedText>
+                      <ThemedText style={styles.historyBtnText}>📜 Riwayat</ThemedText>
                     </TouchableOpacity>
 
                     {!isPaid && (
@@ -547,7 +717,7 @@ export default function DebtReceivableScreen() {
                           )
                         }
                       >
-                        <ThemedText style={styles.payBtnText}>💵 Terima Cicilan / Lunas</ThemedText>
+                        <ThemedText style={styles.payBtnText}>💵 Terima Cicilan</ThemedText>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -557,17 +727,11 @@ export default function DebtReceivableScreen() {
                     <View style={[styles.itemActionRow, { marginTop: 6 }]}>
                       <TouchableOpacity
                         style={[styles.historyBtn, { backgroundColor: '#eff6ff', borderColor: '#3b82f6' }]}
-                        onPress={() =>
-                          handleOpenEditModal(
-                            'receivable',
-                            item.id,
-                            item.customer_name,
-                            item.total_amount,
-                            item.due_date
-                          )
-                        }
+                        onPress={() => handleEditReceivable(item)}
                       >
-                        <ThemedText style={[styles.historyBtnText, { color: '#1d4ed8' }]}>✏️ Edit</ThemedText>
+                        <ThemedText style={[styles.historyBtnText, { color: '#1d4ed8' }]}>
+                          {item.transaction_id ? '✏️ Edit ke Kasir' : '✏️ Edit'}
+                        </ThemedText>
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -685,47 +849,98 @@ export default function DebtReceivableScreen() {
               const isPaid = item.status === 'paid';
               return (
                 <Card padding={12} style={styles.itemCard}>
-                  <View style={styles.itemHeaderRow}>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <ThemedText type="defaultSemiBold" style={{ fontSize: 14, color: '#0f172a' }}>
-                          {item.supplier_name}
-                        </ThemedText>
-                        <Badge
-                          label={isPaid ? 'LUNAS' : item.status === 'partial' ? 'DICICIL' : 'BELUM LUNAS'}
-                          variant={isPaid ? 'success' : item.status === 'partial' ? 'warning' : 'error'}
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    {item.invoice_image ? (
+                      <TouchableOpacity
+                        onPress={() =>
+                          setFullscreenImage({
+                            uri: item.invoice_image!,
+                            title: `Faktur - ${item.supplier_name}`,
+                          })
+                        }
+                        activeOpacity={0.8}
+                        style={{
+                          width: 52,
+                          height: 52,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          backgroundColor: '#f1f5f9',
+                          borderWidth: 1.5,
+                          borderColor: '#cbd5e1',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Image
+                          source={{ uri: item.invoice_image }}
+                          style={{ width: '100%', height: '100%' }}
+                          resizeMode="cover"
                         />
+                        <View
+                          style={{
+                            position: 'absolute',
+                            bottom: 2,
+                            right: 2,
+                            backgroundColor: 'rgba(0,0,0,0.6)',
+                            borderRadius: 4,
+                            paddingHorizontal: 3,
+                          }}
+                        >
+                          <ThemedText style={{ fontSize: 9, color: '#fff' }}>🔍</ThemedText>
+                        </View>
+                      </TouchableOpacity>
+                    ) : null}
+
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.itemHeaderRow}>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <ThemedText type="defaultSemiBold" style={{ fontSize: 14, color: '#0f172a' }}>
+                              {item.supplier_name}
+                            </ThemedText>
+                            <Badge
+                              label={isPaid ? 'LUNAS' : item.status === 'partial' ? 'DICICIL' : 'BELUM LUNAS'}
+                              variant={isPaid ? 'success' : item.status === 'partial' ? 'warning' : 'error'}
+                            />
+                          </View>
+                          {item.supplier_phone ? (
+                            <ThemedText style={{ fontSize: 11, color: Colors.muted, marginTop: 1 }}>
+                              📞 {item.supplier_phone}
+                            </ThemedText>
+                          ) : null}
+                        </View>
+
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <ThemedText style={{ fontSize: 11, color: Colors.muted }}>Sisa Hutang:</ThemedText>
+                          <ThemedText
+                            style={{
+                              fontSize: 15,
+                              fontWeight: '800',
+                              color: isPaid ? Colors.success : '#d97706',
+                            }}
+                          >
+                            Rp {item.remaining_amount.toLocaleString('id-ID')}
+                          </ThemedText>
+                        </View>
                       </View>
-                      {item.supplier_phone ? (
-                        <ThemedText style={{ fontSize: 11, color: Colors.muted, marginTop: 1 }}>
-                          📞 {item.supplier_phone}
+
+                      <View style={styles.itemDetailRow}>
+                        <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+                          Total Hutang: Rp {item.total_amount.toLocaleString('id-ID')} • Terbayar: Rp {item.paid_amount.toLocaleString('id-ID')}
+                        </ThemedText>
+                        {item.due_date ? (
+                          <ThemedText style={{ fontSize: 11, color: '#b45309', fontWeight: '600' }}>
+                            Jatuh Tempo: {item.due_date}
+                          </ThemedText>
+                        ) : null}
+                      </View>
+
+                      {item.notes ? (
+                        <ThemedText style={{ fontSize: 10.5, color: '#475569', marginTop: 3, fontStyle: 'italic' }}>
+                          📝 {item.notes}
                         </ThemedText>
                       ) : null}
                     </View>
-
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <ThemedText style={{ fontSize: 11, color: Colors.muted }}>Sisa Hutang:</ThemedText>
-                      <ThemedText
-                        style={{
-                          fontSize: 15,
-                          fontWeight: '800',
-                          color: isPaid ? Colors.success : '#d97706',
-                        }}
-                      >
-                        Rp {item.remaining_amount.toLocaleString('id-ID')}
-                      </ThemedText>
-                    </View>
-                  </View>
-
-                  <View style={styles.itemDetailRow}>
-                    <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
-                      Total Hutang: Rp {item.total_amount.toLocaleString('id-ID')} • Terbayar: Rp {item.paid_amount.toLocaleString('id-ID')}
-                    </ThemedText>
-                    {item.due_date ? (
-                      <ThemedText style={{ fontSize: 11, color: '#b45309', fontWeight: '600' }}>
-                        Jatuh Tempo: {item.due_date}
-                      </ThemedText>
-                    ) : null}
                   </View>
 
                   <View style={styles.itemActionRow}>
@@ -765,7 +980,9 @@ export default function DebtReceivableScreen() {
                             item.id,
                             item.supplier_name,
                             item.total_amount,
-                            item.due_date
+                            item.due_date,
+                            item.invoice_image,
+                            item.notes
                           )
                         }
                       >
@@ -854,12 +1071,11 @@ export default function DebtReceivableScreen() {
                   />
                 </View>
 
-                {/* Pilihan Akun Kas / Rekening (Khusus Pemilik) */}
-                {!isKasir && (
-                  <View style={styles.inputGroup}>
-                    <ThemedText style={styles.label}>
-                      {payTarget.type === 'receivable' ? 'Penerimaan Masuk ke Akun Kas' : 'Sumber Kas Pembayaran'}
-                    </ThemedText>
+                {/* Pilihan Akun Kas / Rekening */}
+                <View style={styles.inputGroup}>
+                  <ThemedText style={styles.label}>
+                    {payTarget.type === 'receivable' ? 'Penerimaan Masuk ke Akun Kas' : 'Sumber Kas Pembayaran'}
+                  </ThemedText>
                     <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
                       <TouchableOpacity
                         style={[
@@ -952,7 +1168,6 @@ export default function DebtReceivableScreen() {
                         </View>
                       )}
                   </View>
-                )}
 
                 {/* Tanggal Pembayaran */}
                 <View style={styles.inputGroup}>
@@ -1078,7 +1293,7 @@ export default function DebtReceivableScreen() {
       {/* ───────────────────────────────────────── */}
       <Modal visible={!!editTarget} transparent animationType="fade">
         <ThemedView style={styles.modalOverlay}>
-          <Card padding={20} style={styles.modalCard}>
+          <Card padding={20} style={[styles.modalCard, { maxHeight: '90%' }]}>
             <View style={styles.modalHeader}>
               <ThemedText type="subtitle" style={{ fontSize: 16 }}>
                 {editTarget?.type === 'receivable' ? '✏️ Edit Piutang' : '✏️ Edit Hutang'}
@@ -1089,7 +1304,7 @@ export default function DebtReceivableScreen() {
             </View>
 
             {editTarget ? (
-              <>
+              <ScrollView showsVerticalScrollIndicator={false}>
                 <View style={styles.payTargetBox}>
                   <ThemedText style={{ fontSize: 12, color: Colors.muted }}>
                     {editTarget.type === 'receivable' ? 'Pelanggan' : 'Supplier'}
@@ -1155,7 +1370,130 @@ export default function DebtReceivableScreen() {
                   />
                 )}
 
-                <View style={styles.modalActions}>
+                {/* Khusus Hutang Supplier: Catatan & Foto Faktur */}
+                {editTarget.type === 'debt' && (
+                  <>
+                    <View style={{ marginTop: 14 }}>
+                      <ThemedText style={styles.label}>Catatan / Nomor Faktur</ThemedText>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="cth: Faktur No. INV-9901 / Sales Mas Budi"
+                        placeholderTextColor={Colors.disabled}
+                        value={editNotes}
+                        onChangeText={setEditNotes}
+                      />
+                    </View>
+
+                    <View style={{ marginTop: 14 }}>
+                      <ThemedText style={styles.label}>Foto Faktur / Nota Pembelian</ThemedText>
+                      {editInvoiceImage ? (
+                        <View style={{ marginTop: 6 }}>
+                          <View
+                            style={{
+                              height: 150,
+                              borderRadius: 8,
+                              overflow: 'hidden',
+                              backgroundColor: '#f1f5f9',
+                              borderWidth: 1.5,
+                              borderColor: '#cbd5e1',
+                            }}
+                          >
+                            <Image
+                              source={{ uri: editInvoiceImage }}
+                              style={{ width: '100%', height: '100%' }}
+                              resizeMode="cover"
+                            />
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                            <TouchableOpacity
+                              onPress={() =>
+                                setFullscreenImage({
+                                  uri: editInvoiceImage,
+                                  title: `Faktur - ${editTarget.targetName}`,
+                                })
+                              }
+                              style={{
+                                flex: 1,
+                                backgroundColor: '#eff6ff',
+                                paddingVertical: 8,
+                                borderRadius: 6,
+                                alignItems: 'center',
+                                borderWidth: 1,
+                                borderColor: '#bfdbfe',
+                              }}
+                            >
+                              <ThemedText style={{ fontSize: 11, color: '#1d4ed8', fontWeight: '700' }}>
+                                🔍 Perbesar Foto
+                              </ThemedText>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => setEditInvoiceImage(null)}
+                              style={{
+                                flex: 1,
+                                backgroundColor: '#fef2f2',
+                                paddingVertical: 8,
+                                borderRadius: 6,
+                                alignItems: 'center',
+                                borderWidth: 1,
+                                borderColor: '#fecaca',
+                              }}
+                            >
+                              <ThemedText style={{ fontSize: 11, color: '#dc2626', fontWeight: '700' }}>
+                                ✕ Hapus Foto
+                              </ThemedText>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ) : (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                          <TouchableOpacity
+                            style={{
+                              flex: 1,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              paddingVertical: 10,
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: '#cbd5e1',
+                              backgroundColor: '#f8fafc',
+                              gap: 6,
+                            }}
+                            onPress={handleTakeEditPhoto}
+                          >
+                            <ThemedText style={{ fontSize: 14 }}>📷</ThemedText>
+                            <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>
+                              Ambil Foto
+                            </ThemedText>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={{
+                              flex: 1,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              paddingVertical: 10,
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: '#cbd5e1',
+                              backgroundColor: '#f8fafc',
+                              gap: 6,
+                            }}
+                            onPress={handlePickEditImage}
+                          >
+                            <ThemedText style={{ fontSize: 14 }}>🖼️</ThemedText>
+                            <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>
+                              Pilih Galeri
+                            </ThemedText>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  </>
+                )}
+
+                <View style={[styles.modalActions, { marginTop: 18 }]}>
                   <Button
                     title="Batal"
                     variant="outline"
@@ -1169,7 +1507,7 @@ export default function DebtReceivableScreen() {
                     style={{ flex: 1 }}
                   />
                 </View>
-              </>
+              </ScrollView>
             ) : null}
           </Card>
         </ThemedView>
@@ -1197,8 +1535,8 @@ export default function DebtReceivableScreen() {
         visible={showAddDebtModal}
         suppliers={suppliers}
         onClose={() => setShowAddDebtModal(false)}
-        onSave={async (supplierId, total, dueDate, notes) => {
-          await addDebt(db, supplierId, total, dueDate);
+        onSave={async (supplierId, total, dueDate, notes, invoiceImage) => {
+          await addDebt(db, supplierId, total, dueDate, undefined, invoiceImage, notes);
           setShowAddDebtModal(false);
           reloadAll();
           Alert.alert('Sukses', 'Data hutang supplier berhasil dicatat');
@@ -1240,6 +1578,121 @@ export default function DebtReceivableScreen() {
           return await deleteSupplier(db, id);
         }}
       />
+
+      {/* ───────────────────────────────────────── */}
+      {/* MODAL RINCIAN PRODUK BON PIUTANG          */}
+      {/* ───────────────────────────────────────── */}
+      <Modal visible={!!receivableItemsModal} transparent animationType="fade">
+        <ThemedView style={styles.modalOverlay}>
+          <Card padding={20} style={[styles.modalCard, { maxHeight: '85%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <ThemedText type="subtitle" style={{ fontSize: 16, color: '#0f172a' }}>
+                  🔍 Rincian Produk Bon Piutang
+                </ThemedText>
+                <ThemedText style={{ fontSize: 11, color: Colors.muted, marginTop: 1 }}>
+                  Pelanggan: <ThemedText style={{ fontWeight: '700', color: '#0f172a' }}>{receivableItemsModal?.customerName}</ThemedText>
+                </ThemedText>
+              </View>
+              <Pressable onPress={() => setReceivableItemsModal(null)} hitSlop={8}>
+                <ThemedText style={{ fontSize: 18, color: Colors.muted }}>✕</ThemedText>
+              </Pressable>
+            </View>
+
+            {loadingReceivableItems ? (
+              <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color={Colors.tint} />
+                <ThemedText style={{ fontSize: 12, color: Colors.muted, marginTop: 8 }}>Memuat produk...</ThemedText>
+              </View>
+            ) : !receivableItemsModal?.hasTransaction ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <ThemedText style={{ fontSize: 32, marginBottom: 8 }}>📝</ThemedText>
+                <ThemedText style={{ fontSize: 14, fontWeight: '700', color: '#0f172a' }}>
+                  Piutang Dicatat Manual
+                </ThemedText>
+                <ThemedText style={{ fontSize: 12, color: Colors.muted, textAlign: 'center', marginTop: 4, paddingHorizontal: 16 }}>
+                  Piutang ini dicatat langsung secara manual (bukan dari nota transaksi kasir), sehingga tidak memiliki daftar item barang spesifik.
+                </ThemedText>
+                <ThemedText style={{ fontSize: 15, fontWeight: '800', color: '#dc2626', marginTop: 12 }}>
+                  Total Tagihan: Rp {receivableItemsModal?.totalAmount.toLocaleString('id-ID')}
+                </ThemedText>
+              </View>
+            ) : receivableItemsModal?.items.length === 0 ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <ThemedText style={{ fontSize: 12, color: Colors.muted }}>
+                  Tidak ada rincian item produk ditemukan untuk nota ini.
+                </ThemedText>
+              </View>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 4 }}>
+                <View style={{ backgroundColor: '#f8fafc', borderRadius: 8, padding: 8, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingBottom: 4, borderBottomWidth: 1, borderColor: '#cbd5e1' }}>
+                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', flex: 2 }}>Item Produk</ThemedText>
+                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', flex: 1, textAlign: 'center' }}>Qty</ThemedText>
+                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', flex: 1.2, textAlign: 'right' }}>Harga</ThemedText>
+                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', flex: 1.3, textAlign: 'right' }}>Subtotal</ThemedText>
+                  </View>
+                  {receivableItemsModal.items.map((it, idx) => (
+                    <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: idx === receivableItemsModal.items.length - 1 ? 0 : 1, borderColor: '#f1f5f9' }}>
+                      <ThemedText style={{ fontSize: 12, fontWeight: '600', color: '#0f172a', flex: 2 }}>
+                        {it.product_name}
+                      </ThemedText>
+                      <ThemedText style={{ fontSize: 11, color: '#334155', flex: 1, textAlign: 'center' }}>
+                        {it.weight_gram ? `${(it.weight_gram / 1000).toFixed(2)} kg` : `${it.quantity}x`}
+                      </ThemedText>
+                      <ThemedText style={{ fontSize: 11, color: '#64748b', flex: 1.2, textAlign: 'right' }}>
+                        {it.product_price.toLocaleString('id-ID')}
+                      </ThemedText>
+                      <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#0f172a', flex: 1.3, textAlign: 'right' }}>
+                        Rp {it.subtotal.toLocaleString('id-ID')}
+                      </ThemedText>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4 }}>
+                  <ThemedText style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>
+                    Total Nilai Bon Piutang:
+                  </ThemedText>
+                  <ThemedText style={{ fontSize: 16, fontWeight: '900', color: '#dc2626' }}>
+                    Rp {receivableItemsModal.totalAmount.toLocaleString('id-ID')}
+                  </ThemedText>
+                </View>
+              </ScrollView>
+            )}
+
+            <View style={{ marginTop: 14 }}>
+              <Button title="Tutup Rincian" variant="outline" onPress={() => setReceivableItemsModal(null)} />
+            </View>
+          </Card>
+        </ThemedView>
+      </Modal>
+
+      {/* ───────────────────────────────────────── */}
+      {/* MODAL FULLSCREEN FAKTUR / GAMBAR NOTA      */}
+      {/* ───────────────────────────────────────── */}
+      <Modal visible={!!fullscreenImage} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+          <View style={{ width: '100%', maxWidth: 540, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <ThemedText style={{ color: '#fff', fontSize: 15, fontWeight: '700' }} numberOfLines={1}>
+              {fullscreenImage?.title || 'Faktur Pembelian'}
+            </ThemedText>
+            <TouchableOpacity
+              onPress={() => setFullscreenImage(null)}
+              style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}
+            >
+              <ThemedText style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>✕ Tutup</ThemedText>
+            </TouchableOpacity>
+          </View>
+          {fullscreenImage?.uri ? (
+            <Image
+              source={{ uri: fullscreenImage.uri }}
+              style={{ width: '100%', height: '80%', borderRadius: 8 }}
+              resizeMode="contain"
+            />
+          ) : null}
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -1412,13 +1865,14 @@ function AddDebtModal({
   visible: boolean;
   suppliers: Supplier[];
   onClose: () => void;
-  onSave: (supplierId: number, total: number, dueDate?: string, notes?: string) => Promise<void>;
+  onSave: (supplierId: number, total: number, dueDate?: string, notes?: string, invoiceImage?: string) => Promise<void>;
 }) {
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [total, setTotal] = useState('');
   const [dueDate, setDueDate] = useState<Date>(new Date(Date.now() + 14 * 86400000));
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [notes, setNotes] = useState('');
+  const [invoiceImage, setInvoiceImage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1426,6 +1880,56 @@ function AddDebtModal({
       setSelectedSupplierId(suppliers[0].id);
     }
   }, [visible, suppliers, selectedSupplierId]);
+
+  const handleClose = () => {
+    setTotal('');
+    setNotes('');
+    setInvoiceImage(null);
+    onClose();
+  };
+
+  const handlePickImage = async () => {
+    try {
+      try {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      } catch {
+        // Toleran terhadap Android 13+ Photo Picker
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
+        quality: 0.75,
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const savedUri = await saveImageLocally(result.assets[0].uri, 'debts');
+        setInvoiceImage(savedUri);
+      }
+    } catch (e) {
+      console.warn('Pick invoice image error:', e);
+      Alert.alert('Error', 'Gagal memuat gambar dari galeri');
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Izin Kamera', 'Izin kamera diperlukan untuk memotret faktur/nota secara langsung.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
+        quality: 0.75,
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const savedUri = await saveImageLocally(result.assets[0].uri, 'debts');
+        setInvoiceImage(savedUri);
+      }
+    } catch (e) {
+      console.warn('Take invoice photo error:', e);
+      Alert.alert('Error', 'Gagal mengambil foto dari kamera');
+    }
+  };
 
   const handleSubmit = async () => {
     if (!selectedSupplierId) {
@@ -1439,10 +1943,11 @@ function AddDebtModal({
     }
 
     setSaving(true);
-    await onSave(selectedSupplierId, totalNum, dueDate.toISOString().split('T')[0], notes);
+    await onSave(selectedSupplierId, totalNum, dueDate.toISOString().split('T')[0], notes, invoiceImage || undefined);
     setSaving(false);
     setTotal('');
     setNotes('');
+    setInvoiceImage(null);
   };
 
   return (
@@ -1453,7 +1958,7 @@ function AddDebtModal({
             <ThemedText type="subtitle" style={{ fontSize: 16 }}>
               + Catat Hutang Kulakan Supplier
             </ThemedText>
-            <Pressable onPress={onClose}>
+            <Pressable onPress={handleClose}>
               <ThemedText style={{ fontSize: 18, color: Colors.muted }}>✕</ThemedText>
             </Pressable>
           </View>
@@ -1540,8 +2045,101 @@ function AddDebtModal({
               />
             </View>
 
+            {/* Foto Bukti Faktur / Nota Pembelian */}
+            <View style={styles.inputGroup}>
+              <ThemedText style={styles.label}>Foto Bukti Faktur / Nota (Opsional)</ThemedText>
+              {invoiceImage ? (
+                <View
+                  style={{
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: '#cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    marginTop: 4,
+                  }}
+                >
+                  <Image
+                    source={{ uri: invoiceImage }}
+                    style={{ width: '100%', height: 160 }}
+                    resizeMode="cover"
+                  />
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: 8,
+                      backgroundColor: '#f1f5f9',
+                    }}
+                  >
+                    <ThemedText style={{ fontSize: 11, color: '#16a34a', fontWeight: '700' }}>
+                      ✓ Foto faktur terlampir
+                    </ThemedText>
+                    <TouchableOpacity
+                      onPress={() => setInvoiceImage(null)}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                        backgroundColor: '#fee2e2',
+                        borderRadius: 6,
+                      }}
+                    >
+                      <ThemedText style={{ fontSize: 11, color: '#dc2626', fontWeight: '700' }}>
+                        ✕ Hapus Foto
+                      </ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#cbd5e1',
+                      backgroundColor: '#f8fafc',
+                      gap: 6,
+                    }}
+                    onPress={handleTakePhoto}
+                  >
+                    <ThemedText style={{ fontSize: 14 }}>📷</ThemedText>
+                    <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>
+                      Ambil Foto
+                    </ThemedText>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#cbd5e1',
+                      backgroundColor: '#f8fafc',
+                      gap: 6,
+                    }}
+                    onPress={handlePickImage}
+                  >
+                    <ThemedText style={{ fontSize: 14 }}>🖼️</ThemedText>
+                    <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>
+                      Pilih Galeri
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+
             <View style={styles.modalActions}>
-              <Button title="Batal" variant="outline" style={{ flex: 1 }} onPress={onClose} />
+              <Button title="Batal" variant="outline" style={{ flex: 1 }} onPress={handleClose} />
               <Button
                 title={saving ? 'Menyimpan...' : 'Simpan Hutang'}
                 style={{ flex: 1 }}

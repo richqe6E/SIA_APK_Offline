@@ -7,7 +7,6 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useLockOrientation } from '@/hooks/use-orientation';
 import { resetEntireDatabase, resetFinancialAndCashFlowData } from '@/services/database';
-import { pushSyncToCloud } from '@/services/cloudSync';
 import {
   deleteTransactions,
   exportProductCSVTemplate,
@@ -88,10 +87,11 @@ export default function DataManagementScreen() {
   const handleBackupFull = async () => {
     setBackingUp(true);
     try {
-      await exportDatabaseBackup(db);
+      const savedUri = await exportDatabaseBackup(db);
+      const fileName = savedUri.split('/').pop() || 'pos_backup.json';
       Alert.alert(
         'Cadangan Berhasil',
-        'Berkas JSON cadangan database berhasil dibuat dan siap disimpan ke Google Drive, Flashdisk OTG, atau memori perangkat.'
+        `Berkas JSON cadangan database berhasil disimpan permanen di memori perangkat:\n• Berkas: ${fileName}\n\nBerkas aman dan tidak akan terhapus meskipun aturan/izin aplikasi diubah. Siap disimpan ke Google Drive atau Flashdisk OTG.`
       );
     } catch (e: any) {
       Alert.alert('Gagal Cadangkan', e?.message || 'Terjadi kesalahan saat mencadangkan database.');
@@ -125,12 +125,23 @@ export default function DataManagementScreen() {
               setRestoring(true);
               try {
                 const meta = await restoreDatabaseBackup(db, file.uri);
-                await useProductStore.getState().loadProducts(db);
-                await useCategoryStore.getState().loadCategories(db);
-                await useSettingsStore.getState().loadSettings(db);
+                await Promise.allSettled([
+                  useProductStore.getState().loadProducts(db),
+                  useCategoryStore.getState().loadCategories(db),
+                  useSettingsStore.getState().loadSettings(db),
+                  useCashStore.getState().loadLedger(db),
+                  useCashStore.getState().loadDenominations(db),
+                  useShiftStore.getState().loadShiftData(db),
+                  useDebtReceivableStore.getState().loadCustomers(db),
+                  useDebtReceivableStore.getState().loadSuppliers(db),
+                  useDebtReceivableStore.getState().loadReceivables(db),
+                  useDebtReceivableStore.getState().loadDebts(db),
+                  useTransactionStore.getState().loadTransactions(db, 'all', 1),
+                  useTransactionStore.getState().loadPendingOrders(db),
+                ]);
                 Alert.alert(
                   'Pemulihan Selesai',
-                  `Data berhasil dipulihkan secara utuh!\n• Produk: ${meta.counts.products ?? 0}\n• Kategori: ${meta.counts.categories ?? 0}\n• Transaksi: ${meta.counts.transactions ?? 0}`
+                  `Data berhasil dipulihkan secara utuh!\n• Produk: ${meta.counts.products ?? 0}\n• Kategori: ${meta.counts.categories ?? 0}\n• Transaksi: ${meta.counts.transactions ?? 0}\n• Kas Masuk/Keluar: ${meta.counts.cash_ledger ?? 0}\n• Pelanggan: ${meta.counts.customers ?? 0} | Supplier: ${meta.counts.suppliers ?? 0}`
                 );
               } catch (e: any) {
                 Alert.alert('Gagal Memulihkan', e?.message || 'Berkas cadangan tidak valid atau rusak.');
@@ -219,7 +230,27 @@ export default function DataManagementScreen() {
     setResetting(true);
     try {
       await resetEntireDatabase(db);
-      await useProductStore.getState().loadProducts(db);
+      useShiftStore.getState().resetShiftStore();
+      useTransactionStore.setState({
+        transactions: [],
+        cart: [],
+        discount: null,
+        pendingOrders: [],
+      });
+      await Promise.allSettled([
+        useProductStore.getState().loadProducts(db),
+        useCategoryStore.getState().loadCategories(db),
+        useSettingsStore.getState().loadSettings(db),
+        useCashStore.getState().loadLedger(db),
+        useCashStore.getState().loadDenominations(db),
+        useShiftStore.getState().loadShiftData(db),
+        useDebtReceivableStore.getState().loadCustomers(db),
+        useDebtReceivableStore.getState().loadSuppliers(db),
+        useDebtReceivableStore.getState().loadReceivables(db),
+        useDebtReceivableStore.getState().loadDebts(db),
+        useTransactionStore.getState().loadTransactions(db, 'all', 1),
+        useTransactionStore.getState().loadPendingOrders(db),
+      ]);
       Alert.alert(
         'Reset Berhasil',
         'Seluruh data aplikasi (produk, riwayat penjualan, buku kas, hutang & piutang) telah dibersihkan ke kondisi awal.'
@@ -284,26 +315,31 @@ export default function DataManagementScreen() {
     setResettingFinancial(true);
     try {
       await resetFinancialAndCashFlowData(db);
+      useShiftStore.getState().resetShiftStore();
+
+      // Reset transaksi lokal in-memory seketika
+      useTransactionStore.setState({
+        transactions: [],
+        cart: [],
+        discount: null,
+        pendingOrders: [],
+      });
 
       // Refresh stores lokal
       await Promise.allSettled([
         useCashStore.getState().loadLedger(db),
+        useShiftStore.getState().loadShiftData(db),
         useShiftStore.getState().loadActiveShift(db),
         useShiftStore.getState().loadHistoryShifts(db),
+        useTransactionStore.getState().loadTransactions(db, 'all', 1),
         useTransactionStore.getState().loadPendingOrders(db),
         useDebtReceivableStore.getState().loadDebts(db),
         useDebtReceivableStore.getState().loadReceivables(db),
       ]);
 
-      // Push payload bersih (nilai 0) langsung ke Supabase Cloud
-      const pairingCode = useSettingsStore.getState().storePairingCode;
-      if (pairingCode) {
-        await pushSyncToCloud(db, pairingCode);
-      }
-
       Alert.alert(
         'Buku Baru Berhasil Dibuat!',
-        'Seluruh riwayat transaksi penjualan, buku kas, dan shift kasir telah dibersihkan ke kondisi awal (0).\n\nKatalog produk & pengaturan toko tetap utuh 100%, serta data di cloud Supabase telah otomatis disinkronkan.'
+        'Seluruh riwayat transaksi penjualan, buku kas, dan shift kasir telah dibersihkan ke kondisi awal (0).\n\nKatalog produk & pengaturan toko tetap utuh 100%.'
       );
     } catch (e: any) {
       Alert.alert('Gagal Reset Keuangan', e?.message || 'Terjadi kesalahan saat mereset data keuangan.');

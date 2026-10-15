@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
 import { useProductStore } from './productStore';
-import { triggerAutoSync } from '@/services/cloudSync';
 
 function localDateStr(): string {
   const d = new Date();
@@ -112,6 +111,7 @@ interface TransactionState {
     shiftId?: number | null,
     taxOptions?: TaxOptions,
     splitPayment?: { cash: number; qris: number },
+    dueDate?: string | null,
   ) => Promise<number>;
   loadTransactions: (db: SQLiteDatabase, period?: PeriodFilter, page?: number, pageSize?: number) => Promise<void>;
   getDailyNotaCount: (db: SQLiteDatabase) => Promise<number>;
@@ -122,6 +122,9 @@ interface TransactionState {
   cancelTransaction: (db: SQLiteDatabase, transactionId: number) => Promise<{ success: boolean; message?: string }>;
   revertAndEditTransaction: (db: SQLiteDatabase, transactionId: number) => Promise<{ success: boolean; restoredItemsCount: number; message?: string }>;
 }
+
+// Mutex checkout untuk mencegah double-entry transaksi saat lag di perangkat spek rendah
+let checkoutMutex = false;
 
 export const useTransactionStore = create<TransactionState>((set, get) => ({
   cart: [],
@@ -197,6 +200,10 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     } else {
       const existing = cart.find((item) => item.product_id === product.id);
       if (existing) {
+        const prod = useProductStore.getState().products.find((p) => p.id === product.id) || product;
+        if (prod && prod.has_stock === 1 && existing.quantity >= prod.stock) {
+          return;
+        }
         set({
           cart: cart.map((item) =>
             item.product_id === product.id
@@ -231,10 +238,15 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
       get().removeFromCart(productId);
       return;
     }
+    const prod = useProductStore.getState().products.find((p) => p.id === productId);
+    let finalQty = quantity;
+    if (prod && prod.has_stock === 1 && quantity > prod.stock) {
+      finalQty = Math.max(1, prod.stock);
+    }
     set({
       cart: get().cart.map((item) =>
         item.product_id === productId
-          ? { ...item, quantity, subtotal: quantity * item.product_price }
+          ? { ...item, quantity: finalQty, subtotal: finalQty * item.product_price }
           : item
       ),
     });
@@ -307,9 +319,11 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
     shiftId = null,
     taxOptions,
     splitPayment,
+    dueDate = null,
   ) => {
     const { isCheckingOut, cart } = get();
-    if (isCheckingOut || cart.length === 0) return 0;
+    if (checkoutMutex || isCheckingOut || cart.length === 0) return 0;
+    checkoutMutex = true;
     set({ isCheckingOut: true });
 
     try {
@@ -337,8 +351,8 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
       const splitQris = splitPayment?.qris ?? 0;
       const hasSplit = splitCash > 0 || splitQris > 0;
       const effectivePaymentMethod = hasSplit ? 'split' : paymentMethod;
-      const cashReceivedForLedger = hasSplit ? splitCash : (effectivePaymentMethod === 'tunai' ? finalPaymentAmount : 0);
-      const qrisReceivedForLedger = hasSplit ? splitQris : (effectivePaymentMethod === 'qris' ? finalPaymentAmount : 0);
+      const cashReceivedForLedger = hasSplit ? splitCash : (effectivePaymentMethod === 'tunai' ? total : 0);
+      const qrisReceivedForLedger = hasSplit ? splitQris : (effectivePaymentMethod === 'qris' ? total : 0);
 
       const purchasedItems = [...cart];
       let transactionId = 0;
@@ -424,11 +438,12 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
         // Jika pembayaran Hutang / Kasbon, catat otomatis ke piutang pelanggan
         if (isCredit && customerId) {
           await txn.runAsync(
-            'INSERT INTO customer_receivables (customer_id, transaction_id, total_amount, paid_amount, status) VALUES (?, ?, ?, 0, ?)',
+            'INSERT INTO customer_receivables (customer_id, transaction_id, total_amount, paid_amount, status, due_date) VALUES (?, ?, ?, 0, ?, ?)',
             customerId,
             transactionId,
             total,
-            'unpaid'
+            'unpaid',
+            dueDate || null
           );
         }
       });
@@ -459,14 +474,14 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
             useDebtReceivableStore.getState().loadReceivables(db);
             useDebtReceivableStore.getState().loadCustomers(db);
           }
-          triggerAutoSync(db);
         } catch (bgErr) {
-          console.warn('Background sync warning:', bgErr);
+          console.warn('Background reload warning:', bgErr);
         }
       }, 50);
 
       return dailySeq;
     } finally {
+      checkoutMutex = false;
       set({ isCheckingOut: false });
     }
   },
@@ -665,7 +680,6 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
       } catch (syncErr) {
         console.warn('Sync error after cancelTransaction:', syncErr);
       }
-      triggerAutoSync(db);
 
       return { success: true };
     } catch (error: any) {
@@ -736,6 +750,19 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
 
         await txn.runAsync('DELETE FROM transaction_items WHERE transaction_id = ?', transactionId);
         await txn.runAsync('DELETE FROM transactions WHERE id = ?', transactionId);
+
+        // BUG-014: Jika transaksi yang direvert adalah nota terakhir hari ini, mundurkan last_seq agar nomor urut nota tidak loncat
+        const today = localDateStr();
+        const counterRow = await txn.getFirstAsync<{ last_seq: number }>(
+          'SELECT last_seq FROM daily_counters WHERE date = ?',
+          today
+        );
+        if (counterRow && (txRecord as any)?.daily_seq && counterRow.last_seq === (txRecord as any).daily_seq) {
+          await txn.runAsync(
+            'UPDATE daily_counters SET last_seq = MAX(0, last_seq - 1), updated_at = datetime(\'now\',\'localtime\') WHERE date = ?',
+            today
+          );
+        }
       });
 
       set({
@@ -756,7 +783,6 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
       } catch (syncErr) {
         console.warn('Sync error after revertAndEditTransaction:', syncErr);
       }
-      triggerAutoSync(db);
 
       return { success: true, restoredItemsCount: restoredCart.length };
     } catch (error: any) {

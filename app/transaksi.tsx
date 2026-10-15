@@ -38,7 +38,9 @@ import { QrisDisplayModal } from '@/components/qris-display-modal';
 import { WeightedProductModal } from '@/components/weighted-product-modal';
 import { EditCartPriceModal } from '@/components/edit-cart-price-modal';
 import { RealtimeClockBadge } from '@/components/realtime-clock-badge';
+import { QuickEditProductModal } from '@/components/quick-edit-product-modal';
 import { formatRupiahInput, parseRupiahInput } from '@/utils/formatRupiah';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 // Cache penelusuran barcode & nama produk untuk optimasi instan ribuan produk (O(1) memory lookup)
 const barcodeSearchTextCache = new Map<string, string>();
@@ -67,6 +69,7 @@ export default function TransactionScreen() {
   useLockOrientation(ScreenOrientation.OrientationLock.LANDSCAPE);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = React.useRef(false);
 
   const insets = useSafeAreaInsets();
   const db = useSQLiteContext();
@@ -101,7 +104,7 @@ export default function TransactionScreen() {
     taxType,
     taxRate,
   } = useSettingsStore();
-  const { currentShift } = useShiftStore();
+  const { currentShift, loadActiveShift } = useShiftStore();
 
   const { width } = useWindowDimensions();
   // Responsif tablet landscape: lebar >= 1050 (4 kolom), >= 720 (3 kolom), lainnya 2 kolom
@@ -119,6 +122,17 @@ export default function TransactionScreen() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [successTotal, setSuccessTotal] = useState(0);
   const [successDailySeq, setSuccessDailySeq] = useState(0);
+
+  // Tanggal Jatuh Tempo Piutang Kasir (Hutang / Kasbon)
+  const [creditDueDate, setCreditDueDate] = useState<string>(() => {
+    const d = new Date(Date.now() + 7 * 86400000);
+    return d.toISOString().split('T')[0];
+  });
+  const [showCreditDatePicker, setShowCreditDatePicker] = useState(false);
+  const handleSetCreditDueDays = (days: number) => {
+    const d = new Date(Date.now() + days * 86400000);
+    setCreditDueDate(d.toISOString().split('T')[0]);
+  };
 
   // F2: Split Payment (Tunai + QRIS gabungan). splitModalVisible untuk modal input nominal.
   const [splitModalVisible, setSplitModalVisible] = useState(false);
@@ -181,6 +195,10 @@ export default function TransactionScreen() {
     weightGram?: number;
   } | null>(null);
 
+  // Modal Edit Cepat Produk (Tekan Lama 3 Detik)
+  const [quickEditProduct, setQuickEditProduct] = useState<Product | null>(null);
+  const [showQuickEditModal, setShowQuickEditModal] = useState(false);
+
   const { customers, loadCustomers, addCustomer } = useDebtReceivableStore();
 
   useEffect(() => {
@@ -189,7 +207,8 @@ export default function TransactionScreen() {
     loadSettings(db);
     loadPendingOrders(db);
     loadCustomers(db);
-  }, [db, loadProducts, loadCategories, loadSettings, loadPendingOrders, loadCustomers]);
+    loadActiveShift(db);
+  }, [db, loadProducts, loadCategories, loadSettings, loadPendingOrders, loadCustomers, loadActiveShift]);
 
   // Set initial view mode based on store settings / business mode
   useEffect(() => {
@@ -274,6 +293,7 @@ export default function TransactionScreen() {
   };
 
   const handleCheckout = async () => {
+    if (isSubmittingRef.current || isSubmitting) return;
     if (cart.length === 0) return;
     if (paymentMethod === 'tunai' && parsedAmount < total) {
       const defisit = total - parsedAmount;
@@ -326,7 +346,8 @@ export default function TransactionScreen() {
   };
 
   const proceedWithCheckout = async () => {
-    if (isSubmitting) return;
+    if (isSubmittingRef.current || isSubmitting) return;
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
 
     try {
@@ -387,6 +408,7 @@ export default function TransactionScreen() {
           amount: taxAmount,
         },
         useSplit ? { cash: splitCash, qris: splitQris } : undefined,
+        paymentMethod === 'hutang' ? creditDueDate : undefined,
       );
       if (dailySeq > 0) {
         setSuccessDailySeq(dailySeq);
@@ -403,6 +425,7 @@ export default function TransactionScreen() {
     } catch (err: any) {
       Alert.alert('Gagal Memproses Transaksi', err?.message || 'Terjadi kesalahan sistem saat menyimpan transaksi.');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -546,10 +569,60 @@ export default function TransactionScreen() {
     setEditPriceTarget(null);
   };
 
+  const tryAutoAddBarcode = (rawCode: string): boolean => {
+    const clean = rawCode.replace(/[\r\n]/g, '').trim();
+    if (!clean) return false;
+
+    const matched = useProductStore.getState().findProductByExactBarcode(clean);
+    if (matched) {
+      if (selectedCategoryId !== null) {
+        setSelectedCategoryId(null);
+      }
+      handleAddToCartWithValidation(matched);
+      setSearchQuery('');
+      return true;
+    }
+    return false;
+  };
+
   const handleSearchChange = (q: string) => {
+    // 1. Jika input mengandung karakter enter (\n atau \r) dari hardware barcode scanner
+    if (q.includes('\n') || q.includes('\r')) {
+      const clean = q.replace(/[\r\n]/g, '').trim();
+      if (clean && tryAutoAddBarcode(clean)) {
+        return;
+      }
+      // Jika barcode tidak terdaftar atau bukan barcode yang cocok, simpan teks bersihnya
+      setSearchQuery(clean);
+      if (clean.length > 0 && selectedCategoryId !== null) {
+        setSelectedCategoryId(null);
+      }
+      return;
+    }
+
+    // 2. Jika input adalah string kosong atau spasi murni setelah pembersihan barcode
+    if (!q.trim()) {
+      setSearchQuery(q);
+      return;
+    }
+
+    // 3. Cek apakah teks yang dimasukkan cocok persis dengan barcode terdaftar (O(1) lookup)
+    // Khusus barcode: auto-add langsung ke keranjang dan bersihkan textbox seketika
+    if (tryAutoAddBarcode(q)) {
+      return;
+    }
+
+    // 4. Jika bukan barcode (misalnya kasir mengetik nama produk "sosis", "kanzler", dll.)
+    // Tetap gunakan alur pencarian normal: teks tersimpan dan produk harus diklik manual
     setSearchQuery(q);
-    if (q.trim().length > 0 && selectedCategoryId !== null) {
+    if (selectedCategoryId !== null) {
       setSelectedCategoryId(null);
+    }
+  };
+
+  const handleSearchSubmit = () => {
+    if (searchQuery.trim()) {
+      tryAutoAddBarcode(searchQuery);
     }
   };
 
@@ -558,18 +631,35 @@ export default function TransactionScreen() {
     if (selectedCategoryId !== null) {
       setSelectedCategoryId(null);
     }
-    const matched =
-      useProductStore.getState().findProductByBarcode(trimmed) ||
-      products.find((p) => p.name.toLowerCase() === trimmed.toLowerCase());
+    const matched = useProductStore.getState().findProductByExactBarcode(trimmed);
     if (matched) {
       handleAddToCartWithValidation(matched);
+      setSearchQuery('');
     } else {
       setSearchQuery(trimmed);
       Alert.alert(
         'Produk Tidak Ditemukan Langsung',
-        `Barcode "${code}" tidak cocok persis dan dimasukkan ke pencarian.`
+        `Barcode "${code}" tidak terdaftar dalam database produk.`
       );
     }
+  };
+
+  const handleUpdateQtyWithValidation = (productId: number, newQty: number) => {
+    if (newQty <= 0) {
+      removeFromCart(productId);
+      return;
+    }
+    const prod = products.find((p) => p.id === productId);
+    if (prod && prod.has_stock === 1) {
+      if (newQty > prod.stock) {
+        Alert.alert(
+          'Stok Tidak Cukup',
+          `Stok '${prod.name}' tersisa ${prod.stock}. Tidak dapat menambah melebihi stok yang ada.`
+        );
+        return;
+      }
+    }
+    updateQuantity(productId, newQty);
   };
 
   const handleOpenBulkQty = (item: CartItem) => {
@@ -579,6 +669,17 @@ export default function TransactionScreen() {
 
   const handleSaveBulkQty = (newQty: number) => {
     if (bulkQtyTarget) {
+      const prod = products.find((p) => p.id === bulkQtyTarget.product_id);
+      if (prod && prod.has_stock === 1 && newQty > prod.stock) {
+        Alert.alert(
+          'Stok Tidak Cukup',
+          `Stok '${prod.name}' tersisa ${prod.stock}. Jumlah di keranjang disesuaikan ke stok maksimal (${prod.stock}).`
+        );
+        updateQuantity(bulkQtyTarget.product_id, prod.stock);
+        setShowBulkQtyModal(false);
+        setBulkQtyTarget(null);
+        return;
+      }
       updateQuantity(bulkQtyTarget.product_id, newQty);
       setShowBulkQtyModal(false);
       setBulkQtyTarget(null);
@@ -589,6 +690,46 @@ export default function TransactionScreen() {
     ? products.find((p) => p.id === bulkQtyTarget.product_id)
     : null;
 
+  const handleLongPressProduct = useCallback((p: Product) => {
+    setQuickEditProduct(p);
+    setShowQuickEditModal(true);
+  }, []);
+
+  const handleSaveQuickEdit = async (data: {
+    name: string;
+    price: number;
+    cost_price: number;
+    has_stock: boolean;
+    stock: number;
+    barcode: string;
+    barcodes: string[];
+    is_weighted: number;
+    expired_date: string | null;
+    category_id: number | null;
+  }) => {
+    if (!quickEditProduct) return;
+    try {
+      await useProductStore.getState().updateProduct(db, quickEditProduct.id, {
+        name: data.name,
+        price: data.price,
+        cost_price: data.cost_price,
+        stock: data.stock,
+        has_stock: data.has_stock,
+        barcode: data.barcode,
+        barcodes: data.barcodes,
+        is_weighted: data.is_weighted,
+        expired_date: data.expired_date,
+        category_id: data.category_id,
+      });
+      barcodeSearchTextCache.clear();
+      setShowQuickEditModal(false);
+      setQuickEditProduct(null);
+      Alert.alert('Sukses', `Data "${data.name}" berhasil diperbarui.`);
+    } catch (e: any) {
+      Alert.alert('Gagal', e?.message || 'Gagal memperbarui data produk.');
+    }
+  };
+
   return (
     <ThemedView style={[styles.container, { paddingLeft: insets.left, paddingRight: insets.right }]}>
       {step === 1 ? (
@@ -598,6 +739,7 @@ export default function TransactionScreen() {
           onChangeCategory={setSelectedCategoryId}
           searchQuery={searchQuery}
           onSearchChange={handleSearchChange}
+          onSearchSubmit={handleSearchSubmit}
           viewMode={viewMode}
           onToggleViewMode={handleToggleViewMode}
           filteredProducts={filteredProducts}
@@ -616,7 +758,8 @@ export default function TransactionScreen() {
           gridColumns={gridColumns}
           pendingCount={pendingOrders.length}
           onAddToCart={handleAddToCartWithValidation}
-          onUpdateQty={(id, qty) => updateQuantity(id, qty)}
+          onLongPressProduct={handleLongPressProduct}
+          onUpdateQty={handleUpdateQtyWithValidation}
           onRemove={(id) => removeFromCart(id)}
           onOpenBarcodeScanner={() => setShowBarcodeScanner(true)}
           onOpenBulkQty={handleOpenBulkQty}
@@ -683,6 +826,11 @@ export default function TransactionScreen() {
             setSplitCashInput('');
             setSplitQrisInput('');
           }}
+          creditDueDate={creditDueDate}
+          onChangeCreditDueDate={setCreditDueDate}
+          onSetCreditDueDays={handleSetCreditDueDays}
+          showCreditDatePicker={showCreditDatePicker}
+          setShowCreditDatePicker={setShowCreditDatePicker}
         />
       )}
 
@@ -1088,6 +1236,18 @@ export default function TransactionScreen() {
         onApplyDiscount={(val, type) => setDiscount(val, type)}
         onClearDiscount={clearDiscount}
       />
+
+      {/* Modal Edit Cepat Produk (Tekan Lama 3 Detik) */}
+      <QuickEditProductModal
+        visible={showQuickEditModal}
+        product={quickEditProduct}
+        categories={categories}
+        onClose={() => {
+          setShowQuickEditModal(false);
+          setQuickEditProduct(null);
+        }}
+        onSave={handleSaveQuickEdit}
+      />
     </ThemedView>
   );
 }
@@ -1098,6 +1258,7 @@ function Step1View({
   onChangeCategory,
   searchQuery,
   onSearchChange,
+  onSearchSubmit,
   viewMode,
   onToggleViewMode,
   filteredProducts,
@@ -1116,6 +1277,7 @@ function Step1View({
   gridColumns,
   pendingCount,
   onAddToCart,
+  onLongPressProduct,
   onUpdateQty,
   onRemove,
   onOpenBarcodeScanner,
@@ -1133,6 +1295,7 @@ function Step1View({
   onChangeCategory: (id: number | null) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  onSearchSubmit?: () => void;
   viewMode: ViewMode;
   onToggleViewMode: (mode: ViewMode) => void;
   filteredProducts: Product[];
@@ -1151,6 +1314,7 @@ function Step1View({
   gridColumns: number;
   pendingCount: number;
   onAddToCart: (p: Product) => void;
+  onLongPressProduct: (p: Product) => void;
   onUpdateQty: (id: number, qty: number) => void;
   onRemove: (id: number) => void;
   onOpenBarcodeScanner: () => void;
@@ -1173,6 +1337,10 @@ function Step1View({
             <TextInput
               value={searchQuery}
               onChangeText={onSearchChange}
+              onSubmitEditing={onSearchSubmit}
+              returnKeyType="search"
+              autoCapitalize="none"
+              autoCorrect={false}
               placeholder="Cari nama barang / SKU..."
               placeholderTextColor={Colors.placeholder}
               style={styles.searchInput}
@@ -1234,20 +1402,23 @@ function Step1View({
           numColumns={viewMode === 'grid' ? gridColumns : 1}
           contentContainerStyle={viewMode === 'grid' ? styles.productGrid : styles.productList}
           columnWrapperStyle={viewMode === 'grid' ? { gap: 8 } : undefined}
-          initialNumToRender={14}
-          maxToRenderPerBatch={14}
-          windowSize={5}
+          initialNumToRender={12}
+          maxToRenderPerBatch={8}
+          windowSize={3}
+          updateCellsBatchingPeriod={30}
           removeClippedSubviews={Platform.OS === 'android'}
           renderItem={({ item }) =>
             viewMode === 'grid' ? (
               <ProductCard
                 product={item}
                 onPress={() => onAddToCart(item)}
+                onLongPress={() => onLongPressProduct(item)}
               />
             ) : (
               <ProductListItem
                 product={item}
                 onPress={() => onAddToCart(item)}
+                onLongPress={() => onLongPressProduct(item)}
               />
             )
           }
@@ -1544,6 +1715,11 @@ function Step2View({
   splitQris,
   onOpenSplitModal,
   onClearSplit,
+  creditDueDate,
+  onChangeCreditDueDate,
+  onSetCreditDueDays,
+  showCreditDatePicker,
+  setShowCreditDatePicker,
 }: {
   cart: CartItem[];
   subtotal: number;
@@ -1585,6 +1761,11 @@ function Step2View({
   splitQris: number;
   onOpenSplitModal: () => void;
   onClearSplit: () => void;
+  creditDueDate: string;
+  onChangeCreditDueDate: (d: string) => void;
+  onSetCreditDueDays: (days: number) => void;
+  showCreditDatePicker: boolean;
+  setShowCreditDatePicker: (show: boolean) => void;
 }) {
   const canConfirm =
     isSplitActive
@@ -1982,6 +2163,73 @@ function Step2View({
                     }
                   }}
                 />
+              </View>
+
+              {/* Pemilihan Jatuh Tempo Piutang Kasir */}
+              <View style={{ marginTop: 10 }}>
+                <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 4 }}>
+                  Tanggal Jatuh Tempo Piutang:
+                </ThemedText>
+                <View style={{ flexDirection: 'row', gap: 6, marginBottom: 6 }}>
+                  {[3, 7, 14].map((days) => {
+                    const targetStr = new Date(Date.now() + days * 86400000).toISOString().split('T')[0];
+                    const isSelected = creditDueDate === targetStr;
+                    return (
+                      <TouchableOpacity
+                        key={days}
+                        style={[
+                          styles.presetBtn,
+                          { flex: 1, paddingVertical: 6, alignItems: 'center' },
+                          isSelected && { backgroundColor: '#d97706', borderColor: '#b45309' },
+                        ]}
+                        onPress={() => onSetCreditDueDays(days)}
+                      >
+                        <ThemedText
+                          style={[
+                            { fontSize: 11, fontWeight: '700', color: '#64748b' },
+                            isSelected && { color: '#ffffff' },
+                          ]}
+                        >
+                          +{days} Hari
+                        </ThemedText>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity
+                    style={[
+                      styles.presetBtn,
+                      { flex: 1.2, paddingVertical: 6, alignItems: 'center' },
+                    ]}
+                    onPress={() => setShowCreditDatePicker(true)}
+                  >
+                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#0284c7' }}>
+                      📅 Kalender
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4 }}>
+                  <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+                    Jatuh Tempo:
+                  </ThemedText>
+                  <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#b45309' }}>
+                    📅 {creditDueDate}
+                  </ThemedText>
+                </View>
+
+                {showCreditDatePicker && (
+                  <DateTimePicker
+                    value={creditDueDate ? new Date(creditDueDate) : new Date()}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={(_, selectedDate) => {
+                      setShowCreditDatePicker(false);
+                      if (selectedDate) {
+                        onChangeCreditDueDate(selectedDate.toISOString().split('T')[0]);
+                      }
+                    }}
+                  />
+                )}
               </View>
 
               <View style={{ marginTop: 8, padding: 6, backgroundColor: '#fef3c7', borderRadius: 6 }}>
@@ -2500,138 +2748,178 @@ function SuccessView({
 // ─────────────────────────────────────────
 // GRID CARD VIEW (Ideal for Kuliner / Menu)
 // ─────────────────────────────────────────
-const ProductCard = React.memo(function ProductCard({
-  product,
-  onPress,
-}: {
-  product: Product;
-  onPress: () => void;
-}) {
-  const isWeighted = product.is_weighted === 1;
-  const isOutOfStock = !isWeighted && product.has_stock === 1 && product.stock === 0;
-  const isLowStock = !isWeighted && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
+const ProductCard = React.memo(
+  function ProductCard({
+    product,
+    onPress,
+    onLongPress,
+  }: {
+    product: Product;
+    onPress: () => void;
+    onLongPress?: () => void;
+  }) {
+    const isWeighted = product.is_weighted === 1;
+    const isOutOfStock = !isWeighted && product.has_stock === 1 && product.stock === 0;
+    const isLowStock = !isWeighted && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
 
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.productCard,
-        pressed && { opacity: 0.85 },
-        isOutOfStock && { opacity: 0.65 },
-      ]}
-      onPress={onPress}
-    >
-      {product.image_path ? (
-        <Image source={{ uri: product.image_path }} style={styles.cardImage} />
-      ) : (
-        <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
-          <ThemedText style={{ color: Colors.muted, fontSize: 18 }}>
-            {isWeighted ? '⚖️' : '🖼️'}
-          </ThemedText>
-        </View>
-      )}
-      <ThemedText
-        type="defaultSemiBold"
-        numberOfLines={2}
-        style={{
-          textAlign: 'center',
-          fontSize: 13.5,
-          fontWeight: '700',
-          lineHeight: 18,
-          color: '#0f172a',
-          paddingHorizontal: 2,
-        }}
+    return (
+      <Pressable
+        style={({ pressed }) => [
+          styles.productCard,
+          pressed && { opacity: 0.85 },
+          isOutOfStock && { opacity: 0.65 },
+        ]}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={700}
       >
-        {product.name}
-      </ThemedText>
-      <ThemedText style={{ textAlign: 'center', fontSize: 12.5, color: Colors.tint, fontWeight: '800', marginTop: 1 }}>
-        Rp {product.price.toLocaleString('id-ID')} {isWeighted ? '/ kg' : ''}
-      </ThemedText>
-
-      {isWeighted && (
-        <View style={styles.stockBadgeWeighted}>
-          <ThemedText style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>⚖️ Timbangan</ThemedText>
-        </View>
-      )}
-      {isOutOfStock && (
-        <View style={styles.stockBadgeOut}>
-          <ThemedText style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>HABIS</ThemedText>
-        </View>
-      )}
-      {isLowStock && (
-        <View style={styles.stockBadgeLow}>
-          <ThemedText style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>
-            Sisa {product.stock}
+        {product.image_path ? (
+          <Image source={{ uri: product.image_path }} style={styles.cardImage} />
+        ) : (
+          <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
+            <ThemedText style={{ color: Colors.muted, fontSize: 18 }}>
+              {isWeighted ? '⚖️' : '🖼️'}
+            </ThemedText>
+          </View>
+        )}
+        <ThemedText
+          type="defaultSemiBold"
+          numberOfLines={2}
+          style={{
+            textAlign: 'center',
+            fontSize: 13.5,
+            fontWeight: '700',
+            lineHeight: 18,
+            color: '#0f172a',
+            paddingHorizontal: 2,
+          }}
+        >
+          {product.name}
+        </ThemedText>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
+          <ThemedText style={{ fontSize: 12.5, color: Colors.tint, fontWeight: '800' }}>
+            Rp {product.price.toLocaleString('id-ID')} {isWeighted ? '/ kg' : ''}
           </ThemedText>
+          {product.cost_price > 0 && (
+            <ThemedText style={{ fontSize: 10, color: '#64748b', fontWeight: '600' }}>
+              (M: Rp {product.cost_price.toLocaleString('id-ID')})
+            </ThemedText>
+          )}
         </View>
-      )}
-    </Pressable>
-  );
-});
+
+        {isWeighted && (
+          <View style={styles.stockBadgeWeighted}>
+            <ThemedText style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>⚖️ Timbangan</ThemedText>
+          </View>
+        )}
+        {isOutOfStock && (
+          <View style={styles.stockBadgeOut}>
+            <ThemedText style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>HABIS</ThemedText>
+          </View>
+        )}
+        {isLowStock && (
+          <View style={styles.stockBadgeLow}>
+            <ThemedText style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>
+              Sisa {product.stock}
+            </ThemedText>
+          </View>
+        )}
+      </Pressable>
+    );
+  },
+  (prev, next) =>
+    prev.product.id === next.product.id &&
+    prev.product.stock === next.product.stock &&
+    prev.product.price === next.product.price &&
+    prev.product.cost_price === next.product.cost_price &&
+    prev.product.name === next.product.name &&
+    prev.product.image_path === next.product.image_path
+);
 
 // ─────────────────────────────────────────
 // COMPACT LIST BUTTON VIEW (Ideal for Retail)
 // ─────────────────────────────────────────
-const ProductListItem = React.memo(function ProductListItem({
-  product,
-  onPress,
-}: {
-  product: Product;
-  onPress: () => void;
-}) {
-  const isWeighted = product.is_weighted === 1;
-  const isOutOfStock = !isWeighted && product.has_stock === 1 && product.stock === 0;
-  const isLowStock = !isWeighted && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
+const ProductListItem = React.memo(
+  function ProductListItem({
+    product,
+    onPress,
+    onLongPress,
+  }: {
+    product: Product;
+    onPress: () => void;
+    onLongPress?: () => void;
+  }) {
+    const isWeighted = product.is_weighted === 1;
+    const isOutOfStock = !isWeighted && product.has_stock === 1 && product.stock === 0;
+    const isLowStock = !isWeighted && product.has_stock === 1 && product.stock > 0 && product.stock <= 5;
 
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.productListItem,
-        pressed && { backgroundColor: '#f3e8ff' },
-        isOutOfStock && { opacity: 0.6 },
-      ]}
-      onPress={onPress}
-    >
-      <View style={styles.listItemLeft}>
-        <ThemedText type="defaultSemiBold" style={styles.listItemTitle} numberOfLines={1}>
-          {product.name}
-        </ThemedText>
-        <View style={styles.listItemMeta}>
-          <ThemedText style={styles.listItemPrice}>
-            Rp {product.price.toLocaleString('id-ID')} {isWeighted ? '/ kg' : ''}
+    return (
+      <Pressable
+        style={({ pressed }) => [
+          styles.productListItem,
+          pressed && { backgroundColor: '#f3e8ff' },
+          isOutOfStock && { opacity: 0.6 },
+        ]}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={700}
+      >
+        <View style={styles.listItemLeft}>
+          <ThemedText type="defaultSemiBold" style={styles.listItemTitle} numberOfLines={1}>
+            {product.name}
           </ThemedText>
-          {isWeighted ? (
-            <View style={styles.listStockBadgeWeighted}>
-              <ThemedText style={styles.listStockBadgeWeightedText}>⚖️ Timbangan (kg)</ThemedText>
-            </View>
-          ) : product.has_stock === 1 ? (
-            <View
-              style={[
-                styles.listStockBadge,
-                isOutOfStock && styles.listStockBadgeOut,
-                isLowStock && styles.listStockBadgeLow,
-              ]}
-            >
-              <ThemedText style={styles.listStockBadgeText}>
-                {isOutOfStock ? 'Habis' : `Stok: ${product.stock}`}
+          <View style={styles.listItemMeta}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <ThemedText style={styles.listItemPrice}>
+                Rp {product.price.toLocaleString('id-ID')} {isWeighted ? '/ kg' : ''}
               </ThemedText>
+              {product.cost_price > 0 && (
+                <ThemedText style={{ fontSize: 11, color: '#64748b', fontWeight: '600' }}>
+                  (Modal: Rp {product.cost_price.toLocaleString('id-ID')})
+                </ThemedText>
+              )}
             </View>
-          ) : null}
-          {product.category_name && (
-            <ThemedText style={styles.listItemCategory}>
-              • {product.category_name}
-            </ThemedText>
-          )}
+            {isWeighted ? (
+              <View style={styles.listStockBadgeWeighted}>
+                <ThemedText style={styles.listStockBadgeWeightedText}>⚖️ Timbangan (kg)</ThemedText>
+              </View>
+            ) : product.has_stock === 1 ? (
+              <View
+                style={[
+                  styles.listStockBadge,
+                  isOutOfStock && styles.listStockBadgeOut,
+                  isLowStock && styles.listStockBadgeLow,
+                ]}
+              >
+                <ThemedText style={styles.listStockBadgeText}>
+                  {isOutOfStock ? 'Habis' : `Stok: ${product.stock}`}
+                </ThemedText>
+              </View>
+            ) : null}
+            {product.category_name && (
+              <ThemedText style={styles.listItemCategory}>
+                • {product.category_name}
+              </ThemedText>
+            )}
+          </View>
         </View>
-      </View>
 
-      <View style={[styles.listItemAddBtn, isWeighted && { backgroundColor: '#0284c7' }]}>
-        <ThemedText style={styles.listItemAddText}>
-          {isWeighted ? '⚖️ Timbang' : '+ Tambah'}
-        </ThemedText>
-      </View>
-    </Pressable>
-  );
-});
+        <View style={[styles.listItemAddBtn, isWeighted && { backgroundColor: '#0284c7' }]}>
+          <ThemedText style={styles.listItemAddText}>
+            {isWeighted ? '⚖️ Timbang' : '+ Tambah'}
+          </ThemedText>
+        </View>
+      </Pressable>
+    );
+  },
+  (prev, next) =>
+    prev.product.id === next.product.id &&
+    prev.product.stock === next.product.stock &&
+    prev.product.price === next.product.price &&
+    prev.product.cost_price === next.product.cost_price &&
+    prev.product.name === next.product.name &&
+    prev.product.category_name === next.product.category_name
+);
 
 const styles = StyleSheet.create({
   container: {

@@ -1,4 +1,3 @@
-import { DevicePairingModal } from '@/components/device-pairing-modal';
 import { ReceiptPreviewModal } from '@/components/receipt-preview-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -13,7 +12,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
 import React, { useEffect, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
-import { Directory, File, Paths } from 'expo-file-system';
+import { saveImageLocally } from '@/utils/imageStorage';
 import {
   Alert,
   Image,
@@ -41,6 +40,8 @@ export default function StoreSettingsScreen() {
     storePhone2,
     receiptFooter,
     qrisImagePath,
+    storeLogoPath,
+    storeLogoBase64,
     appOrientation,
     taxEnabled,
     taxName,
@@ -52,8 +53,6 @@ export default function StoreSettingsScreen() {
     setAdminPin,
     setDefaultViewMode,
     setAppOrientation,
-    storePairingCode,
-    isCloudConnected,
   } = useSettingsStore();
 
   const [name, setName] = useState(storeName);
@@ -66,13 +65,14 @@ export default function StoreSettingsScreen() {
   const [phone2, setPhone2] = useState(storePhone2);
   const [footer, setFooter] = useState(receiptFooter);
   const [qrisPath, setQrisPath] = useState(qrisImagePath);
+  const [logoPath, setLogoPath] = useState(storeLogoPath);
+  const [logoBase64, setLogoBase64] = useState(storeLogoBase64);
   const [taxIsActive, setTaxIsActive] = useState(taxEnabled);
   const [taxLabel, setTaxLabel] = useState(taxName);
   const [taxCalcType, setTaxCalcType] = useState<'percent' | 'nominal'>(taxType);
   const [taxRateVal, setTaxRateVal] = useState(taxRate.toString());
   const [saving, setSaving] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [showPairingModal, setShowPairingModal] = useState(false);
 
   useEffect(() => {
     loadSettings(db);
@@ -89,29 +89,36 @@ export default function StoreSettingsScreen() {
     setPhone2(storePhone2);
     setFooter(receiptFooter);
     setQrisPath(qrisImagePath);
+    setLogoPath(storeLogoPath);
+    setLogoBase64(storeLogoBase64);
     setTaxIsActive(taxEnabled);
     setTaxLabel(taxName);
     setTaxCalcType(taxType);
     setTaxRateVal(taxRate.toString());
-  }, [storeName, businessType, defaultViewMode, appOrientation, adminPin, storeAddress, storePhone, storePhone2, receiptFooter, qrisImagePath, taxEnabled, taxName, taxType, taxRate]);
+  }, [storeName, businessType, defaultViewMode, appOrientation, adminPin, storeAddress, storePhone, storePhone2, receiptFooter, qrisImagePath, storeLogoPath, storeLogoBase64, taxEnabled, taxName, taxType, taxRate]);
 
   const pickQrisImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.85,
-    });
+    try {
+      try {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      } catch {
+        // Toleran terhadap Android 13+ Photo Picker
+      }
 
-    if (!result.canceled && result.assets[0]) {
-      const uri = result.assets[0].uri;
-      const ext = uri.split('.').pop() ?? 'jpg';
-      const dir = new Directory(Paths.document, 'qris');
-      dir.create({ intermediates: true, idempotent: true });
-      const file = new File(dir, `qris_${Date.now()}.${ext}`);
-      const source = new File(uri);
-      source.copy(file);
-      setQrisPath(file.uri);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
+        quality: 0.75,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const uri = result.assets[0].uri;
+        const savedUri = await saveImageLocally(uri, 'qris');
+        setQrisPath(savedUri);
+      }
+    } catch (e: any) {
+      console.warn('pickQrisImage error:', e);
+      Alert.alert('Error', 'Gagal memuat gambar QRIS dari galeri.');
     }
   };
 
@@ -119,6 +126,50 @@ export default function StoreSettingsScreen() {
     Alert.alert('Hapus QRIS', 'Apakah Anda yakin ingin menghapus gambar QRIS toko?', [
       { text: 'Batal', style: 'cancel' },
       { text: 'Hapus', style: 'destructive', onPress: () => setQrisPath('') },
+    ]);
+  };
+
+  const pickLogoImage = async () => {
+    try {
+      try {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      } catch {
+        // Toleran terhadap Android 13+ Photo Picker
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
+        quality: 0.7,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        const uri = asset.uri;
+        const savedUri = await saveImageLocally(uri, 'logo');
+        setLogoPath(savedUri);
+        if (asset.base64) {
+          setLogoBase64(asset.base64);
+        }
+      }
+    } catch (e: any) {
+      console.warn('pickLogoImage error:', e);
+      Alert.alert('Error', 'Gagal memuat logo usaha dari galeri.');
+    }
+  };
+
+  const removeLogoImage = () => {
+    Alert.alert('Hapus Logo Toko', 'Apakah Anda yakin ingin menghapus logo toko dari struk?', [
+      { text: 'Batal', style: 'cancel' },
+      {
+        text: 'Hapus',
+        style: 'destructive',
+        onPress: () => {
+          setLogoPath('');
+          setLogoBase64('');
+        },
+      },
     ]);
   };
 
@@ -134,7 +185,18 @@ export default function StoreSettingsScreen() {
 
     setSaving(true);
     try {
-      await saveSettings(db, name.trim(), type.trim(), address.trim(), phone.trim(), footer.trim(), qrisPath.trim(), phone2.trim());
+      await saveSettings(
+        db,
+        name.trim(),
+        type.trim(),
+        address.trim(),
+        phone.trim(),
+        footer.trim(),
+        qrisPath.trim(),
+        phone2.trim(),
+        logoPath.trim(),
+        logoBase64
+      );
       await setDefaultViewMode(db, viewMode);
       await setAppOrientation(db, orientation);
       await setAdminPin(db, pin.trim());
@@ -265,6 +327,52 @@ export default function StoreSettingsScreen() {
               onPress={() => setShowPreviewModal(true)}
               style={{ marginTop: 4 }}
             />
+          </View>
+
+          {/* Foto Logo Toko pada Struk Thermal 58mm */}
+          <View style={{ gap: 8 }}>
+            <ThemedText type="defaultSemiBold" style={styles.fieldLabel}>
+              Foto / Logo Usaha di Struk Kasir
+            </ThemedText>
+            <ThemedText style={styles.helpText}>
+              Logo ini akan dicetak tepat di bagian atas struk thermal Bluetooth dan pratinjau nota digital. Ukuran akan disesuaikan otomatis agar pas dan tajam untuk printer 58mm.
+            </ThemedText>
+
+            {logoPath ? (
+              <View style={styles.qrisPreviewContainer}>
+                <Image source={{ uri: logoPath }} style={styles.qrisImageThumbnail} resizeMode="contain" />
+                <View style={{ flex: 1, gap: 8 }}>
+                  <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#15803d' }}>
+                    ✓ Logo Toko Siap Dicetak di Struk
+                  </ThemedText>
+                  <Button
+                    title="Ganti Foto Logo"
+                    variant="outline"
+                    size="sm"
+                    onPress={pickLogoImage}
+                  />
+                  <Button
+                    title="Hapus Logo"
+                    variant="danger"
+                    size="sm"
+                    onPress={removeLogoImage}
+                  />
+                </View>
+              </View>
+            ) : (
+              <View style={styles.qrisEmptyBox}>
+                <ThemedText style={{ fontSize: 32, marginBottom: 4 }}>🏪</ThemedText>
+                <ThemedText style={{ fontSize: 12, color: Colors.muted, textAlign: 'center', marginBottom: 8 }}>
+                  Belum ada foto logo toko yang diunggah.
+                </ThemedText>
+                <Button
+                  title="Unggah Foto Logo dari Galeri"
+                  variant="outline"
+                  size="sm"
+                  onPress={pickLogoImage}
+                />
+              </View>
+            )}
           </View>
 
           {/* Foto QRIS Statis Toko (Poin 15) */}
@@ -570,39 +678,6 @@ export default function StoreSettingsScreen() {
             />
           </View>
 
-          {/* Integrasi Perangkat & Cloud Sync */}
-          <View style={{ gap: 8, padding: 14, backgroundColor: '#f0f9ff', borderRadius: 14, borderWidth: 1, borderColor: '#bae6fd' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <ThemedText style={{ fontSize: 20 }}>🔗</ThemedText>
-                <View>
-                  <ThemedText type="defaultSemiBold" style={{ fontSize: 13, color: '#0369a1' }}>
-                    Sambungkan Perangkat (Cloud Sync)
-                  </ThemedText>
-                  <ThemedText style={{ fontSize: 11, color: '#0284c7' }}>
-                    Kode Toko: {storePairingCode} • {isCloudConnected ? '🟢 Terhubung' : '🟡 Siap Disambung'}
-                  </ThemedText>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#0284c7',
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
-                  borderRadius: 8,
-                }}
-                onPress={() => setShowPairingModal(true)}
-              >
-                <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                  Buka Panel
-                </ThemedText>
-              </TouchableOpacity>
-            </View>
-            <ThemedText style={{ fontSize: 10, color: '#475569', lineHeight: 14 }}>
-              Gunakan kode ini untuk menghubungkan aplikasi KENDALI USAHA AZIZAH di smartphone pemilik dengan tablet kasir secara realtime.
-            </ThemedText>
-          </View>
 
           <Button
             title={saving ? 'Menyimpan...' : 'Simpan Semua Perubahan'}
@@ -619,11 +694,6 @@ export default function StoreSettingsScreen() {
         storeAddress={address.trim()}
         storePhone={phone.trim()}
         receiptFooter={footer.trim()}
-      />
-
-      <DevicePairingModal
-        visible={showPairingModal}
-        onClose={() => setShowPairingModal(false)}
       />
     </ThemedView>
   );

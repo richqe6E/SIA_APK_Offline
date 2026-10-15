@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -13,7 +13,7 @@ import {
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -82,28 +82,65 @@ export default function HistoryScreen() {
 
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [items, setItems] = useState<any[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
   const [period, setPeriod] = useState<PeriodFilter>('all');
   const [page, setPage] = useState(1);
+  const isFetchingMoreRef = useRef(false);
 
+  // Muat ulang daftar transaksi saat layar mendapatkan fokus atau saat periode berubah
+  useFocusEffect(
+    useCallback(() => {
+      setPage(1);
+      loadTransactions(db, period, 1);
+    }, [db, period, loadTransactions])
+  );
+
+  // Verifikasi apakah transaksi yang sedang dibuka detailnya masih ada di database
   useEffect(() => {
-    setPage(1);
-    loadTransactions(db, period, 1);
-  }, [db, period, loadTransactions]);
+    if (!selected) {
+      setItems([]);
+      return;
+    }
+    let isMounted = true;
+    db.getFirstAsync<{ id: number }>('SELECT id FROM transactions WHERE id = ?', selected.id)
+      .then((row) => {
+        if (isMounted && !row) {
+          setSelected(null);
+          setItems([]);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [selected?.id, db]);
 
   const selectTransaction = async (t: Transaction) => {
     setSelected(t);
-    const rows = await db.getAllAsync<any>(
-      'SELECT * FROM transaction_items WHERE transaction_id = ?',
-      t.id
-    );
-    setItems(rows);
+    setLoadingItems(true);
+    try {
+      const rows = await db.getAllAsync<any>(
+        'SELECT * FROM transaction_items WHERE transaction_id = ?',
+        t.id
+      );
+      setItems(rows);
+    } catch {
+      setItems([]);
+    } finally {
+      setLoadingItems(false);
+    }
   };
 
-  const handleLoadMore = () => {
-    if (!loading && hasMore) {
+  const handleLoadMore = async () => {
+    if (!loading && hasMore && !isFetchingMoreRef.current) {
+      isFetchingMoreRef.current = true;
       const nextPage = page + 1;
       setPage(nextPage);
-      loadTransactions(db, period, nextPage);
+      try {
+        await loadTransactions(db, period, nextPage);
+      } finally {
+        isFetchingMoreRef.current = false;
+      }
     }
   };
 
@@ -339,7 +376,10 @@ export default function HistoryScreen() {
             <ThemedText style={{ flex: 1.3, fontSize: 10.5, fontWeight: '700', color: '#64748b', textAlign: 'right' }}>SUBTOTAL</ThemedText>
           </View>
 
-          {items.map((item) => (
+          {loadingItems ? (
+            <ActivityIndicator size="small" color={Colors.tint} style={{ paddingVertical: 16 }} />
+          ) : (
+            items.map((item) => (
             <View
               key={item.id}
               style={{
@@ -370,7 +410,8 @@ export default function HistoryScreen() {
                 Rp {item.subtotal.toLocaleString('id-ID')}
               </ThemedText>
             </View>
-          ))}
+          ))
+          )}
 
           {/* Subtotal, Diskon, dan Total */}
           <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderColor: '#f1f5f9', gap: 4 }}>

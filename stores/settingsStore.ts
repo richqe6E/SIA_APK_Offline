@@ -16,6 +16,8 @@ interface SettingsState {
   storePhone2: string;
   receiptFooter: string;
   qrisImagePath: string;
+  storeLogoPath: string;
+  storeLogoBase64: string;
   appOrientation: AppOrientation;
   currentUserRole: UserRole | null;
   storePairingCode: string;
@@ -38,8 +40,11 @@ interface SettingsState {
     storePhone?: string,
     receiptFooter?: string,
     qrisImagePath?: string,
-    storePhone2?: string
+    storePhone2?: string,
+    storeLogoPath?: string,
+    storeLogoBase64?: string
   ) => Promise<void>;
+  setStoreLogo: (db: SQLiteDatabase, path: string, base64: string) => Promise<void>;
   setAdminPin: (db: SQLiteDatabase, pin: string) => Promise<void>;
   setDefaultViewMode: (db: SQLiteDatabase, mode: ViewMode) => Promise<void>;
   setQrisImagePath: (db: SQLiteDatabase, path: string) => Promise<void>;
@@ -50,9 +55,9 @@ interface SettingsState {
     pin: string
   ) => Promise<void>;
   verifyPin: (pin: string) => boolean;
-  loginAsKasir: () => void;
-  loginAsPemilik: (pin: string) => boolean;
-  logoutRole: () => void;
+  loginAsKasir: (db?: SQLiteDatabase) => void;
+  loginAsPemilik: (pin: string, db?: SQLiteDatabase) => boolean;
+  logoutRole: (db?: SQLiteDatabase) => void;
   setPairingCode: (code: string, db?: SQLiteDatabase) => Promise<void> | void;
   setCloudConnected: (connected: boolean) => void;
   setCloudSyncStatus: (status: 'idle' | 'syncing' | 'synced' | 'error') => void;
@@ -77,6 +82,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   storePhone2: '',
   receiptFooter: 'Terima kasih atas kunjungan Anda!',
   qrisImagePath: '',
+  storeLogoPath: '',
+  storeLogoBase64: '',
   appOrientation: 'portrait',
   currentUserRole: null,
   storePairingCode: 'AZ-7789',
@@ -122,6 +129,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         storePhone2: map.store_phone2 ?? '',
         receiptFooter: map.receipt_footer ?? 'Terima kasih atas kunjungan Anda!',
         qrisImagePath: map.qris_image_path ?? '',
+        storeLogoPath: map.store_logo_path ?? '',
+        storeLogoBase64: map.store_logo_base64 ?? '',
         appOrientation: (map.app_orientation as AppOrientation) || 'portrait',
         storePairingCode: pairingCode,
         supabaseUrl:
@@ -133,6 +142,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         taxName: map.tax_name || 'Pajak / PB1',
         taxType: (map.tax_type as 'percent' | 'nominal') || 'percent',
         taxRate: map.tax_rate ? parseFloat(map.tax_rate) : 10,
+        currentUserRole: (map.current_user_role as UserRole) || get().currentUserRole || null,
         loading: false,
       });
     } catch (e) {
@@ -141,12 +151,25 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  saveSettings: async (db, storeName, businessType, storeAddress, storePhone, receiptFooter, qrisImagePath, storePhone2) => {
+  saveSettings: async (
+    db,
+    storeName,
+    businessType,
+    storeAddress,
+    storePhone,
+    receiptFooter,
+    qrisImagePath,
+    storePhone2,
+    storeLogoPath,
+    storeLogoBase64
+  ) => {
     const address = storeAddress ?? get().storeAddress;
     const phone = storePhone ?? get().storePhone;
     const phone2 = storePhone2 !== undefined ? storePhone2 : get().storePhone2;
     const footer = receiptFooter ?? get().receiptFooter;
     const qris = qrisImagePath !== undefined ? qrisImagePath : get().qrisImagePath;
+    const logoPath = storeLogoPath !== undefined ? storeLogoPath : get().storeLogoPath;
+    const logoBase64 = storeLogoBase64 !== undefined ? storeLogoBase64 : get().storeLogoBase64;
 
     await db.withExclusiveTransactionAsync(async (txn) => {
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_name', storeName);
@@ -156,6 +179,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_phone2', phone2);
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'receipt_footer', footer);
       await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'qris_image_path', qris);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_logo_path', logoPath);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_logo_base64', logoBase64);
     });
     set({
       storeName,
@@ -165,7 +190,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       storePhone2: phone2,
       receiptFooter: footer,
       qrisImagePath: qris,
+      storeLogoPath: logoPath,
+      storeLogoBase64: logoBase64,
     });
+  },
+
+  setStoreLogo: async (db, path, base64) => {
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_logo_path', path);
+      await txn.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 'store_logo_base64', base64);
+    });
+    set({ storeLogoPath: path, storeLogoBase64: base64 });
   },
 
   setAdminPin: async (db, pin) => {
@@ -226,20 +261,40 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     return pin.trim() === currentPin.trim();
   },
 
-  loginAsKasir: () => {
+  loginAsKasir: (db?: SQLiteDatabase) => {
     set({ currentUserRole: 'kasir' });
+    if (db) {
+      db.runAsync(
+        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+        'current_user_role',
+        'kasir'
+      ).catch(() => {});
+    }
   },
 
-  loginAsPemilik: (pin: string) => {
+  loginAsPemilik: (pin: string, db?: SQLiteDatabase) => {
     if (get().verifyPin(pin)) {
       set({ currentUserRole: 'pemilik' });
+      if (db) {
+        db.runAsync(
+          'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+          'current_user_role',
+          'pemilik'
+        ).catch(() => {});
+      }
       return true;
     }
     return false;
   },
 
-  logoutRole: () => {
+  logoutRole: (db?: SQLiteDatabase) => {
     set({ currentUserRole: null });
+    if (db) {
+      db.runAsync(
+        'DELETE FROM settings WHERE key = ?',
+        'current_user_role'
+      ).catch(() => {});
+    }
   },
 
   setPairingCode: async (code: string, db?: SQLiteDatabase) => {

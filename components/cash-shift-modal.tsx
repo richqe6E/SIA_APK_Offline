@@ -36,6 +36,7 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
     switchCashier,
     addCashierEmployee,
     removeCashierEmployee,
+    openShift,
     getShiftSummary,
     closeShift,
   } = useShiftStore();
@@ -55,9 +56,11 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
   useEffect(() => {
     if (visible) {
       loadShiftData(db).then(() => {
-        const activeName = useShiftStore.getState().currentShift?.cashier_name || 'Kasir 1';
+        const active = useShiftStore.getState().currentShift;
+        const activeName = active?.cashier_name || 'Kasir 1';
         setSelectedCashier(activeName);
-        setDrawerAmountStr(useShiftStore.getState().todayDrawerAmount.toString());
+        const amt = active ? active.starting_cash : useShiftStore.getState().todayDrawerAmount;
+        setDrawerAmountStr(amt > 0 ? amt.toString() : '200000');
       });
       setShowCloseShift(false);
       setIsEditingDrawer(false);
@@ -79,15 +82,18 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
     }
   }, [visible, currentShift, showCloseShift, db, getShiftSummary]);
 
-  // 1. Handle Buka Shift Pertama Kali Hari Ini
+  // 1. Handle Buka Shift Kasir
   const handleStartTodayShift = async () => {
     const cash = parseInt(drawerAmountStr.replace(/\D/g, ''), 10) || 0;
     const cashier = selectedCashier.trim() || newCashierName.trim() || 'Kasir';
 
     try {
       setLoading(true);
+      if (cashier && !cashierList.includes(cashier)) {
+        await addCashierEmployee(db, cashier);
+      }
       await saveDailyDrawerAmount(db, cash);
-      await switchCashier(db, cashier);
+      await openShift(db, cashier, cash);
       Alert.alert(
         'Shift Kasir Dimulai',
         `Modal laci Rp ${cash.toLocaleString('id-ID')} tersimpan.\nPetugas aktif: ${cashier}`
@@ -133,6 +139,7 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
       await saveDailyDrawerAmount(db, cash);
       setIsEditingDrawer(false);
       Alert.alert('Sukses', `Modal kas laci diperbarui menjadi Rp ${cash.toLocaleString('id-ID')}`);
+      onSuccess?.();
     } catch (e: any) {
       Alert.alert('Gagal', e?.message || 'Gagal menyimpan modal');
     }
@@ -229,6 +236,14 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
             /* ========================================================= */
             /* VIEW 3: REKONSILIASI / TUTUP SHIFT (Z-REPORT)              */
             /* ========================================================= */
+            !summary ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator size="large" color={Colors.tint} />
+                <ThemedText style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
+                  Menghitung rekonsiliasi transaksi kasir...
+                </ThemedText>
+              </View>
+            ) : (
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
               <View style={styles.shiftInfoBadge}>
                 <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#1e293b' }}>
@@ -273,17 +288,27 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
                 </View>
                 <View style={[styles.detailRow, styles.detailTotalRow]}>
                   <ThemedText type="defaultSemiBold" style={{ fontSize: 12.5 }}>
-                    Total Kas Laci Sistem
+                    Target Kas Sesi Shift Ini
                   </ThemedText>
                   <ThemedText type="defaultSemiBold" style={{ fontSize: 14, color: Colors.tint }}>
                     Rp {expectedNum.toLocaleString('id-ID')}
                   </ThemedText>
                 </View>
+                {summary?.cumulativeHandBalance !== undefined && Math.round(summary.cumulativeHandBalance) !== expectedNum && (
+                  <View style={[styles.detailRow, { paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f1f5f9' }]}>
+                    <ThemedText style={{ fontSize: 11, color: '#64748b' }}>
+                      💼 Total Kas Toko di Laci (Kumulatif)
+                    </ThemedText>
+                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>
+                      Rp {Math.round(summary.cumulativeHandBalance).toLocaleString('id-ID')}
+                    </ThemedText>
+                  </View>
+                )}
               </View>
 
               <View style={{ gap: 4 }}>
                 <ThemedText style={{ fontSize: 11.5, fontWeight: '700', color: '#334155' }}>
-                  Hitung Uang Fisik di Laci Kasir (Aktual):
+                  Hitung Uang Fisik Sesi Shift (Aktual):
                 </ThemedText>
                 <View style={styles.inputBox}>
                   <ThemedText style={styles.inputPrefix}>Rp</ThemedText>
@@ -296,12 +321,17 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
                     placeholderTextColor={Colors.placeholder}
                   />
                 </View>
+                {summary?.cumulativeHandBalance !== undefined && summary.cumulativeHandBalance > expectedNum && (
+                  <ThemedText style={{ fontSize: 10, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
+                    💡 Info: Termasuk sisa kas toko sebelumnya di laci Rp {Math.round(summary.cumulativeHandBalance - expectedNum).toLocaleString('id-ID')}. Input di atas adalah target sesi kasir.
+                  </ThemedText>
+                )}
               </View>
 
               <View
                 style={[
                   styles.diffBadge,
-                  difference === 0
+                  (difference === 0 || (summary?.cumulativeHandBalance !== undefined && actualNum === Math.round(summary.cumulativeHandBalance)))
                     ? styles.diffPass
                     : difference > 0
                     ? styles.diffOver
@@ -311,7 +341,7 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
                 <ThemedText
                   style={[
                     styles.diffText,
-                    difference === 0
+                    (difference === 0 || (summary?.cumulativeHandBalance !== undefined && actualNum === Math.round(summary.cumulativeHandBalance)))
                       ? styles.diffTextPass
                       : difference > 0
                       ? styles.diffTextOver
@@ -320,6 +350,8 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
                 >
                   {difference === 0
                     ? '✓ Saldo Kas PAS (Rp 0)'
+                    : (summary?.cumulativeHandBalance !== undefined && actualNum === Math.round(summary.cumulativeHandBalance))
+                    ? '✓ Saldo Kas Toko Kumulatif PAS (Semua Kas Laci Terhitung)'
                     : difference > 0
                     ? `▲ Kas Lebih: +Rp ${difference.toLocaleString('id-ID')}`
                     : `▼ Kas Kurang: -Rp ${Math.abs(difference).toLocaleString('id-ID')}`}
@@ -357,14 +389,15 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
                 />
               </View>
             </ScrollView>
-          ) : !isDrawerSetToday ? (
+            )
+          ) : !currentShift ? (
             /* ========================================================= */
-            /* VIEW 1: BUKA SHIFT PERTAMA HARI INI (MODAL AWAL 1X SEHARI)*/
+            /* VIEW 1: BUKA SHIFT KASIR (INPUT MODAL AWAL & PILIH KASIR) */
             /* ========================================================= */
             <View style={{ gap: 12 }}>
               <View style={styles.bannerDayNotice}>
                 <ThemedText style={{ fontSize: 12, color: '#0369a1', fontWeight: '600' }}>
-                  💡 Modal awal diinput 1 kali per hari. Jika berganti kasir nanti, kasir cukup memilih namanya tanpa menghitung ulang kas laci.
+                  💡 Masukkan modal kas di laci untuk memulai shift. Nominal modal awal akan otomatis tercatat ke buku kas toko.
                 </ThemedText>
               </View>
 
@@ -485,20 +518,21 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
               <View style={styles.drawerInfoCard}>
                 <View style={{ flex: 1 }}>
                   <ThemedText style={{ fontSize: 10.5, color: '#475569', fontWeight: '600' }}>
-                    Modal Awal Laci Hari Ini
+                    Modal Awal Laci Shift Ini
                   </ThemedText>
                   <ThemedText style={{ fontSize: 15, fontWeight: '800', color: '#0284c7', marginTop: 1 }}>
-                    Rp {todayDrawerAmount.toLocaleString('id-ID')}
+                    Rp {(currentShift?.starting_cash ?? todayDrawerAmount).toLocaleString('id-ID')}
                   </ThemedText>
                   <ThemedText style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>
-                    (Hanya diisi 1x sehari di awal operasional)
+                    (Tercatat di laci kasir & buku kas)
                   </ThemedText>
                 </View>
 
                 <TouchableOpacity
                   style={styles.btnEditDrawer}
                   onPress={() => {
-                    setDrawerAmountStr(todayDrawerAmount.toString());
+                    const currentAmt = currentShift ? currentShift.starting_cash : todayDrawerAmount;
+                    setDrawerAmountStr(currentAmt.toString());
                     setIsEditingDrawer(!isEditingDrawer);
                   }}
                 >
@@ -641,7 +675,10 @@ export function CashShiftModal({ visible, onClose, onSuccess }: CashShiftModalPr
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <TouchableOpacity
                   style={styles.btnCloseShiftTrigger}
-                  onPress={() => setShowCloseShift(true)}
+                  onPress={() => {
+                    setSummary(null);
+                    setShowCloseShift(true);
+                  }}
                 >
                   <ThemedText style={{ fontSize: 12 }}>🔒</ThemedText>
                   <ThemedText style={styles.btnCloseShiftTriggerText}>

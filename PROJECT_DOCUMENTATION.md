@@ -521,7 +521,111 @@ Proyek telah berkembang menjadi ekosistem retail lengkap untuk **AGEN SOSIS AZIZ
     * **Nomor Nota Batal:** Jika transaksi terakhir hari ini dibatalkan, counter `daily_counters.last_seq` dimundurkan agar nomor nota tidak loncat.
     * **Sanitasi Form & Dialog Konfirmasi:** Menolak input diskon > 100%, membersihkan tanda minus pada input berat timbangan, dan menambahkan konfirmasi sebelum menutup modal QRIS.
 
+12. **Tahap 4 & 5: Full Offline, Restore Legacy, Audit SAK EMKM, Rekonsiliasi Kas & Simulasi 1.000 Transaksi (Oktober 2026)**:
+    * **Mode 100% Offline:** Menonaktifkan loop cloud sync agar POS berjalan mandiri, ultra-responsif tanpa jeda sinyal internet.
+    * **Restore Database Lama:** Normalisasi skema kolom database lama (`pos_backup_20261004_1914.json`: 1.083 produk, 3.398 transaksi, 8.556 item) sukses pulih 100%.
+    * **Default Bayar Hutang Supplier Kas Bank:** Menyesuaikan alur grosir di mana pembayaran utang supplier secara default diambil dari kas `'bank'`.
+    * **Migrasi Database v19:** Menormalkan 23 baris historis pembayaran utang supplier (Rp 20.563.807) dari akun `'hand'` ke akun `'bank'`, memulihkan uang kas fisik laci toko ke kondisi riil.
+    * **Pencegahan Double Counting Setor Bank:** Menggunakan multiset frequency map `bankInFreq` pada kalkulasi buku kas.
+    * **Dukungan Split Payment & Eliminasi Nota Tempo di Laporan Lainnya:** Laporan omzet dan laba rugi terisolasi dari pelipatgandaan omzet piutang tempo non-tunai.
+    * **Pencatatan Selisih Kasir Fisik Tutup Shift:** Selisih fisik uang kasir (`difference`) dicatat otomatis ke `cash_ledger` sebagai kategori `selisih_kas` akun `'hand'`.
+    * **Simulasi 1.000 Transaksi Komprehensif:** 100% lolos pengujian matematika akuntansi dan rekonsiliasi kas.
+13. **Tahap 6: Koreksi Kas Kembalian Shift, Perpanjangan Margin Cetak Nota 7 Baris, Fitur Logo Usaha di Struk Thermal 58mm & Re-audit Sistem (6 Oktober 2026)**:
+    * **Koreksi Kembalian Tunai Kasir (`shiftStore.ts` & `transactionStore.ts`):** Menggunakan nilai nominal bersih transaksi (`total`) untuk penjualan tunai, sehingga uang kembalian tidak lagi menggelembungkan Kas Masuk Penjualan Tunai maupun Kas Diharapkan Sistem laci saat tutup shift.
+    * **Pilihan Akun Kas Pelunasan Piutang (`debt-receivable.tsx` & `debtReceivableStore.ts`):** Kasir/pemilik dapat memilih akun pencatatan uang masuk pelunasan piutang ke 💵 Kas di Tangan (`hand`) atau 🏛️ Kas di Bank (`bank`).
+    * **Umpan Kertas Cetak Ekstra (`services/print.ts`):** Menaikkan perintah umpan kertas menjadi `printAndFeed(7)` + `cutOnePoint()` pada semua format cetak (struk kasir, Z-Report, slip laba rugi, bukti setor bank), sehingga kertas keluar $\pm 2\text{ cm}$ lebih panjang melewati pisau pemotong (*tear bar*).
+    * **Upload & Cetak Logo Usaha di Struk Thermal 58mm (`store-settings.tsx`, `settingsStore.ts`, `print.ts`, `receipt-preview-modal.tsx`):** Mendukung pemilihan logo gambar dari galeri, penyimpanan offline SQLite, simulasi nota digital, dan pencetakan thermal 240 dot rata tengah yang rapi dan proporsional.
+    * **Preservasi Desain Asli & Re-audit Sistem:** Membatalkan eksperimen modifikasi UI dan mengembalikan 100% antarmuka ke standar pabrikan yang terbukti stabil, taktil, dan bebas error.
+    * **Perbaikan Akses Kamera & Galeri Foto (`app.json`, `explore.tsx`, `store-settings.tsx`, `utils/imageStorage.ts`):**
+      - Menambahkan permissions Android: `CAMERA`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, dan `READ_MEDIA_IMAGES` ke dalam `app.json`.
+      - Mendaftarkan config plugins Expo: `expo-camera` dan `expo-image-picker` di `app.json`.
+      - Menambahkan request permission runtime eksplisit untuk galeri foto dan kamera.
+      - Membuat helper `saveImageLocally` (`utils/imageStorage.ts`) yang mendukung skema `content://` (Android Photo Picker) dan `file://` dengan mekanisme fallback aman.
+    * **Build APK Preview Sebelumnya:**
+      - **Build ID**: `104b8eee-f695-4923-b94e-3d1c900398b7`
+      - **Live Status**: https://expo.dev/accounts/rikire/projects/pos-offline/builds/104b8eee-f695-4923-b94e-3d1c900398b7
+      - **Keystore**: `Build Credentials w2ACOjmW8I (default)`
+14. **Tahap 7: Perbaikan Sinkronisasi Riwayat Transaksi saat Reset Data & Audit Final Standar SOP (`history.tsx`, `data-management.tsx`, `Uji_Coba.md`)**:
+    * **Penyegaran Layar Riwayat (`useFocusEffect` di `history.tsx`):** Menambahkan `useFocusEffect` agar daftar transaksi selalu dimuat ulang saat tab Riwayat diakses.
+    * **Validasi & Auto-Cleanup Detail Transaksi (`history.tsx`):** Memvalidasi keberadaan `selected` di database SQLite secara real-time. Jika transaksi telah dihapus atau database direset, tampilan detail riwayat lama otomatis tertutup seketika (mencegah detail hantu muncul kembali).
+    * **Sinkronisasi In-Memory Reset & Restore (`data-management.tsx`):** Mereset state `transactions: []` seketika saat Buka Buku Baru (`executeFinancialReset`), Reset Pabrik (`executeFactoryReset`), dan memuat ulang transaksi saat Restore Backup.
+    * **Penyesuaian Dokumen Uji Coba (`Uji_Coba.md`):** Memperbarui skenario simulasi uji coba operasional menjadi 15 Transaksi Lengkap dengan rekonsiliasi dual-pocket dan laba rugi SAK EMKM yang 100% seimbang.
+    * **Audit Sistem Standar SOP:** Kompilasi TypeScript 0 error (`tsc --noEmit`), skema SQLite & foreign keys aman, kredensial keystore (`rikire`) valid.
+    * **Build APK Preview Terkini:**
+      - **Build ID**: `188c119a-c9f1-4bee-9099-0caf52ce0e33`
+      - **Live Status**: https://expo.dev/accounts/rikire/projects/pos-offline/builds/188c119a-c9f1-4bee-9099-0caf52ce0e33
+      - **Keystore**: `Build Credentials w2ACOjmW8I (default)`
+
+15. **Tahap 8: Audit Menyeluruh Modal Awal Kasir Shift, Sinkronisasi Dua Arah Buku Kas & Pembersihan Reset Buku Baru (6 Oktober 2026)**:
+    * **Akar Masalah Teridentifikasi:**
+      1. Nilai modal lama tersimpan di `settings.daily_drawer_amount` (Rp 150.000) dan tidak dibersihkan saat Buka Buku Baru / Reset Database.
+      2. Status `isDrawerSetToday` mengunci form Buka Shift ke View 2 (Ganti Kasir) sehingga kasir tidak dapat mengisi modal baru saat membuka shift.
+      3. Fungsi koreksi modal `saveDailyDrawerAmount` hanya mengupdate tabel `cash_shifts` tanpa mengupdate `cash_ledger` (kategori `modal_awal`) dan tidak memanggil `loadLedger(db)`, menyebabkan saldo kas laci di Beranda dan Buku Kas tidak berubah saat modal diedit.
+      4. Kueri SQL update shift `expected_cash = starting_cash + total_sales_cash` mengevaluasi nilai kolom lama sebelum update.
+    * **Perbaikan Terisolasi & Rekayasa Arsitektur:**
+      * **Sinkronisasi Dua Arah Modal Shift & Buku Kas (`shiftStore.ts` & `cashStore.ts`):** Mengoreksi modal kas laci kini memperbarui `settings`, `cash_shifts`, dan `cash_ledger` secara atomik, serta menyegarkan saldo kas laci secara realtime. Sebaliknya, pengeditan entri `modal_awal` di Buku Kas otomatis menyinkronkan modal shift aktif dan settings toko.
+      * **Kondisi Form Buka Shift Kasir (`cash-shift-modal.tsx`):** Mengubah kondisi tampilan form modal menjadi `!currentShift`. Setiap kali tidak ada shift aktif, kasir selalu disajikan form Buka Shift untuk memasukkan modal awal dan memilih nama petugas secara bebas tanpa terkunci data lama.
+      * **Ekspilisit Parameter Buka Shift (`cash-shift-modal.tsx`):** `handleStartTodayShift` kini memanggil `openShift(db, cashier, cash)` dengan nominal modal eksplisit yang baru diketik kasir, menghilangkan celah race condition antar state.
+      * **Pembersihan Bersih saat Buka Buku Baru & Reset Pabrik (`database.ts`, `data-management.tsx`, `shiftStore.ts`):** `settings.daily_drawer_date` dan `settings.daily_drawer_amount` kini ikut dibersihkan dari database, dan `resetShiftStore()` mengosongkan state in-memory sehingga toko benar-benar memulai dari nol (bebas dari artefak modal historis).
+16. **Tahap 9: Audit Komprehensif Logika Sistem, Transaksi & Laporan Keuangan Pra-Build (6 Oktober 2026)**:
+    * **Audit Celah Logika & Penemuan Kritis:**
+      1. **Sinkronisasi Sequence Nota pada Revert/Edit Transaksi (`transactionStore.ts`):** Pada saat kasir mengedit nota terakhir hari ini melalui riwayat, nomor urut nota (`daily_counters.last_seq`) sebelumnya tidak dimundurkan, menyebabkan loncatan nomor nota saat checkout ulang. Ditambahkan mekanisme rollback atomik `last_seq = MAX(0, last_seq - 1)`.
+      2. **Refresh Shift Kasir Aktif pada Layar Transaksi (`transaksi.tsx`):** Layar kasir kini memuat `loadActiveShift(db)` secara reaktif saat mount, memastikan atribusi ID shift dan nama operator kasir selalu selaras 100% dengan sesi kasir yang sedang aktif di SQLite.
+      3. **Pemberantasan Entri Yatim Setor Bank (`cashStore.ts`):** Pada fungsi `deleteEntry`, penghapusan entri `setor_bank` kini secara atomik mendeteksi dan menghapus pasangan transaksi transfer bank di akun lawannya (hand <-> bank) sehingga kedua pocket kas toko tidak mengalami desinkronisasi.
+      4. **Penyelarasan Filter Detail Kas Masuk Penjualan (`laporan-lainnya-tab.tsx`):** Kueri rincian transaksi nota pada popup "Penjualan Produk" kini mengecualikan transaksi kasbon/tempo (`payment_method != 'hutang' AND is_credit = 0`), menyamakan 100% nilai agregat kartu kas masuk dengan total baris nota transaksi di dalam popup.
+      5. **Konsistensi Evaluasi Shift Split & Rentang Tanggal Bulanan (`shiftStore.ts` & `laporan-lainnya-tab.tsx`):** Mengevaluasi split payment lebih awal dalam kueri shift dan menormalkan rentang filter bulanan (`start of month` s.d. `start of month, +1 month`).
+    * **Verifikasi & Validasi Akhir:**
+      * Kompilasi TypeScript: 100% Lulus (0 error, exit code 0).
+      * Simulasi Uji Stres Komprehensif: 11 skenario operasional lulus 100% akurat.
+      * Simulasi Riil 15 Transaksi Lengkap (`Uji_Coba.md`): Lulus 100% dengan kecocokan nominal sempurna hingga satuan Rupiah.
+    * **Build APK Preview Terkini (Tahap 9):**
+      - **Build ID**: `c22e4b76-9634-41a9-97a8-e48caeeda39c`
+      - **Live Status**: https://expo.dev/accounts/rikire/projects/pos-offline/builds/c22e4b76-9634-41a9-97a8-e48caeeda39c
+      - **Keystore**: `Build Credentials w2ACOjmW8I (default)`
+
+17. **Tahap 10: Perbaikan Menyeluruh 4 Bug Lapangan, Guardrail Stok Multi-Titik, Integritas Z-Report & Eliminasi Kilatan Riwayat (6 Oktober 2026)**:
+    * **Audit & Perbaikan Celah Lapangan:**
+      1. **Guardrail Stok Multi-Titik (`transaksi.tsx` & `transactionStore.ts`):** Tombol `+` di keranjang dan modal `BulkQtyModal` kini diproteksi `handleUpdateQtyWithValidation`. Kuantitas diblokir saat melebihi sisa stok fisik di freezer pada produk kelola stok (`has_stock === 1`), mengeliminasi total celah overselling.
+      2. **Integritas Tutup Shift Kasir & Z-Report (`shiftStore.ts` & `cash-shift-modal.tsx`):** Mengatribusikan transaksi yang dibuat sebelum pembukaan shift (`shift_id IS NULL AND date(created_at) = date(?)`) ke ID shift aktif pada `loadActiveShift` dan `getShiftSummary`. Menambahkan validasi `status === 'open'` pada `closeShift` untuk mencegah double-tap / double-entry mutasi kas, serta menampilkan loader rekonsiliasi saat modal dibuka untuk mencegah kilatan data 0 nota prematur.
+      3. **Eliminasi Kilatan & Optimasi Layar Riwayat (`history.tsx`):** Menghapus `selected` dari dependency array `useFocusEffect` sehingga klik transaksi di mode portrait tidak lagi memicu refetch loop yang menutup paksa detail nota. Menambahkan penguncian `isFetchingMoreRef` dan status `loadingItems` untuk performa scroll yang ringan.
+      4. **Optimasi Pemuatan Laporan Lainnya (`laporan-lainnya-tab.tsx`):** Mengatur `loading = true` pada inisialisasi mount untuk mencegah kemunculan `EmptyState` semu, serta mengganti fungsi `substr()` dengan kueri rentang tanggal berindeks (`>= ? AND < ?`) untuk kecepatan respons instan.
+      5. **Proteksi Anti Double-Entry & Akselerasi Tablet Spek Rendah (RAM 4GB):**
+         - Menambahkan mutex atomik single-flight `checkoutMutex` di level Zustand dan ref lock sinkron `isSubmittingRef` di level UI checkout, memblokir klik ganda instan saat tablet mengalami stutter/lag.
+         - Menambahkan guardrail stok level store pada `addToCart` dan `updateQuantity` sehingga scan barcode cepat atau klik berulang tidak dapat melampaui sisa stok fisik.
+         - Memproteksi proses buka shift (`openShiftMutex`), tutup shift (`closeShiftMutex`), pelunasan piutang (`payReceivableMutex`), dan bayar hutang supplier (`payDebtMutex`) dengan mutex terisolasi.
+    * **Verifikasi & Validasi Akhir:**
+      * Kompilasi TypeScript: 100% Lulus (0 error, exit code 0).
+      * Simulasi 15 Transaksi Riil (`Uji_Coba.md`): 100% Lulus dengan akurasi nominal sempurna.
+      * Unit Test Logika Perbaikan: 100% Lulus tanpa celah logika.
+    * **Build APK Preview Terkini (Tahap 10):**
+      - **Build ID**: `4de4363b-41c0-4fd8-8074-fc9a19f092d9`
+      - **Live Status**: https://expo.dev/accounts/rikire/projects/pos-offline/builds/4de4363b-41c0-4fd8-8074-fc9a19f092d9
+      - **Keystore**: `Build Credentials w2ACOjmW8I (default)`
+
+18. **Tahap 11: Modul Foto Faktur Hutang Supplier, Kategori Kas Terstruktur & Jatuh Tempo Piutang Kasir (8 Oktober 2026)**:
+    * **Audit & Fitur Baru:**
+      1. **Foto Faktur Hutang Supplier (`supplier_debts` Migrasi v20):** Menambahkan kolom `invoice_image TEXT` dan `notes TEXT`. Gambar disimpan offline di folder aplikasi (`FileSystem.documentDirectory + 'debts/'`). Antarmuka dilengkapi thumbnail foto, viewer zoom resolusi tinggi, form pengambilan foto dari kamera/galeri, dan modal edit foto/catatan hutang lama.
+      2. **Kategori Kas Masuk & Keluar Terstruktur:** Segmented control 2 tab (`📊 Terkait Laba/Rugi` vs `💼 Non-Laba/Rugi (Prive/Modal)`) di Buku Kas, pemisah titik ribuan nominal uang (`formatRupiahInput`), pemilih kalender fleksibel (`DateTimePicker`), dan isolasi SAK EMKM beban non-operasional (`prive` & `bayar_pinjaman`).
+      3. **Transaksi Kasir Hutang & Bon Piutang:** Jatuh tempo cepat (+3 Hari, +7 Hari, +14 Hari, Custom), rincian produk bon piutang (`🔍 Rincian Produk`), dan tombol edit nota piutang atomik ke keranjang belanja kasir.
+    * **Build APK Tahap 11:**
+      - **Build ID**: `a098dc76-d074-4d4f-b5e3-527d9ea4749a` (v1.0.1 / Code 5)
+      - **Keystore**: `Build Credentials w2ACOjmW8I (default)`
+
+19. **Tahap 12: Resolusi Gagal Setor Bank, Sinkronisasi Kas Laci Tutup Shift & Full Simulation (10 Oktober 2026)**:
+    * **Audit Lapangan & Resolusi Bug:**
+      1. **Penyelarasan Kueri Setor Bank (`cashStore.ts`):** Mengeliminasi pemotongan ganda uang kembalian pelanggan (`sales_change`) pada kueri saldo kas fisik laci di `depositToBank`. Saldo kas fisik laci yang dibaca fitur Setor Bank kini 100% selaras dengan Dasbor dan Buku Kas (`loadLedger`).
+      2. **Rekonsiliasi Transparan Tutup Shift Kasir (`shiftStore.ts` & `cash-shift-modal.tsx`):** Menampilkan dua parameter dengan jelas: **Target Kas Sesi Shift Ini** dan **Total Kas Toko di Laci (Kumulatif)**. Input fisik kasir yang cocok dengan kas toko di laci ditandai **PAS (Hijau)** dan dicegah dari pembuatan entri selisih kas fiktif di Buku Kas. Kueri nota kasir aktif diperluas untuk mengaitkan transaksi yang melintasi tengah malam.
+      3. **Simulasi Rigorous 9 Tahap:** Pengujian 33 transaksi (Tunai, QRIS, Split, Kasbon), pending order, diskon/pajak, penerimaan/pengeluaran kas, piutang pelanggan, hutang supplier, riwayat edit/batal, tutup shift, dan backup-restore JSON lulus 100% tanpa error.
+    * **Build APK Rilis Terkini (Tahap 12):**
+      - **Status**: ✅ **FINISHED (Sukses)**
+      - **Build ID**: `9a44d59d-d7bb-4589-80b2-f7a67cb2ad12`
+      - **Versi Rilis**: `v1.0.2` (Android `versionCode: 6`, mode: `local`)
+      - **Akun EAS**: `@rikires-team/pos-offline` (Project ID: `97d847aa-a65d-4eb8-9d21-33f936cce00e`)
+      - **Direct Download Link**: https://expo.dev/artifacts/eas/P82NcVk_GHnC7V2QvhBmRLNMI66Tx7MYdIzjLAYq_bs.apk
+      - **Live URL**: https://expo.dev/accounts/rikires-team/projects/pos-offline/builds/9a44d59d-d7bb-4589-80b2-f7a67cb2ad12
+      - **Keystore**: `Build Credentials w2ACOjmW8I (default)` *(100% Preserved)*
+
 ---
 
-*Dokumen ini diperbarui secara resmi pada 15 September 2026 sebagai catatan riwayat lengkap dan panduan kesinambungan ekosistem POS AGEN SOSIS AZIZAH.*
+*Dokumen ini diperbarui secara resmi pada 10 Oktober 2026 sebagai catatan riwayat lengkap dan panduan kesinambungan ekosistem POS AGEN SOSIS AZIZAH.*
 

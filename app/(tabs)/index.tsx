@@ -487,7 +487,7 @@ export default function DashboardScreen() {
               {/* Tombol Peran Kasir / Pemilik */}
               <TouchableOpacity
                 style={styles.roleBadgeBtn}
-                onPress={logoutRole}
+                onPress={() => logoutRole(db)}
                 activeOpacity={0.8}
               >
                 <ThemedText style={styles.roleBadgeIcon}>
@@ -548,7 +548,7 @@ export default function DashboardScreen() {
 
               <TouchableOpacity
                 style={styles.roleBadgeBtn}
-                onPress={logoutRole}
+                onPress={() => logoutRole(db)}
                 activeOpacity={0.8}
               >
                 <ThemedText style={styles.roleBadgeIcon}>
@@ -1081,6 +1081,9 @@ export default function DashboardScreen() {
         visible={shiftModalVisible}
         onClose={() => {
           setShiftModalVisible(false);
+          loadSummary();
+        }}
+        onSuccess={() => {
           loadSummary();
         }}
       />

@@ -1,4 +1,5 @@
 import { BluetoothEscposPrinter } from '@vardrz/react-native-bluetooth-escpos-printer';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 const W = 32;
@@ -114,6 +115,7 @@ export interface PrintParams {
   storeAddress?: string;
   storePhone?: string;
   storePhone2?: string;
+  storeLogoBase64?: string;
   cashierName?: string;
   shiftName?: string;
   customerName?: string;
@@ -127,6 +129,24 @@ export async function printReceipt(params: PrintParams): Promise<void> {
   const storeName = params.storeName ?? 'POS Offline';
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+
+  // Cetak Logo Toko jika tersedia
+  const logoBase64 = params.storeLogoBase64 || useSettingsStore.getState().storeLogoBase64;
+  if (logoBase64 && logoBase64.trim()) {
+    try {
+      const cleanBase64 = logoBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+      await BluetoothEscposPrinter.printPic(cleanBase64, {
+        width: 240,
+        center: true,
+        autoCut: false,
+        paperSize: 58,
+      });
+      await BluetoothEscposPrinter.printAndFeed(1);
+    } catch (err) {
+      console.warn('Gagal cetak logo struk:', err);
+    }
+  }
+
   await BluetoothEscposPrinter.printText(storeName + '\n', {});
   if (params.storeAddress) {
     await BluetoothEscposPrinter.printText(params.storeAddress + '\n', {});
@@ -195,7 +215,7 @@ export async function printReceipt(params: PrintParams): Promise<void> {
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
   await BluetoothEscposPrinter.printText((params.receiptFooter || 'Terima Kasih Atas Kunjungan Anda!') + '\n', {});
 
-  await BluetoothEscposPrinter.printAndFeed(4);
+  await BluetoothEscposPrinter.printAndFeed(7);
   BluetoothEscposPrinter.cutOnePoint();
 }
 
@@ -269,7 +289,7 @@ export async function printZReport(params: PrintZReportParams): Promise<void> {
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('Dicetak Otomatis oleh Sistem\n', {});
 
-  await BluetoothEscposPrinter.printAndFeed(4);
+  await BluetoothEscposPrinter.printAndFeed(7);
   BluetoothEscposPrinter.cutOnePoint();
 }
 
@@ -362,7 +382,7 @@ export async function printLaporanLabaRugi(params: {
   await BluetoothEscposPrinter.printText(formatLRRow('LABA BERSIH', finalLaba) + '\n', {});
   await BluetoothEscposPrinter.printText(DIVIDER + '\n', {});
 
-  await BluetoothEscposPrinter.printAndFeed(4);
+  await BluetoothEscposPrinter.printAndFeed(7);
   BluetoothEscposPrinter.cutOnePoint();
 }
 
@@ -456,7 +476,7 @@ export async function printBankDepositReceipt(params: {
   );
 
   await BluetoothEscposPrinter.printText('\nSimpan bukti ini sebagai arsip mutasi kas.\n', {});
-  await BluetoothEscposPrinter.printAndFeed(4);
+  await BluetoothEscposPrinter.printAndFeed(7);
   BluetoothEscposPrinter.cutOnePoint();
 }
 
