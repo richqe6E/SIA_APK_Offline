@@ -1,25 +1,26 @@
-# CATATAN RESMI SERAH TERIMA SESI PENGEMBANGAN (SESI 11 OKTOBER 2026)
-**Ekosistem Aplikasi: POS AGEN SOSIS AZIZAH**  
-**Target Hardware: Tablet Kasir Android & Smartphone Pemilik**
+# CATATAN RESMI SERAH TERIMA SESI PENGEMBANGAN (SESI 15 OKTOBER 2026)
+**Aplikasi: POS AZIZAH (SIA POS Offline 100% Standalone)**  
+**Target Hardware: Tablet Kasir Android & Smartphone Android (Optimal Xiaomi RAM 4GB)**
 
 ---
 
 ## 📌 STATUS TERAKHIR PROYEK (READY TO DEPLOY & PRODUKSI)
-* **Tanggal Penyelesaian Sesi**: 11 Oktober 2026, 11:30 WIB
+* **Tanggal Penyelesaian Sesi**: 15 Oktober 2026, 17:35 WITA / 16:35 WIB
 * **Kondisi Codebase**: 100% Bersih, 0 Error TypeScript (`npx tsc --noEmit` exit code 0 divalidasi).
-* **Kondisi Database & Migrasi**: SQLite Lokal Migrasi v20, Foreign Keys ON, WAL mode, dan B-Tree Indexing.
-* **Integritas Logika**: Seluruh alur POS, Shift Kasir (Z-Report), SAK EMKM Dual-Pocket, Setor Bank, Isolasi Prive/Pinjaman, Guardrail Stok, dan Kompatibilitas Penuh Tablet 100% verified via Simulasi 23 Skenario tanpa cacat logika.
-* **Status Build APK Rilis Terbaru (Tahap 14: Kompatibilitas Penuh Tablet & Anti-Crash)**:
+* **Kondisi Database & Migrasi**: SQLite Lokal Migrasi v20, Foreign Keys ON, WAL mode, `busy_timeout = 5000ms`, `synchronous = NORMAL`, dan B-Tree Indexing.
+* **Integritas Logika**: Stok timbangan desimal presisi (`0.25 kg`), HPP Weighted Moving Average kulakan, Bluetooth timeout guard 7 detik, fallback izin native kamera `PermissionsAndroid`, dan galeri `legacy: true`.
+* **Status Build APK Rilis Terbaru (Tahap 15: Resolusi Audit Argon, Anti-Crash Xiaomi & Presisi Akuntansi)**:
   - **Status Build**: ✅ **FINISHED (Sukses Kompilasi)**
-  - **Build ID**: `c45d19a5-d22b-4d5f-94d3-eeb6d29bce93`
-  - **Versi Aplikasi**: `v1.0.4` (Android `versionCode: 8`, mode: `local`)
+  - **Build ID**: `3629d8cb-a3f7-4980-afc8-03bd6f836d27`
+  - **Versi Aplikasi**: `v1.0.5` (Android `versionCode: 9`, mode: `local`)
   - **Akun EAS**: `@rikires-team/pos-offline` (Project ID: `97d847aa-a65d-4eb8-9d21-33f936cce00e`)
-  - **Keystore Digital**: `Build Credentials w2ACOjmW8I (default)` *(Keystore digital orisinal 100% terjaga; update APK di tablet tidak menghapus data SQLite lokal pengguna).*
+  - **Keystore Digital**: `Build Credentials w2ACOjmW8I (default)` *(Keystore digital orisinal 100% terjaga; update APK di tablet menimpa versi lama tanpa menghapus data SQLite lokal pengguna).*
   - **Link Unduh APK Langsung**:
-    👉 **[Download APK v1.0.4 (gvqCC4VseIhbvRKHM7kP9sC399Vu4K3j7YXaC8z3IBs.apk)](https://expo.dev/artifacts/eas/gvqCC4VseIhbvRKHM7kP9sC399Vu4K3j7YXaC8z3IBs.apk)**
+    👉 **[Download APK v1.0.5 (lTgaW9RfwLZywe1NmDpP5Xme0Z3NuQ-cfHyuI0ewVxQ.apk)](https://expo.dev/artifacts/eas/lTgaW9RfwLZywe1NmDpP5Xme0Z3NuQ-cfHyuI0ewVxQ.apk)**
   - **Live URL Dashboard Expo**:
-    👉 **[Expo Build Details](https://expo.dev/accounts/rikires-team/projects/pos-offline/builds/c45d19a5-d22b-4d5f-94d3-eeb6d29bce93)**
+    👉 **[Expo Build Details](https://expo.dev/accounts/rikires-team/projects/pos-offline/builds/3629d8cb-a3f7-4980-afc8-03bd6f836d27)**
 * **Riwayat Build Sebelumnya**:
+  - **Tahap 14**: `c45d19a5-d22b-4d5f-94d3-eeb6d29bce93` (v1.0.4 / Code 8)
   - **Tahap 13**: `851403dc-0450-4219-975c-d2e6f51caa94` (v1.0.3 / Code 7)
   - **Tahap 12**: `9a44d59d-d7bb-4589-80b2-f7a67cb2ad12` (v1.0.2 / Code 6)
   - **Tahap 11.2**: `a098dc76-d074-4d4f-b5e3-527d9ea4749a` (v1.0.1 / Code 5)

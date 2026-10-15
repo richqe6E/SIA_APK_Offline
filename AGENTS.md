@@ -1,55 +1,30 @@
-# Ekosistem Aplikasi "AGEN SOSIS AZIZAH"
+# Arsitektur Aplikasi "POS AZIZAH" (Point of Sale Full Offline)
 
-Proyek ini terdiri dari **2 Aplikasi Mandiri** yang saling terintegrasi melalui Cloud Sync Supabase:
+Proyek ini adalah **Aplikasi Kasir Tablet & Smartphone Mandiri 100% Full Offline**:
 
 ---
 
-## 1. Aplikasi Kasir Tablet Utama (`POS-Offline-main`)
-* **Folder**: Root workspace (`d:/PROJEK APLIKASI POS OFFLINE/POS-Offline-source-code/POS-Offline-main`)
+## 1. Identitas & Spesifikasi Aplikasi Kasir
 * **Nama Aplikasi**: **POS AZIZAH**
 * **Package Android**: `com.rumahmakan.posoffline`
-* **Slug Expo**: `pos-offline` (Akun EAS: `risgoldofficial23`)
-* **Target Hardware**: Tablet Kasir Toko
-* **Orientasi**: Fleksibel (Mendukung Landscape dan Portrait sesuai pengaturan)
-* **Database Utama**: SQLite Lokal (`expo-sqlite`) — 100% Berfungsi Offline
-* **State Management**: Zustand
+* **Slug Expo**: `pos-offline` (Akun EAS: `rikire`)
+* **Project ID EAS**: `97d847aa-a65d-4eb8-9d21-33f936cce00e` (`@rikires-team/pos-offline`)
+* **Target Hardware**: Tablet Kasir Toko & Smartphone Android (Dioptimalkan untuk Xiaomi MIUI/HyperOS RAM 4GB)
+* **Orientasi**: Fleksibel (Mendukung Landscape dan Portrait sesuai preferensi toko)
+* **Database Utama**: SQLite Lokal (`expo-sqlite`) dengan `PRAGMA journal_mode = 'wal'` dan `PRAGMA busy_timeout = 5000` — **100% Berfungsi Penuh Secara Offline Tanpa Internet / Cloud Backend**.
+* **State Management**: Zustand 5
 * **Peran Pengguna (Role)**:
-  1. `kasir`: Akses cepat melayani penjualan, scan barcode, keranjang, cetak struk thermal.
-  2. `pemilik`: Otorisasi PIN untuk laporan laba/rugi, stok opname, modal laci, dan pengaturan toko.
+  1. `kasir`: Melayani penjualan, scan barcode kamera & scanner USB/Bluetooth, kelola keranjang belanja, cetak struk thermal 58mm.
+  2. `pemilik`: Otorisasi PIN 6-digit untuk laporan laba/rugi SAK EMKM, buku kas dual-pocket, stok opname, modal laci, kulakan stok, dan pengaturan toko.
 * **Fitur Utama**:
-  - Transaksi Kasir (Katalog sosis & frozen food, barcode scanner, multi-satuan grosir/eceran, diskon).
-  - Cetak Struk Printer Thermal Bluetooth (ESC/POS).
-  - Manajemen Stok & Freezer (Batch kadaluarsa, opname stok, peringatan restock).
-  - Kas Laci & Rekening Bank (Dual-pocket, buka/tutup shift, setoran bank).
-  - Piutang Pelanggan & Utang Supplier.
-* **Layar Login**: Terminal POS industrial bersih, elegan, taktil, dan bebas dari kesan AI slop.
-* **Tugas Cloud Sync**: Mengirim ringkasan transaksi (`cashTxTotal`, `nonCashTxTotal`, shift, stok, valuasi freezer) ke Supabase di latar belakang secara otomatis.
-
----
-
-## 2. Aplikasi Pemantau Smartphone Pemilik (`kendali-usaha-azizah`)
-* **Folder**: `kendali-usaha-azizah` ([kendali-usaha-azizah](file:///d:/PROJEK%20APLIKASI%20POS%20OFFLINE/POS-Offline-source-code/POS-Offline-main/kendali-usaha-azizah))
-* **Nama Aplikasi**: **KENDALI USAHA AZIZAH**
-* **Nama Usaha**: **AGEN SOSIS AZIZAH**
-* **Package Android**: `com.azizah.kendaliusaha`
-* **Slug Expo**: `kendali-usaha-azizah` (Akun EAS: `risgoldofficial23`)
-* **Target Hardware**: Smartphone Pribadi Pemilik Toko
-* **Orientasi**: Portrait (Terkunci)
-* **Sifat Aplikasi**: 100% *Read-Only* (Pengawasan murni, tanpa risiko kasir/pemilik salah pencet data transaksi di HP).
-* **Struktur 3 Tab Navigasi Bawah**:
-  1. **📊 Dasbor**: Omset hari ini, 💵 Kas Masuk Tunai vs 📱 Non-Tunai (QRIS), Kas Laci & Bank, Status Shift Kasir, Jam Paling Ramai, Margin Laba Kotor, dan 10 Transaksi Terkini.
-  2. **📑 Laporan**: Laba/Rugi Bulanan, Valuasi Modal Stok di Freezer, Peringatan Stok & Kadaluarsa, Top 5 Produk Terlaris, serta Peringatan Piutang Jatuh Tempo $\le 3$ Hari.
-  3. **⚙️ Pengaturan**: Status sambungan cloud toko, kode pairing aktif (`AZ-7789`), pilihan auto-refresh data, dan info aplikasi.
-
----
-
-## 3. Infrastruktur Cloud & Sinkronisasi
-* **Cloud Platform**: Supabase (Tabel sinkronisasi toko offline)
-* **Kode Pairing Standar**: `AZ-7789`
-* **Alur Data**:
-  - Tablet Kasir (`POS-Offline-main`) bertindak sebagai **Sumber Data Tunggal (Single Source of Truth)**.
-  - Setiap ada transaksi, buka shift, atau update kas, kasir secara otomatis mengompilasi payload dan memperbarui Supabase.
-  - Smartphone Pemantau (`kendali-usaha-azizah`) membaca data dari Supabase secara berkala (interval 30 detik / 1 menit / manual refresh).
+  - Transaksi Kasir (Katalog frozen food, barcode scanner, multi-satuan grosir/eceran, diskon persentase/rupiah, pending transaksi, split payment tunai & QRIS).
+  - Produk Timbangan Curah (`is_weighted: 1`) dengan pemotongan stok gramatur desimal presisi (0.25 kg, 0.5 kg, 0.75 kg).
+  - Harga Pokok Penjualan (HPP) Rata-rata Bergerak (*Weighted Moving Average*) saat kulakan masuk.
+  - Cetak Struk Printer Thermal Bluetooth (ESC/POS 58mm) dengan logo usaha dan timeout guard 7 detik.
+  - Manajemen Kas Dual-Pocket (Kas Fisik di Tangan/Laci vs Rekening Bank), buka/tutup shift kasir, dan bukti setoran bank.
+  - Piutang Pelanggan (Bon) & Hutang Supplier lengkap dengan foto faktur offline.
+* **Layar Login & Antarmuka**: Terminal POS industrial bersih, elegan, berorientasi taktil, dan bebas dari kesan AI slop.
+* **Karakter Data**: Sepenuhnya mandiri (*standalone single device*). Tidak ada sinkronisasi Supabase/Firebase/backend cloud untuk menjamin kecepatan maksimal, privasi 100%, dan ketiadaan latensi sinyal.
 
 ---
 
