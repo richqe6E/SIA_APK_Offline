@@ -47,6 +47,7 @@ Proyek ini adalah **Aplikasi Kasir Tablet & Smartphone Mandiri 100% Full Offline
   - **Build ID**: `eb92f9ff-e4da-49f2-b878-3b1eecb8a815`
   - **Versi**: v1.0.6 (Code 10)
   - **Live URL**: https://expo.dev/accounts/rikires-team/projects/pos-offline/builds/eb92f9ff-e4da-49f2-b878-3b1eecb8a815
+  - **Direct APK**: https://expo.dev/artifacts/eas/n-2Rcy21loMqHKJTHrlv4YoWnO1JWM4g_9tHUnZ8eXo.apk
 * **Build Sebelumnya**:
   - **Tahap 15**: `3629d8cb-a3f7-4980-afc8-03bd6f836d27` (v1.0.5 / Code 9) - Direct APK: https://expo.dev/artifacts/eas/lTgaW9RfwLZywe1NmDpP5Xme0Z3NuQ-cfHyuI0ewVxQ.apk
   - **Tahap 14**: `c45d19a5-d22b-4d5f-94d3-eeb6d29bce93` (v1.0.4 / Code 8)
