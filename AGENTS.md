@@ -44,8 +44,9 @@ Proyek ini adalah **Aplikasi Kasir Tablet & Smartphone Mandiri 100% Full Offline
 * **Project ID EAS**: `97d847aa-a65d-4eb8-9d21-33f936cce00e` (`@rikire/pos-offline`)
 * **Keystore Digital**: `Build Credentials w2ACOjmW8I (default)` (Wajib dipertahankan agar update APK tidak menghapus data SQLite lokal pengguna).
 * **Build Terkini (Tahap 16: Resolusi Audit Menyeluruh Agen Argon, Stabilitas SQLite Suspense, Anti-Crash Bluetooth Native Bridge & Dual-Fallback Image Picker, v1.0.6 / Code 10)**:
-  - **Status Kode**: Selesai Diimplementasikan & Lulus TypeScript Check 100% (0 error)
+  - **Build ID**: `e22aeddb-d6dd-4685-a836-3917c45667da`
   - **Versi**: v1.0.6 (Code 10)
+  - **Live URL**: https://expo.dev/accounts/rikires-team/projects/pos-offline/builds/e22aeddb-d6dd-4685-a836-3917c45667da
 * **Build Sebelumnya**:
   - **Tahap 15**: `3629d8cb-a3f7-4980-afc8-03bd6f836d27` (v1.0.5 / Code 9) - Direct APK: https://expo.dev/artifacts/eas/lTgaW9RfwLZywe1NmDpP5Xme0Z3NuQ-cfHyuI0ewVxQ.apk
   - **Tahap 14**: `c45d19a5-d22b-4d5f-94d3-eeb6d29bce93` (v1.0.4 / Code 8)
