@@ -22,6 +22,11 @@ export async function saveImageLocally(
       return sourceUri;
     }
 
+    // Jika gambar sudah berada di dalam direktori dokumen lokal aplikasi, tidak perlu disalin ulang
+    if (sourceUri.startsWith(baseDir)) {
+      return sourceUri;
+    }
+
     const targetDir = `${baseDir}${folder}/`;
     const dirInfo = await FileSystem.getInfoAsync(targetDir);
     if (!dirInfo.exists) {

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
+import { withSqliteRetry } from '@/services/database';
 
 // Section neraca: aset_tetap, kewajiban, modal
 export type BalanceSheetSection = 'aset_tetap' | 'kewajiban' | 'modal';
@@ -60,10 +61,17 @@ export const useBalanceSheetStore = create<BalanceSheetState>((set, get) => ({
 
   loadItems: async (db) => {
     set({ loading: true });
-    const items = await db.getAllAsync<BalanceSheetItem>(
-      'SELECT * FROM balance_sheet_items ORDER BY section ASC, sort_order ASC, id ASC'
-    );
-    set({ items, loading: false });
+    try {
+      const items = await withSqliteRetry(() =>
+        db.getAllAsync<BalanceSheetItem>(
+          'SELECT * FROM balance_sheet_items ORDER BY section ASC, sort_order ASC, id ASC'
+        )
+      );
+      set({ items, loading: false });
+    } catch (error) {
+      console.warn('loadItems gagal sementara, mempertahankan data di memori:', error);
+      set({ loading: false });
+    }
   },
 
   upsertItem: async (db, item) => {

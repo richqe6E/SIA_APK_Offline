@@ -43,12 +43,11 @@ Proyek ini adalah **Aplikasi Kasir Tablet & Smartphone Mandiri 100% Full Offline
 * **Akun EAS Aktif Terverifikasi**: `rikire` (`rikyrivaldi369@gmail.com`)
 * **Project ID EAS**: `97d847aa-a65d-4eb8-9d21-33f936cce00e` (`@rikire/pos-offline`)
 * **Keystore Digital**: `Build Credentials w2ACOjmW8I (default)` (Wajib dipertahankan agar update APK tidak menghapus data SQLite lokal pengguna).
-* **Build Terkini (Tahap 15: Perbaikan Audit Agen Argon, Presisi Stok Timbangan Desimal, HPP Weighted Moving Average, Anti-Crash SQLite Tablet Xiaomi & Robust Camera/Gallery Picker, v1.0.5 / Code 9)**:
-  - **Build ID**: `3629d8cb-a3f7-4980-afc8-03bd6f836d27`
-  - **Status**: FINISHED (Sukses)
-  - **Direct APK URL**: https://expo.dev/artifacts/eas/lTgaW9RfwLZywe1NmDpP5Xme0Z3NuQ-cfHyuI0ewVxQ.apk
-  - **Live URL**: https://expo.dev/accounts/rikires-team/projects/pos-offline/builds/3629d8cb-a3f7-4980-afc8-03bd6f836d27
+* **Build Terkini (Tahap 16: Resolusi Audit Menyeluruh Agen Argon, Stabilitas SQLite Suspense, Anti-Crash Bluetooth Native Bridge & Dual-Fallback Image Picker, v1.0.6 / Code 10)**:
+  - **Status Kode**: Selesai Diimplementasikan & Lulus TypeScript Check 100% (0 error)
+  - **Versi**: v1.0.6 (Code 10)
 * **Build Sebelumnya**:
+  - **Tahap 15**: `3629d8cb-a3f7-4980-afc8-03bd6f836d27` (v1.0.5 / Code 9) - Direct APK: https://expo.dev/artifacts/eas/lTgaW9RfwLZywe1NmDpP5Xme0Z3NuQ-cfHyuI0ewVxQ.apk
   - **Tahap 14**: `c45d19a5-d22b-4d5f-94d3-eeb6d29bce93` (v1.0.4 / Code 8)
   - **Tahap 13**: `851403dc-0450-4219-975c-d2e6f51caa94` (v1.0.3 / Code 7)
   - **Tahap 12**: `9a44d59d-d7bb-4589-80b2-f7a67cb2ad12` (v1.0.2 / Code 6)
@@ -214,6 +213,24 @@ Proyek ini adalah **Aplikasi Kasir Tablet & Smartphone Mandiri 100% Full Offline
 5. **Verifikasi Statis & Dinamis**:
    - Kompilasi TypeScript 100% lulus (`tsc --noEmit` exit code 0).
    - Pengujian 12 skenario kompatibilitas tablet & permanensi sistem lulus 100%.
+
+### Tahap 16: Resolusi Audit Agen Argon, Stabilitas SQLite Suspense, Anti-Crash Bluetooth Native Bridge & Dual-Fallback Image Picker (v1.0.6 / Code 10)
+1. **Konfigurasi Native & Kompatibilitas Bridge Bluetooth (`app.json` & `services/print.ts`)**:
+   - Mengubah `"newArchEnabled": false` di `app.json` untuk memastikan modul Bluetooth ESC/POS printer berjalan stabil tanpa benturan arsitektur native Android.
+   - Menambahkan helper `ensureBluetoothPermissions` dengan pemeriksaan runtime API 31+ (`BLUETOOTH_SCAN` & `BLUETOOTH_CONNECT`) di `services/print.ts`.
+2. **Gerbang Inisialisasi Database Anti-Race Condition (`app/_layout.tsx` & `services/database.ts`)**:
+   - Memasang prop `useSuspense` pada `<SQLite.SQLiteProvider>` dan membungkusnya dengan `<Suspense fallback={<DatabaseLoadingFallback />}>` di `app/_layout.tsx`, menjamin UI tidak merender kueri sebelum migrasi 20 tabel selesai.
+   - Menambahkan helper `withSqliteRetry<T>` dengan exponential backoff dan singleton `migrationPromise` di `services/database.ts`, mengeliminasi error `SQLITE_BUSY` saat pergantian tab di tablet.
+3. **Pemisahan Data Master Produk & Anti-Hilang Data (`stores/productStore.ts`, `stores/transactionStore.ts`, dll)**:
+   - Menyimpan `masterProductList` tersendiri di memori sehingga saat kasir memfilter berdasarkan kategori produk, data master dan hash map barcode $O(1)$ tetap utuh 100%. Kasir dapat memindai barcode apapun secara instan.
+   - Memproteksi `loadTransactions`, `loadLedger`, `loadExpenses`, dan `loadItems` dengan `withSqliteRetry` dan menghapus reset state kosong di blok `catch`.
+4. **Sistem Dual-Fallback Image Picker Bebas Error `ActivityResultLauncher` (`utils/imagePickerHelper.ts`, `utils/imageStorage.ts`, `store-settings.tsx`)**:
+   - Menghapus opsi `legacy: true` pada ImagePicker yang memicu ketidakcocokan registrasi launcher di tablet Android/Xiaomi.
+   - Menambahkan *dual-fallback* otomatis ke `DocumentPicker.getDocumentAsync` (`image/*`) jika photo picker sistem Android mengalami penolakan izin atau unregistrasi activity.
+   - Menghubungkan pemilihan Logo Usaha dan QRIS di `store-settings.tsx` ke `pickImageFromGallery` dan konversi base64 lokal via `expo-file-system/legacy`.
+5. **Verifikasi Kompilasi & Kesiapan Sistem**:
+   - Kompilasi TypeScript 100% lulus (`npx tsc --noEmit` exit code 0).
+   - Seluruh 12 berkas sistem tersinkronisasi rapi dan siap build APK produksi.
 
 ---
 

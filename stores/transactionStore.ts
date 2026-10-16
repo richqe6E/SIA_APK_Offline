@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
+import { withSqliteRetry } from '@/services/database';
 import { useProductStore } from './productStore';
 
 function localDateStr(): string {
@@ -489,42 +490,50 @@ export const useTransactionStore = create<TransactionState>((set, get) => ({
 
   loadTransactions: async (db, period = 'all', page = 1, pageSize = 50) => {
     set({ loading: true });
+    try {
+      let whereClause = '';
+      switch (period) {
+        case 'today':
+          whereClause = "WHERE t.created_at >= date('now','localtime') AND t.created_at < date('now','localtime', '+1 day')";
+          break;
+        case 'week':
+          whereClause = "WHERE t.created_at >= datetime('now','localtime','-7 days')";
+          break;
+        case 'month':
+          whereClause = "WHERE t.created_at >= strftime('%Y-%m-01 00:00:00', 'now','localtime')";
+          break;
+      }
 
-    let whereClause = '';
-    switch (period) {
-      case 'today':
-        whereClause = "WHERE t.created_at >= date('now','localtime') AND t.created_at < date('now','localtime', '+1 day')";
-        break;
-      case 'week':
-        whereClause = "WHERE t.created_at >= datetime('now','localtime','-7 days')";
-        break;
-      case 'month':
-        whereClause = "WHERE t.created_at >= strftime('%Y-%m-01 00:00:00', 'now','localtime')";
-        break;
+      const offset = (page - 1) * pageSize;
+      const transactions = await withSqliteRetry(() =>
+        db.getAllAsync<Transaction>(
+          `SELECT t.*, c.name as customer_name
+           FROM transactions t
+           LEFT JOIN customers c ON t.customer_id = c.id
+           ${whereClause}
+           ORDER BY t.created_at DESC LIMIT ? OFFSET ?`,
+          pageSize,
+          offset
+        )
+      );
+
+      const countResult = await withSqliteRetry(() =>
+        db.getFirstAsync<{ count: number }>(
+          `SELECT COUNT(*) as count FROM transactions t ${whereClause}`
+        )
+      );
+      const totalCount = countResult?.count ?? 0;
+      const hasMore = offset + pageSize < totalCount;
+
+      set((state) => ({
+        transactions: page === 1 ? transactions : [...state.transactions, ...transactions],
+        loading: false,
+        hasMore,
+      }));
+    } catch (error) {
+      console.warn('loadTransactions gagal sementara, mempertahankan data di memori:', error);
+      set({ loading: false });
     }
-
-    const offset = (page - 1) * pageSize;
-    const transactions = await db.getAllAsync<Transaction>(
-      `SELECT t.*, c.name as customer_name
-       FROM transactions t
-       LEFT JOIN customers c ON t.customer_id = c.id
-       ${whereClause}
-       ORDER BY t.created_at DESC LIMIT ? OFFSET ?`,
-      pageSize,
-      offset
-    );
-
-    const countResult = await db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) as count FROM transactions t ${whereClause}`
-    );
-    const totalCount = countResult?.count ?? 0;
-    const hasMore = offset + pageSize < totalCount;
-
-    set((state) => ({
-      transactions: page === 1 ? transactions : [...state.transactions, ...transactions],
-      loading: false,
-      hasMore,
-    }));
   },
 
   loadPendingOrders: async (db) => {

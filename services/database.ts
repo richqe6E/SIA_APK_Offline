@@ -2,18 +2,51 @@ import * as SQLite from 'expo-sqlite';
 
 export type SQLiteDatabase = SQLite.SQLiteDatabase;
 
-export async function migrateDbIfNeeded(db: SQLiteDatabase) {
-  try {
-    // BUG-03 / FIX-XIAOMI: Atur busy_timeout 5000ms dan synchronous NORMAL untuk mencegah SQLITE_BUSY crash saat warm restart
-    await db.execAsync(`
-      PRAGMA busy_timeout = 5000;
-      PRAGMA journal_mode = 'wal';
-      PRAGMA synchronous = NORMAL;
-      PRAGMA foreign_keys = ON;
-    `);
-  } catch (initPragmaErr) {
-    console.warn('Initial PRAGMA warning:', initPragmaErr);
+let migrationPromise: Promise<void> | null = null;
+
+/**
+ * Helper retry untuk menangani SQLITE_BUSY / database locked saat eksekusi konkuren di tablet.
+ * Otomatis mencoba ulang hingga `retries` kali dengan jeda backoff progresif.
+ */
+export async function withSqliteRetry<T>(
+  operation: () => Promise<T>,
+  retries = 3,
+  delayMs = 150
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      lastError = error;
+      const msg = String(error?.message || '').toLowerCase();
+      const isBusy = msg.includes('locked') || msg.includes('busy');
+      if (!isBusy || attempt === retries - 1) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+    }
   }
+  throw lastError;
+}
+
+export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
+  if (migrationPromise) {
+    return migrationPromise;
+  }
+
+  migrationPromise = (async () => {
+    try {
+      // BUG-03 / FIX-XIAOMI: Atur busy_timeout 10000ms dan synchronous NORMAL untuk mencegah SQLITE_BUSY crash saat warm restart
+      await db.execAsync(`
+        PRAGMA busy_timeout = 10000;
+        PRAGMA journal_mode = 'wal';
+        PRAGMA synchronous = NORMAL;
+        PRAGMA foreign_keys = ON;
+      `);
+    } catch (initPragmaErr) {
+      console.warn('Initial PRAGMA warning:', initPragmaErr);
+    }
 
   const DATABASE_VERSION = 20;
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
@@ -507,7 +540,14 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     currentDbVersion = 20;
   }
 
-  await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
+    await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
+  })();
+
+  try {
+    await migrationPromise;
+  } finally {
+    migrationPromise = null;
+  }
 }
 
 export async function resetEntireDatabase(db: SQLiteDatabase): Promise<void> {

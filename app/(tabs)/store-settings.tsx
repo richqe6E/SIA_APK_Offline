@@ -11,7 +11,8 @@ import { useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSQLiteContext } from 'expo-sqlite';
 import React, { useEffect, useState } from 'react';
-import * as ImagePicker from 'expo-image-picker';
+import { pickImageFromGallery } from '@/utils/imagePickerHelper';
+import * as FileSystem from 'expo-file-system/legacy';
 import { saveImageLocally } from '@/utils/imageStorage';
 import {
   Alert,
@@ -99,24 +100,10 @@ export default function StoreSettingsScreen() {
 
   const pickQrisImage = async () => {
     try {
-      try {
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      } catch {
-        // Toleran terhadap Android 13+ Photo Picker
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-        quality: 0.75,
-        legacy: true, // Kompatibel penuh tablet Xiaomi / Android
-      });
-
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const uri = result.assets[0].uri;
-        const savedUri = await saveImageLocally(uri, 'qris');
-        setQrisPath(savedUri);
-      }
+      const uri = await pickImageFromGallery();
+      if (!uri) return;
+      const savedUri = await saveImageLocally(uri, 'qris');
+      setQrisPath(savedUri);
     } catch (e: any) {
       console.warn('pickQrisImage error:', e);
       Alert.alert('Perhatian', `Gagal memuat gambar QRIS dari galeri: ${e?.message || 'Gangguan sistem galeri'}`);
@@ -132,28 +119,21 @@ export default function StoreSettingsScreen() {
 
   const pickLogoImage = async () => {
     try {
+      const uri = await pickImageFromGallery();
+      if (!uri) return;
+
+      const savedUri = await saveImageLocally(uri, 'logo');
+      setLogoPath(savedUri);
+
       try {
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      } catch {
-        // Toleran terhadap Android 13+ Photo Picker
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-        quality: 0.7,
-        base64: true,
-        legacy: true, // Kompatibel penuh tablet Xiaomi / Android
-      });
-
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const asset = result.assets[0];
-        const uri = asset.uri;
-        const savedUri = await saveImageLocally(uri, 'logo');
-        setLogoPath(savedUri);
-        if (asset.base64) {
-          setLogoBase64(asset.base64);
+        const base64 = await FileSystem.readAsStringAsync(savedUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        if (base64) {
+          setLogoBase64(base64);
         }
+      } catch (b64Err) {
+        console.warn('Gagal membaca base64 logo struk:', b64Err);
       }
     } catch (e: any) {
       console.warn('pickLogoImage error:', e);

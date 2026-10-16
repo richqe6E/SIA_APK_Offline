@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
+import { withSqliteRetry } from '@/services/database';
 
 export interface Product {
   id: number;
@@ -79,25 +80,39 @@ function rebuildBarcodeMap(products: Product[]): Map<string, Product> {
   return map;
 }
 
+let masterProductList: Product[] = [];
+
 export const useProductStore = create<ProductState>((set, get) => ({
   products: [],
   loading: false,
 
   loadProducts: async (db: SQLiteDatabase, categoryId?: number | null) => {
     set({ loading: true });
-    let query = 'SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id';
-    const params: any[] = [];
+    try {
+      // Selalu ambil seluruh data master produk dari database dengan retry guard
+      const allRows = await withSqliteRetry(() =>
+        db.getAllAsync<Product>(`
+          SELECT p.*, c.name as category_name
+          FROM products p
+          LEFT JOIN categories c ON p.category_id = c.id
+          ORDER BY p.name ASC
+        `)
+      );
 
-    if (categoryId) {
-      query += ' WHERE p.category_id = ?';
-      params.push(categoryId);
+      masterProductList = allRows ?? [];
+      barcodeProductMap = rebuildBarcodeMap(masterProductList);
+
+      if (categoryId !== undefined && categoryId !== null) {
+        const filtered = masterProductList.filter((p) => p.category_id === categoryId);
+        set({ products: filtered, loading: false });
+      } else {
+        set({ products: masterProductList, loading: false });
+      }
+    } catch (error) {
+      console.warn('loadProducts gagal sementara, mempertahankan data di memori:', error);
+      // PENTING: Jangan mengosongkan products: [] agar data di UI tidak hilang saat terjadi collision
+      set({ loading: false });
     }
-
-    query += ' ORDER BY p.name ASC';
-
-    const products = await db.getAllAsync<Product>(query, ...params);
-    barcodeProductMap = rebuildBarcodeMap(products);
-    set({ products, loading: false });
   },
 
   addProduct: async (db, product) => {
@@ -107,19 +122,21 @@ export const useProductStore = create<ProductState>((set, get) => ({
 
     const isWeightedInt = product.is_weighted ? 1 : 0;
 
-    await db.runAsync(
-      'INSERT INTO products (name, price, cost_price, has_stock, stock, barcode, barcodes, is_weighted, expired_date, image_path, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      product.name,
-      product.price,
-      product.cost_price ?? 0,
-      product.has_stock ? 1 : 0,
-      product.stock ?? 0,
-      product.barcode ?? '',
-      barcodesStr,
-      isWeightedInt,
-      product.expired_date ?? null,
-      product.image_path ?? '',
-      product.category_id ?? null
+    await withSqliteRetry(() =>
+      db.runAsync(
+        'INSERT INTO products (name, price, cost_price, has_stock, stock, barcode, barcodes, is_weighted, expired_date, image_path, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        product.name,
+        product.price,
+        product.cost_price ?? 0,
+        product.has_stock ? 1 : 0,
+        product.stock ?? 0,
+        product.barcode ?? '',
+        barcodesStr,
+        isWeightedInt,
+        product.expired_date ?? null,
+        product.image_path ?? '',
+        product.category_id ?? null
+      )
     );
     await get().loadProducts(db);
   },
@@ -157,25 +174,31 @@ export const useProductStore = create<ProductState>((set, get) => ({
     fields.push("updated_at = datetime('now','localtime')");
     values.push(id);
 
-    await db.runAsync(
-      `UPDATE products SET ${fields.join(', ')} WHERE id = ?`,
-      values
+    await withSqliteRetry(() =>
+      db.runAsync(
+        `UPDATE products SET ${fields.join(', ')} WHERE id = ?`,
+        values
+      )
     );
     await get().loadProducts(db);
   },
 
   deleteProduct: async (db, id) => {
-    await db.runAsync('DELETE FROM products WHERE id = ?', id);
+    await withSqliteRetry(() =>
+      db.runAsync('DELETE FROM products WHERE id = ?', id)
+    );
     await get().loadProducts(db);
   },
 
   adjustStock: async (db, productId, delta) => {
-    await db.runAsync(
-      `UPDATE products
-       SET stock = MAX(0, stock + ?), updated_at = datetime('now','localtime')
-       WHERE id = ? AND has_stock = 1`,
-      delta,
-      productId
+    await withSqliteRetry(() =>
+      db.runAsync(
+        `UPDATE products
+         SET stock = MAX(0, stock + ?), updated_at = datetime('now','localtime')
+         WHERE id = ? AND has_stock = 1`,
+        delta,
+        productId
+      )
     );
     await get().loadProducts(db);
   },
@@ -187,7 +210,8 @@ export const useProductStore = create<ProductState>((set, get) => ({
     if (directHit) return directHit;
 
     const lower = cleanCode.toLowerCase();
-    return get().products.find((p) => p.name.toLowerCase() === lower);
+    const sourceList = masterProductList.length > 0 ? masterProductList : get().products;
+    return sourceList.find((p) => p.name.toLowerCase() === lower);
   },
 
   findProductByExactBarcode: (code: string) => {
@@ -199,7 +223,8 @@ export const useProductStore = create<ProductState>((set, get) => ({
 
     // Fallback: periksa case-insensitive HANYA pada barcode utama dan multi-barcode (BUKAN nama produk)
     const lower = cleanCode.toLowerCase();
-    return get().products.find((p) => {
+    const sourceList = masterProductList.length > 0 ? masterProductList : get().products;
+    return sourceList.find((p) => {
       if (p.barcode && p.barcode.trim().toLowerCase() === lower) return true;
       if (p.barcodes) {
         try {

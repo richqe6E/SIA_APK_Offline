@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
+import { withSqliteRetry } from '@/services/database';
 
 export type ExpenseCategory =
   | 'gaji'
@@ -55,27 +56,34 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
 
   loadExpenses: async (db, month, year) => {
     set({ loading: true });
-    let query = 'SELECT * FROM expenses';
-    const params: any[] = [];
+    try {
+      let query = 'SELECT * FROM expenses';
+      const params: any[] = [];
 
-    if (month !== undefined && year !== undefined) {
-      const mm = String(month).padStart(2, '0');
-      const start = `${year}-${mm}-01`;
-      const nextMonth = month === 12 ? 1 : month + 1;
-      const nextYear = month === 12 ? year + 1 : year;
-      const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-      query += ' WHERE expense_date >= ? AND expense_date < ?';
-      params.push(start, end);
-    } else if (year !== undefined) {
-      const start = `${year}-01-01`;
-      const end = `${year + 1}-01-01`;
-      query += ' WHERE expense_date >= ? AND expense_date < ?';
-      params.push(start, end);
+      if (month !== undefined && year !== undefined) {
+        const mm = String(month).padStart(2, '0');
+        const start = `${year}-${mm}-01`;
+        const nextMonth = month === 12 ? 1 : month + 1;
+        const nextYear = month === 12 ? year + 1 : year;
+        const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+        query += ' WHERE expense_date >= ? AND expense_date < ?';
+        params.push(start, end);
+      } else if (year !== undefined) {
+        const start = `${year}-01-01`;
+        const end = `${year + 1}-01-01`;
+        query += ' WHERE expense_date >= ? AND expense_date < ?';
+        params.push(start, end);
+      }
+
+      query += ' ORDER BY expense_date DESC, id DESC';
+      const expenses = await withSqliteRetry(() =>
+        db.getAllAsync<Expense>(query, ...params)
+      );
+      set({ expenses, loading: false });
+    } catch (error) {
+      console.warn('loadExpenses gagal sementara, mempertahankan data di memori:', error);
+      set({ loading: false });
     }
-
-    query += ' ORDER BY expense_date DESC, id DESC';
-    const expenses = await db.getAllAsync<Expense>(query, ...params);
-    set({ expenses, loading: false });
   },
 
   addExpense: async (db, expense) => {

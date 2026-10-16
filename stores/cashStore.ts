@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SQLiteDatabase } from '@/services/database';
+import { withSqliteRetry } from '@/services/database';
 
 export type CashTransactionType = 'in' | 'out';
 
@@ -169,8 +170,10 @@ export const useCashStore = create<CashState>((set, get) => ({
       set({ loading: true });
     }
     try {
-      const rawRows = await db.getAllAsync<any>(
-        'SELECT * FROM cash_ledger ORDER BY date DESC, id DESC'
+      const rawRows = await withSqliteRetry(() =>
+        db.getAllAsync<any>(
+          'SELECT * FROM cash_ledger ORDER BY date DESC, id DESC'
+        )
       );
 
       const rows: CashEntry[] = rawRows.map((r) => ({
@@ -185,33 +188,39 @@ export const useCashStore = create<CashState>((set, get) => ({
       }));
 
       // 1. Transaksi Penjualan Tunai Murni (bukan split payment)
-      const salesCashRow = await db.getFirstAsync<{ gross_in: number; gross_change: number; total: number }>(
-        `SELECT
-           COALESCE(SUM(payment_amount), 0) as gross_in,
-           COALESCE(SUM(change), 0) as gross_change,
-           COALESCE(SUM(total), 0) as total
-         FROM transactions
-         WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0)`
+      const salesCashRow = await withSqliteRetry(() =>
+        db.getFirstAsync<{ gross_in: number; gross_change: number; total: number }>(
+          `SELECT
+             COALESCE(SUM(payment_amount), 0) as gross_in,
+             COALESCE(SUM(change), 0) as gross_change,
+             COALESCE(SUM(total), 0) as total
+           FROM transactions
+           WHERE payment_method = 'tunai' AND (cash_received = 0 OR qris_received = 0)`
+        )
       );
       const salesGrossIn = salesCashRow?.gross_in ?? 0;
       const salesChangeOut = salesCashRow?.gross_change ?? 0;
       const salesCash = salesCashRow?.total ?? 0;
 
       // 2. Transaksi Penjualan QRIS / Transfer Murni (bukan split payment)
-      const salesQrisRow = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(total), 0) as total
-         FROM transactions
-         WHERE payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0)`
+      const salesQrisRow = await withSqliteRetry(() =>
+        db.getFirstAsync<{ total: number }>(
+          `SELECT COALESCE(SUM(total), 0) as total
+           FROM transactions
+           WHERE payment_method = 'qris' AND (cash_received = 0 OR qris_received = 0)`
+        )
       );
       const salesQris = salesQrisRow?.total ?? 0;
 
       // 2b. Porsi Tunai & QRIS pada transaksi Split Payment (keduanya > 0)
-      const splitRow = await db.getFirstAsync<{ split_cash: number; split_qris: number }>(
-        `SELECT
-           COALESCE(SUM(cash_received), 0) as split_cash,
-           COALESCE(SUM(qris_received), 0) as split_qris
-         FROM transactions
-         WHERE (cash_received > 0 AND qris_received > 0)`
+      const splitRow = await withSqliteRetry(() =>
+        db.getFirstAsync<{ split_cash: number; split_qris: number }>(
+          `SELECT
+             COALESCE(SUM(cash_received), 0) as split_cash,
+             COALESCE(SUM(qris_received), 0) as split_qris
+           FROM transactions
+           WHERE (cash_received > 0 AND qris_received > 0)`
+        )
       );
       const splitCashPortion = splitRow?.split_cash ?? 0;
       const splitQrisPortion = splitRow?.split_qris ?? 0;

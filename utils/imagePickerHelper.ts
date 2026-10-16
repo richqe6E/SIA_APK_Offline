@@ -1,5 +1,33 @@
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { Platform, PermissionsAndroid, Alert, Linking } from 'react-native';
+
+/**
+ * Fallback tangguh menggunakan pemilih berkas sistem (DocumentPicker).
+ * Menjamin pemilihan gambar selalu berhasil meskipun ActivityResultLauncher Android
+ * pada tablet Xiaomi / Android 13+ mengalami masalah registrasi siklus hidup.
+ */
+async function fallbackPickImageWithDocumentPicker(): Promise<string | null> {
+  try {
+    const docResult = await DocumentPicker.getDocumentAsync({
+      type: ['image/*'],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+
+    if (!docResult.canceled && docResult.assets && docResult.assets.length > 0) {
+      return docResult.assets[0].uri;
+    }
+    return null;
+  } catch (docError: any) {
+    console.warn('Fallback DocumentPicker gagal:', docError);
+    Alert.alert(
+      'Perhatian Galeri',
+      'Gagal membuka pemilih berkas gambar perangkat. Silakan coba kembali.'
+    );
+    return null;
+  }
+}
 
 /**
  * Pemeriksaan izin kamera Android/Expo yang tangguh untuk perangkat tablet (Xiaomi MIUI/HyperOS, dll).
@@ -30,37 +58,44 @@ export async function requestCameraPermissionRobust(): Promise<boolean> {
 }
 
 /**
- * Membuka galeri foto dengan opsi legacy: true untuk kompatibilitas penuh dengan tablet Android.
+ * Membuka galeri foto dengan fallback otomatis ke DocumentPicker jika ActivityResultLauncher gagal.
+ * Menghapus legacy: true yang rentan crash pada SDK 54 dan tablet Android modern.
  */
 export async function pickImageFromGallery(): Promise<string | null> {
   try {
-    try {
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
-    } catch {}
+    // Periksa izin terlebih dahulu tanpa memicu dialog ulang jika sudah diberikan
+    const currentPerm = await ImagePicker.getMediaLibraryPermissionsAsync();
+    if (!currentPerm.granted) {
+      const reqPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!reqPerm.granted) {
+        // Jika izin media ditolak di Android, gunakan DocumentPicker sistem yang tidak butuh izin media khusus
+        return await fallbackPickImageWithDocumentPicker();
+      }
+      // Beri jeda singkat agar MainActivity selesai resume setelah dialog izin tertutup
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: false, // Ramah tablet: eliminasi crash crop intent Android
-      quality: 0.75,
-      legacy: true, // WAJIB untuk stabilitas tablet Xiaomi / Android
+      quality: 0.8,
     });
 
-    if (!result.canceled && result.assets && result.assets[0]?.uri) {
+    if (!result.canceled && result.assets && result.assets.length > 0) {
       return result.assets[0].uri;
     }
     return null;
   } catch (error: any) {
-    console.warn('pickImageFromGallery error:', error);
-    Alert.alert(
-      'Perhatian Galeri',
-      `Gagal memuat galeri foto: ${error?.message || 'Terjadi gangguan sistem perangkat'}`
-    );
-    return null;
+    console.warn('ImagePicker gagal, mengalihkan ke DocumentPicker:', error?.message);
+    // Jika muncul IllegalStateException (unregistered ActivityResultLauncher),
+    // otomatis buka pemilih berkas gambar sistem tanpa menampilkan error teknis ke pengguna!
+    return await fallbackPickImageWithDocumentPicker();
   }
 }
 
 /**
- * Mengambil foto langsung dari kamera perangkat dengan penanganan izin yang tangguh.
+ * Mengambil foto langsung dari kamera perangkat dengan penanganan izin yang tangguh
+ * dan fallback aman ke DocumentPicker jika kamera perangkat tidak tersedia.
  */
 export async function capturePhotoFromCamera(): Promise<string | null> {
   try {
@@ -77,21 +112,24 @@ export async function capturePhotoFromCamera(): Promise<string | null> {
       return null;
     }
 
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
     const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
       allowsEditing: false, // Ramah tablet
-      quality: 0.75,
+      quality: 0.8,
     });
 
-    if (!result.canceled && result.assets && result.assets[0]?.uri) {
+    if (!result.canceled && result.assets && result.assets.length > 0) {
       return result.assets[0].uri;
     }
     return null;
   } catch (error: any) {
     console.warn('capturePhotoFromCamera error:', error);
     Alert.alert(
-      'Perhatian Kamera',
-      `Gagal membuka kamera: ${error?.message || 'Terjadi gangguan sistem perangkat'}`
+      'Kamera Tidak Tersedia',
+      'Kamera tidak dapat dibuka saat ini. Silakan pilih foto dari berkas galeri perangkat.'
     );
-    return null;
+    return await fallbackPickImageWithDocumentPicker();
   }
 }
